@@ -60,5 +60,6 @@ for file in pacman.conf pacman.d/mirrorlist; do
     cp -f "$etc/$file" "$etc/$file.bak"
   fi
 done
-install -m 644 "$staging/pacman.conf" "$etc/pacman.conf"
-install -m 644 "$staging/mirrorlist" "$etc/pacman.d/mirrorlist"
+# Copying over an existing file keeps its owner and mode, as refresh always has.
+cp -f "$staging/pacman.conf" "$etc/pacman.conf"
+cp -f "$staging/mirrorlist" "$etc/pacman.d/mirrorlist"

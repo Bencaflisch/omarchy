@@ -18,6 +18,12 @@ for channel in stable rc edge; do
 done
 pass "missing region preserves all global channel templates byte for byte"
 
+chmod 600 "$TARGET_ROOT/etc/pacman.conf"
+apply stable
+[[ $(stat -c %a "$TARGET_ROOT/etc/pacman.conf") == 600 ]] || fail "refresh keeps a customized pacman.conf mode"
+chmod 644 "$TARGET_ROOT/etc/pacman.conf"
+pass "refresh keeps existing config file modes"
+
 printf 'cn\n' > "$TARGET_ROOT/etc/omarchy/region"
 for channel in stable rc edge; do
   case "$channel" in
