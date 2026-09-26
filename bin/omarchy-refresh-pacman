@@ -54,11 +54,10 @@ if [[ ! -f $templates/pacman-$channel.conf || ! -f $templates/mirrorlist-$channe
   exit 1
 fi
 
-sudo cp -f /etc/pacman.conf /etc/pacman.conf.bak
-sudo cp -f /etc/pacman.d/mirrorlist /etc/pacman.d/mirrorlist.bak
 echo "Setting channel to $channel"
-sudo cp -f "$templates/pacman-$channel.conf" /etc/pacman.conf
-sudo cp -f "$templates/mirrorlist-$channel" /etc/pacman.d/mirrorlist
+# Restores the channel templates plus this machine's regional additions, and
+# backs up both files first. OMARCHY_PATH was verified as this command's root.
+sudo env "OMARCHY_PATH=$OMARCHY_PATH" "$OMARCHY_PATH/bin/omarchy-apply-pacman" "$channel"
 
 # Allow user customization of /etc/pacman.conf before the upgrade runs, so
 # custom repositories and IgnorePkg entries shape the downgrade-capable
