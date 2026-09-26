@@ -68,35 +68,22 @@ cmp "$scratch/before.conf" "$TARGET_ROOT/etc/pacman.conf"
 cmp "$scratch/before.mirrors" "$TARGET_ROOT/etc/pacman.d/mirrorlist"
 pass "missing fragment cannot leave a half-generated config"
 
-# Execute the real refresh and apply commands against the same disposable root.
-mkdir -p "$scratch/bin"
-cat > "$scratch/bin/sudo" <<'SH'
-#!/bin/bash
-exec "$@" "$TARGET_ROOT"
-SH
-cat > "$scratch/bin/omarchy-hook" <<'SH'
-#!/bin/bash
-[[ $1 == "pre-refresh-pacman" ]] || exit 1
-printf '# user customization\n' >> "$TARGET_ROOT/etc/pacman.conf"
-SH
-cat > "$scratch/bin/omarchy-update-pacman" <<'SH'
-#!/bin/bash
-[[ $* == "-Syyuu --noconfirm" ]] || exit 1
-tail -n 1 "$TARGET_ROOT/etc/pacman.conf" > "$TARGET_ROOT/update-observed"
-SH
-chmod +x "$scratch/bin/"*
-PATH="$scratch/bin:$PATH" "$ROOT/bin/omarchy-refresh-pacman" rc
-[[ $(<"$TARGET_ROOT/update-observed") == '# user customization' ]] || fail "hook runs before update"
-rg -qxF 'Server = https://pkgs.omarchy.org/rc/$arch' "$TARGET_ROOT/etc/pacman.conf"
-rg -qxF '[archlinuxcn]' "$TARGET_ROOT/etc/pacman.conf"
-pass "channel refresh retains region and applies user customization before updating"
+# Refresh renders these files unprivileged and hands root plain copies; its
+# privileged path is covered in the sudo-boundary sandbox, never on the host.
+cp "$TARGET_ROOT/etc/pacman.conf" "$scratch/before.conf"
+mkdir -p "$scratch/rendered"
+"$ROOT/bin/omarchy-apply-pacman" --render rc "$scratch/rendered" "$TARGET_ROOT"
+rg -qxF 'Server = https://pkgs.omarchy.org/rc/$arch' "$scratch/rendered/pacman.conf"
+rg -qxF '[archlinuxcn]' "$scratch/rendered/pacman.conf"
+[[ $(<"$scratch/rendered/mirrorlist") == $'Server = https://rc-mirror.omarchy.org/$repo/os/$arch\nServer = https://mirrors.ustc.edu.cn/archlinux/$repo/os/$arch' ]] ||
+  fail "render keeps the channel mirror first"
+cmp "$scratch/before.conf" "$TARGET_ROOT/etc/pacman.conf"
+pass "render builds the regional channel files without touching the target"
 
-printf 'not-updated\n' > "$TARGET_ROOT/update-observed"
-if PATH="$scratch/bin:$PATH" "$ROOT/bin/omarchy-refresh-pacman" dev > "$scratch/error" 2>&1; then
-  fail "refresh accepts a nonexistent dev pacman template"
+if "$ROOT/bin/omarchy-apply-pacman" --render dev "$scratch/rendered" "$TARGET_ROOT" > "$scratch/error" 2>&1; then
+  fail "render accepts a nonexistent dev pacman template"
 fi
-[[ $(<"$TARGET_ROOT/update-observed") == 'not-updated' ]] || fail "failed generation still updates packages"
-pass "failed refresh does not proceed to a package update"
+pass "render rejects channels without pacman templates"
 
 printf 'global\n' > "$TARGET_ROOT/etc/omarchy/region"
 apply stable
