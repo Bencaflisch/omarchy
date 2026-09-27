@@ -1,5 +1,2 @@
 # Installed from the ISO's offline repository before enabling ArchLinuxCN.
 archlinuxcn-keyring
-# Reuse the base Fcitx5 service and toolkit integration. libime supplies the
-# offline Pinyin dictionary/model through this package's dependencies.
-fcitx5-chinese-addons

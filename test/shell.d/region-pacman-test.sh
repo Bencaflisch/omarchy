@@ -91,41 +91,15 @@ cmp "$ROOT/default/pacman/pacman-stable.conf" "$TARGET_ROOT/etc/pacman.conf"
 cmp "$ROOT/default/pacman/mirrorlist-stable" "$TARGET_ROOT/etc/pacman.d/mirrorlist"
 pass "users can opt out of regional repository defaults"
 
-# Check the shipped input defaults, not a synthetic profile. ISO tests cover
-# staging these files before user creation; refresh must never touch them.
+# The shipped China profile is repository scaffolding only. Locale, timezone,
+# and input defaults are separate changes built on the same mechanism.
 python3 - <<'PY'
-import configparser
 import os
 from pathlib import Path
 
-root = Path(os.environ["ROOT"])
-region = root / "default/regions/cn"
+region = Path(os.environ["ROOT"]) / "default/regions/cn"
 packages = {line.strip() for line in (region / "packages").read_text().splitlines() if line.strip() and not line.startswith("#")}
-assert packages == {"archlinuxcn-keyring", "fcitx5-chinese-addons"}
-base = (root / "install/omarchy-base.packages").read_text().splitlines()
-assert {"fcitx5", "fcitx5-gtk", "fcitx5-qt"} <= set(base)
-
-def read_config(name):
-    config = configparser.ConfigParser()
-    config.read(region / "skel/.config/fcitx5" / name)
-    return config
-
-profile = read_config("profile")
-assert profile["Groups/0"]["DefaultIM"] == "pinyin"
-assert profile["Groups/0"]["Default Layout"]  # Fcitx rejects empty layouts.
-assert profile["Groups/0/Items/0"]["Name"] == "keyboard-us"
-assert profile["Groups/0/Items/1"]["Name"] == "pinyin"
-assert all("Layout" not in profile[section] for section in ("Groups/0/Items/0", "Groups/0/Items/1"))
-assert (root / "config/fcitx5/conf/xcb.conf").read_text().strip() == "Allow Overriding System XKB Settings=False"
-config = read_config("config")
-assert dict(config["Hotkey/TriggerKeys"]) == {"0": "Alt+space"}
-assert not config["Hotkey"].getboolean("EnumerateWithTriggerKeys")
-for key in ("AltTriggerKeys", "EnumerateForwardKeys", "EnumerateBackwardKeys"):
-    assert config["Hotkey"][key] == ""
-assert not config["Behavior"].getboolean("ActiveByDefault")
-# No second startup path or regional locale/keyboard defaults.
-assert {str(path.relative_to(region / "skel")) for path in (region / "skel").rglob("*") if path.is_file()} == {
-    ".config/fcitx5/config", ".config/fcitx5/profile",
-}
+assert packages == {"archlinuxcn-keyring"}, packages
+assert not (region / "skel").exists()
 PY
-pass "China ships offline Pinyin using the base Fcitx service without stealing compose or terminal shortcuts"
+pass "China profile adds only its repository keyring"
