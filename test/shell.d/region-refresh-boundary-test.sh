@@ -40,3 +40,24 @@ if grep -Eq '^(sudo -N cp |step:pacman )' "$SUDO_TEST_LOG"; then
   fail "invalid channel reached privileged work" "$(<"$SUDO_TEST_LOG")"
 fi
 pass "failed refresh does not proceed to privileged copies or a package update"
+
+# A failed render still removes its scratch directory and exits cold.
+reset_boundary
+mv "$SUDO_TEST_ROOT/bin/omarchy-apply-pacman" "$boundary_tmp/omarchy-apply-pacman"
+cat >"$SUDO_TEST_ROOT/bin/omarchy-apply-pacman" <<'STUB'
+#!/bin/bash
+: >"$3/pacman.conf"
+exit 1
+STUB
+chmod +x "$SUDO_TEST_ROOT/bin/omarchy-apply-pacman"
+mkdir -p "$boundary_tmp/scratch"
+if TMPDIR="$boundary_tmp/scratch" "$SUDO_TEST_ROOT/bin/omarchy-refresh-pacman" rc >"$boundary_tmp/output" 2>&1; then
+  fail "refresh succeeds after a failed render"
+fi
+mv "$boundary_tmp/omarchy-apply-pacman" "$SUDO_TEST_ROOT/bin/omarchy-apply-pacman"
+[[ -z $(ls -A "$boundary_tmp/scratch") ]] || fail "failed render leaves its scratch directory" "$(ls -AR "$boundary_tmp/scratch")"
+if grep -Eq '^(sudo -N cp |step:pacman )' "$SUDO_TEST_LOG"; then
+  fail "failed render reached privileged work" "$(<"$SUDO_TEST_LOG")"
+fi
+assert_boundary_cold "failed render"
+pass "failed render removes its scratch directory and exits cold"
