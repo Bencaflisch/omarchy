@@ -6,6 +6,43 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 source "$SHELL_TEST_DIR/fixtures/sudo-boundary-test.sh"
 copy_boundary_file bin/omarchy-refresh-pacman
 copy_boundary_file bin/omarchy-apply-pacman
+for file in default/pacman/pacman-rc.conf default/pacman/mirrorlist-rc \
+  default/regions/cn/pacman/pacman.conf.append default/regions/cn/pacman/mirrorlist.append; do
+  copy_boundary_file "$file"
+done
+
+# A sandboxed China machine: the render reads this region marker, never the
+# host's /etc/omarchy/region.
+export SUDO_TEST_TARGET="$boundary_tmp/target"
+mkdir -p "$SUDO_TEST_TARGET/etc/omarchy"
+printf 'cn\n' >"$SUDO_TEST_TARGET/etc/omarchy/region"
+python3 - "$SUDO_TEST_ROOT/bin/omarchy-apply-pacman" <<'PY'
+import sys
+path = sys.argv[1]
+source = open(path).read()
+render_etc = 'etc="${4:-/}/etc"'
+assert source.count(render_etc) == 1, "render target lookup moved"
+open(path, 'w').write(source.replace(render_etc, 'etc="${4:-$SUDO_TEST_TARGET}/etc"'))
+PY
+
+# cp still logs its step, but now really copies, so the rendered files exist.
+# Root's copies into /etc land in a capture directory instead of the host.
+export SUDO_TEST_CAPTURE="$boundary_tmp/capture"
+rm "$SUDO_TEST_ROOT/bin/cp"
+cat >"$SUDO_TEST_ROOT/bin/cp" <<'STUB'
+#!/bin/bash
+set -euo pipefail
+printf 'step:cp %s\n' "$*" >>"$SUDO_TEST_LOG"
+destination=${!#}
+if [[ $destination == /etc/* ]]; then
+  source=${*: -2:1}
+  [[ $source == /etc/* ]] && exit 0
+  /usr/bin/mkdir -p "$SUDO_TEST_CAPTURE${destination%/*}"
+  exec /usr/bin/cp "$source" "$SUDO_TEST_CAPTURE$destination"
+fi
+exec /usr/bin/cp "$@"
+STUB
+chmod +x "$SUDO_TEST_ROOT/bin/cp"
 
 # Regional rendering must stay unprivileged: root only copies finished files,
 # exactly as the channel refresh did before regions existed.
@@ -30,6 +67,16 @@ assert render[0] < copies[0], events
 transaction = next(i for i, e in enumerate(events) if e.startswith('step:pacman '))
 assert max(copies) < transaction, events
 PY
+{
+  cat "$ROOT/default/pacman/pacman-rc.conf"
+  printf '\n'
+  cat "$ROOT/default/regions/cn/pacman/pacman.conf.append"
+} >"$boundary_tmp/expected-pacman.conf"
+cat "$ROOT/default/pacman/mirrorlist-rc" "$ROOT/default/regions/cn/pacman/mirrorlist.append" >"$boundary_tmp/expected-mirrorlist"
+cmp -s "$boundary_tmp/expected-pacman.conf" "$SUDO_TEST_CAPTURE/etc/pacman.conf" ||
+  fail "root installs the rendered China pacman.conf" "$(diff "$boundary_tmp/expected-pacman.conf" "$SUDO_TEST_CAPTURE/etc/pacman.conf" 2>&1)"
+cmp -s "$boundary_tmp/expected-mirrorlist" "$SUDO_TEST_CAPTURE/etc/pacman.d/mirrorlist" ||
+  fail "root installs the rendered China mirrorlist" "$(diff "$boundary_tmp/expected-mirrorlist" "$SUDO_TEST_CAPTURE/etc/pacman.d/mirrorlist" 2>&1)"
 pass "refresh renders regional config unprivileged and gives root only plain copies"
 
 reset_boundary
