@@ -55,7 +55,10 @@ validate_dev_region() {
   [[ -f $region_file ]] && region=$(<"$region_file")
   [[ $region == "global" ]] && return 0
 
-  if [[ ! -f $checkout/bin/omarchy-apply-pacman || ! -d $checkout/default/regions/$region ]]; then
+  # The refresh after linking needs a runnable helper and both fragments, not
+  # just a directory with the region's name.
+  local profile="$checkout/default/regions/$region/pacman"
+  if [[ ! -x $checkout/bin/omarchy-apply-pacman || ! -r $profile/pacman.conf.append || ! -r $profile/mirrorlist.append ]]; then
     fail "$checkout does not support the '$region' region, so switching would drop its package repositories. Check out a branch with default/regions/$region, or remove $region_file to use global defaults."
   fi
 }

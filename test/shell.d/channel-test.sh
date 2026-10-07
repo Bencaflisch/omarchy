@@ -201,8 +201,29 @@ if grep -Eq $'^(link|refresh)\t' "$log_file"; then
 fi
 pass "dev refuses a checkout without the region before touching pacman"
 
+# A directory with the region's name, or a helper that cannot run, is not
+# support: the refresh after linking would fail with dev already linked.
 mkdir -p "$checkout/default/regions/cn"
 touch "$checkout/bin/omarchy-apply-pacman"
+chmod +x "$checkout/bin/omarchy-apply-pacman"
+if OMARCHY_TEST_REGION_FILE="$test_tmp/region" run_channel dev >"$test_tmp/region.out" 2>"$test_tmp/region.err"; then
+  fail "dev refuses an empty region profile"
+fi
+if grep -Eq $'^(link|refresh)\t' "$log_file"; then
+  fail "dev refuses an empty region profile before linking or refreshing pacman" "$(cat "$log_file")"
+fi
+mkdir -p "$checkout/default/regions/cn/pacman"
+touch "$checkout/default/regions/cn/pacman/pacman.conf.append" "$checkout/default/regions/cn/pacman/mirrorlist.append"
+chmod -x "$checkout/bin/omarchy-apply-pacman"
+if OMARCHY_TEST_REGION_FILE="$test_tmp/region" run_channel dev >"$test_tmp/region.out" 2>"$test_tmp/region.err"; then
+  fail "dev refuses a checkout whose pacman helper cannot run"
+fi
+if grep -Eq $'^(link|refresh)\t' "$log_file"; then
+  fail "dev refuses incomplete region support before linking or refreshing pacman" "$(cat "$log_file")"
+fi
+pass "dev refuses an empty region profile or a helper that cannot run"
+
+chmod +x "$checkout/bin/omarchy-apply-pacman"
 OMARCHY_TEST_REGION_FILE="$test_tmp/region" run_channel dev
 assert_log_line $'refresh\tedge' "dev proceeds with a checkout that supports the region"
 
