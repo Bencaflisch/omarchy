@@ -13,17 +13,8 @@ done
 
 # A sandboxed China machine: the render reads this region marker, never the
 # host's /etc/omarchy/region.
-export SUDO_TEST_TARGET="$boundary_tmp/target"
 mkdir -p "$SUDO_TEST_TARGET/etc/omarchy"
 printf 'cn\n' >"$SUDO_TEST_TARGET/etc/omarchy/region"
-python3 - "$SUDO_TEST_ROOT/bin/omarchy-apply-pacman" <<'PY'
-import sys
-path = sys.argv[1]
-source = open(path).read()
-render_etc = 'etc="${4:-/}/etc"'
-assert source.count(render_etc) == 1, "render target lookup moved"
-open(path, 'w').write(source.replace(render_etc, 'etc="${4:-$SUDO_TEST_TARGET}/etc"'))
-PY
 
 # cp still logs its step, but now really copies, so the rendered files exist.
 # Root's copies into /etc land in a capture directory instead of the host.
