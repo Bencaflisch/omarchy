@@ -74,14 +74,15 @@ else
   # channel's own mirror stays as the fallback.
   cat "$profile/mirrorlist-$channel.prepend" "$templates/mirrorlist-$channel" > "$staging/mirrorlist"
 fi
-[[ -z $render_dir ]] || exit 0
 
-mkdir -p "$etc/pacman.d"
-for file in pacman.conf pacman.d/mirrorlist; do
-  if [[ -e $etc/$file ]]; then
-    cp -f "$etc/$file" "$etc/$file.bak"
-  fi
-done
-# Copying over an existing file keeps its owner and mode, as refresh always has.
-cp -f "$staging/pacman.conf" "$etc/pacman.conf"
-cp -f "$staging/mirrorlist" "$etc/pacman.d/mirrorlist"
+if [[ -z $render_dir ]]; then
+  mkdir -p "$etc/pacman.d"
+  for file in pacman.conf pacman.d/mirrorlist; do
+    if [[ -e $etc/$file ]]; then
+      cp -f "$etc/$file" "$etc/$file.bak"
+    fi
+  done
+  # Copying over an existing file keeps its owner and mode, as refresh always has.
+  cp -f "$staging/pacman.conf" "$etc/pacman.conf"
+  cp -f "$staging/mirrorlist" "$etc/pacman.d/mirrorlist"
+fi
