@@ -6,11 +6,11 @@ Regions customize bootstrap defaults independently of update channels and of the
 
 The ISO installer writes the region it derived to `/etc/omarchy/region` before target finalization. It is plain text, not executable configuration. A missing file means `global`; an unsupported value is an error.
 
-`omarchy-apply-pacman <stable|rc|edge> [target-root]` restores the selected channel's two pacman templates and appends `default/regions/<region>/pacman/{pacman.conf.append,mirrorlist.append}`. Both files are generated before either live file is replaced. Existing files are backed up with `.bak`. Dev uses the edge pacman channel, as before.
+`omarchy-apply-pacman <stable|rc|edge> [target-root]` restores the selected channel's two pacman templates, appends the region's `pacman.conf.append` to `pacman.conf`, and puts the region's `mirrorlist-<channel>.prepend` ahead of the channel's mirrorlist. Both files are generated before either live file is replaced. Existing files are backed up with `.bak`. Dev uses the edge pacman channel, as before.
 
 Both installation finalization and `omarchy-refresh-pacman` use this command. Explicit refreshes and channel changes restore regional defaults; ordinary updates do not enforce them. The existing `pre-refresh-pacman` user hook runs after regeneration and before the update, so users can maintain overrides there. Switching to the dev channel refuses a checkout that lacks this machine's region profile, because that checkout's own refresh would otherwise drop the regional repositories. Users can edit the files directly or set the region to `global` before a refresh to stop applying regional repository defaults. This does not uninstall packages or rewrite anything in existing home directories.
 
-The China profile keeps the channel's Omarchy Arch mirror first, appends USTC's regular Arch mirror, and adds the USTC ArchLinuxCN community repository. It does not change the `[omarchy]` package repository. USTC's mirror, run by the University of Science and Technology of China, and ArchLinuxCN, a long-standing community repository, are a practical bridge until Omarchy runs its own mirror in China. USTC is not a stable/RC snapshot replica: missing old packages and newer fallback databases remain compatibility risks.
+The China profile puts Omarchy's China replica of the channel's Arch mirror first (`stable-mirror.omarchy.cn`, `rc-mirror.omarchy.cn`, or `mirror.omarchy.cn` for edge and dev) and keeps the channel's `.org` mirror as the fallback. pacman tries servers in order and moves to the next one when a download fails, including a 404. After three failed downloads from one server, it skips that server for the rest of the transaction. It also takes the package databases from the first server that answers, without comparing them, so the China replicas must carry complete, current metadata. The profile also adds the ArchLinuxCN community repository from USTC's mirror, run by the University of Science and Technology of China. It does not change the `[omarchy]` package repository.
 
 ## Profile layout
 
@@ -18,7 +18,7 @@ Each profile lives in `default/regions/<code>/`:
 
 - `timezones`: the timezones that select this region, one per line, with blank lines and `#` comments allowed. List tzdata's backward-compatible names too, since the installer's timezone list includes them. A timezone may belong to at most one profile.
 - `packages`: additional target packages, in the same format. Every ISO carries every profile's packages in its offline repository; the installer installs them only on targets in that region. A package named `<name>-keyring` is the profile's trust anchor: the builder installs it through Arch's existing trust chain, and a regional target populates the `<name>` keyring.
-- `pacman/`: `pacman.conf.append` and `mirrorlist.append`, the repository fragments `omarchy-apply-pacman` adds to the channel templates.
+- `pacman/`: `pacman.conf.append`, added after the channel's `pacman.conf`, and one `mirrorlist-<channel>.prepend` per channel (`stable`, `rc`, `edge`), placed ahead of the channel's mirrorlist so the regional mirror is tried first.
 
 ## ISO installer contract
 
