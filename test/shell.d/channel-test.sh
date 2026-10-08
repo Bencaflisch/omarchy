@@ -213,7 +213,23 @@ if grep -Eq $'^(link|refresh)\t' "$log_file"; then
   fail "dev refuses an empty region profile before linking or refreshing pacman" "$(cat "$log_file")"
 fi
 mkdir -p "$checkout/default/regions/cn/pacman"
-touch "$checkout/default/regions/cn/pacman/pacman.conf.append" "$checkout/default/regions/cn/pacman/mirrorlist-edge.prepend"
+cn_fragments=(pacman.conf.append mirrorlist-stable.prepend mirrorlist-rc.prepend mirrorlist-edge.prepend)
+for missing in "${cn_fragments[@]}"; do
+  for fragment in "${cn_fragments[@]}"; do
+    if [[ $fragment == "$missing" ]]; then
+      rm -f "$checkout/default/regions/cn/pacman/$fragment"
+    else
+      touch "$checkout/default/regions/cn/pacman/$fragment"
+    fi
+  done
+  if OMARCHY_TEST_REGION_FILE="$test_tmp/region" run_channel dev >"$test_tmp/region.out" 2>"$test_tmp/region.err"; then
+    fail "dev refuses a region profile without $missing"
+  fi
+  if grep -Eq $'^(link|refresh)\t' "$log_file"; then
+    fail "dev refuses a profile without $missing before linking or refreshing pacman" "$(cat "$log_file")"
+  fi
+done
+touch "${cn_fragments[@]/#/$checkout/default/regions/cn/pacman/}"
 chmod -x "$checkout/bin/omarchy-apply-pacman"
 if OMARCHY_TEST_REGION_FILE="$test_tmp/region" run_channel dev >"$test_tmp/region.out" 2>"$test_tmp/region.err"; then
   fail "dev refuses a checkout whose pacman helper cannot run"
@@ -221,7 +237,7 @@ fi
 if grep -Eq $'^(link|refresh)\t' "$log_file"; then
   fail "dev refuses incomplete region support before linking or refreshing pacman" "$(cat "$log_file")"
 fi
-pass "dev refuses an empty region profile or a helper that cannot run"
+pass "dev refuses a region profile missing any fragment or a helper that cannot run"
 
 chmod +x "$checkout/bin/omarchy-apply-pacman"
 OMARCHY_TEST_REGION_FILE="$test_tmp/region" run_channel dev

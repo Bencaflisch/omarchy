@@ -55,10 +55,15 @@ validate_dev_region() {
   [[ -f $region_file ]] && region=$(<"$region_file")
   [[ $region == "global" ]] && return 0
 
-  # The refresh after linking needs a runnable helper and the edge fragments
-  # dev uses, not just a directory with the region's name.
-  local profile="$checkout/default/regions/$region/pacman"
-  if [[ ! -x $checkout/bin/omarchy-apply-pacman || ! -r $profile/pacman.conf.append || ! -r $profile/mirrorlist-edge.prepend ]]; then
+  # The refresh after linking needs a runnable helper and every fragment, not
+  # just a directory with the region's name: dev refreshes edge, and leaving
+  # dev later refreshes stable or rc with this checkout's tools.
+  local profile="$checkout/default/regions/$region/pacman" fragment supported=true
+  [[ -x $checkout/bin/omarchy-apply-pacman ]] || supported=false
+  for fragment in pacman.conf.append mirrorlist-stable.prepend mirrorlist-rc.prepend mirrorlist-edge.prepend; do
+    [[ -r $profile/$fragment ]] || supported=false
+  done
+  if ! $supported; then
     fail "$checkout does not support the '$region' region, so switching would drop its package repositories. Check out a branch with default/regions/$region, or remove $region_file to use global defaults."
   fi
 }
