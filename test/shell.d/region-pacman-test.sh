@@ -91,8 +91,8 @@ cmp "$ROOT/default/pacman/pacman-stable.conf" "$TARGET_ROOT/etc/pacman.conf"
 cmp "$ROOT/default/pacman/mirrorlist-stable" "$TARGET_ROOT/etc/pacman.d/mirrorlist"
 pass "users can opt out of regional repository defaults"
 
-# The shipped China profile is repository scaffolding only. Locale, timezone,
-# and input defaults are separate changes built on the same mechanism.
+# The shipped China profile is repository defaults only. Language, locale, and
+# input methods follow the installer's language choice, not the region.
 python3 - <<'PY'
 import os
 from pathlib import Path
@@ -103,3 +103,27 @@ assert packages == {"archlinuxcn-keyring"}, packages
 assert not (region / "skel").exists()
 PY
 pass "China profile adds only its repository keyring"
+
+# The installer derives the region from the chosen timezone, so every profile
+# needs a mapping, and no timezone may select two regions.
+python3 - <<'PY'
+import os
+from pathlib import Path
+
+zoneinfo = Path("/usr/share/zoneinfo")
+owners = {}
+for profile in sorted((Path(os.environ["ROOT"]) / "default/regions").iterdir()):
+    lines = (profile / "timezones").read_text().splitlines()
+    zones = [line.strip() for line in lines if line.strip() and not line.startswith("#")]
+    assert zones, f"{profile.name} maps no timezones"
+    for zone in zones:
+        assert zone not in owners, f"{zone} maps to {owners[zone]} and {profile.name}"
+        owners[zone] = profile.name
+        if zoneinfo.is_dir():
+            assert (zoneinfo / zone).is_file(), f"{profile.name} lists unknown timezone {zone}"
+
+china = {zone for zone, region in owners.items() if region == "cn"}
+assert {"Asia/Shanghai", "Asia/Urumqi"} <= china, china
+assert not china & {"Asia/Hong_Kong", "Asia/Macau", "Asia/Taipei"}, china
+PY
+pass "region profiles map each timezone to at most one region"
