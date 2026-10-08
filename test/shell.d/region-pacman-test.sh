@@ -124,6 +124,8 @@ for profile in sorted((Path(os.environ["ROOT"]) / "default/regions").iterdir()):
 
 # The installer offers tzdata's backward-compatible names too, so China
 # covers every name that links to its two zones and nothing else.
+# Without tzdata.zi (minimal containers) only the canonical zones can be
+# checked, so completeness is enforced where the host has the link table.
 china = {zone for zone, region in owners.items() if region == "cn"}
 expected = {"Asia/Shanghai", "Asia/Urumqi"}
 tzdata = zoneinfo / "tzdata.zi"
@@ -132,6 +134,8 @@ if tzdata.is_file():
         fields = line.split()
         if len(fields) == 3 and fields[0] == "L" and fields[1] in {"Asia/Shanghai", "Asia/Urumqi"}:
             expected.add(fields[2])
-assert china == expected, (china, expected)
+    assert china == expected, (china, expected)
+else:
+    assert expected <= china, (china, expected)
 PY
 pass "region profiles map each timezone to at most one region"
