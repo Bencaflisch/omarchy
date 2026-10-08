@@ -122,8 +122,16 @@ for profile in sorted((Path(os.environ["ROOT"]) / "default/regions").iterdir()):
         if zoneinfo.is_dir():
             assert (zoneinfo / zone).is_file(), f"{profile.name} lists unknown timezone {zone}"
 
+# The installer offers tzdata's backward-compatible names too, so China
+# covers every name that links to its two zones and nothing else.
 china = {zone for zone, region in owners.items() if region == "cn"}
-assert {"Asia/Shanghai", "Asia/Urumqi"} <= china, china
-assert not china & {"Asia/Hong_Kong", "Asia/Macau", "Asia/Taipei"}, china
+expected = {"Asia/Shanghai", "Asia/Urumqi"}
+tzdata = zoneinfo / "tzdata.zi"
+if tzdata.is_file():
+    for line in tzdata.read_text().splitlines():
+        fields = line.split()
+        if len(fields) == 3 and fields[0] == "L" and fields[1] in {"Asia/Shanghai", "Asia/Urumqi"}:
+            expected.add(fields[2])
+assert china == expected, (china, expected)
 PY
 pass "region profiles map each timezone to at most one region"
