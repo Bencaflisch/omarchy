@@ -213,7 +213,7 @@ if grep -Eq $'^(link|refresh)\t' "$log_file"; then
   fail "dev refuses an empty region profile before linking or refreshing pacman" "$(cat "$log_file")"
 fi
 mkdir -p "$checkout/default/regions/cn/pacman"
-touch "$checkout/default/regions/cn/pacman/pacman.conf.append" "$checkout/default/regions/cn/pacman/mirrorlist.append"
+touch "$checkout/default/regions/cn/pacman/pacman.conf.append" "$checkout/default/regions/cn/pacman/mirrorlist-edge.prepend"
 chmod -x "$checkout/bin/omarchy-apply-pacman"
 if OMARCHY_TEST_REGION_FILE="$test_tmp/region" run_channel dev >"$test_tmp/region.out" 2>"$test_tmp/region.err"; then
   fail "dev refuses a checkout whose pacman helper cannot run"

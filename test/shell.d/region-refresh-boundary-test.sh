@@ -7,7 +7,7 @@ source "$SHELL_TEST_DIR/fixtures/sudo-boundary-test.sh"
 copy_boundary_file bin/omarchy-refresh-pacman
 copy_boundary_file bin/omarchy-apply-pacman
 for file in default/pacman/pacman-rc.conf default/pacman/mirrorlist-rc \
-  default/regions/cn/pacman/pacman.conf.append default/regions/cn/pacman/mirrorlist.append; do
+  default/regions/cn/pacman/pacman.conf.append default/regions/cn/pacman/mirrorlist-rc.prepend; do
   copy_boundary_file "$file"
 done
 
@@ -63,7 +63,7 @@ PY
   printf '\n'
   cat "$ROOT/default/regions/cn/pacman/pacman.conf.append"
 } >"$boundary_tmp/expected-pacman.conf"
-cat "$ROOT/default/pacman/mirrorlist-rc" "$ROOT/default/regions/cn/pacman/mirrorlist.append" >"$boundary_tmp/expected-mirrorlist"
+cat "$ROOT/default/regions/cn/pacman/mirrorlist-rc.prepend" "$ROOT/default/pacman/mirrorlist-rc" >"$boundary_tmp/expected-mirrorlist"
 cmp -s "$boundary_tmp/expected-pacman.conf" "$SUDO_TEST_CAPTURE/etc/pacman.conf" ||
   fail "root installs the rendered China pacman.conf" "$(diff "$boundary_tmp/expected-pacman.conf" "$SUDO_TEST_CAPTURE/etc/pacman.conf" 2>&1)"
 cmp -s "$boundary_tmp/expected-mirrorlist" "$SUDO_TEST_CAPTURE/etc/pacman.d/mirrorlist" ||

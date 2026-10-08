@@ -27,12 +27,12 @@ pass "refresh keeps existing config file modes"
 printf 'cn\n' > "$TARGET_ROOT/etc/omarchy/region"
 for channel in stable rc edge; do
   case "$channel" in
-    stable) host=stable-mirror.omarchy.org ;;
-    rc) host=rc-mirror.omarchy.org ;;
-    edge) host=mirror.omarchy.org ;;
+    stable) host=stable-mirror.omarchy ;;
+    rc) host=rc-mirror.omarchy ;;
+    edge) host=mirror.omarchy ;;
   esac
   apply "$channel"
-  expected=$(printf 'Server = https://%s/$repo/os/$arch\nServer = https://mirrors.ustc.edu.cn/archlinux/$repo/os/$arch' "$host")
+  expected=$(printf 'Server = https://%s.cn/$repo/os/$arch\nServer = https://%s.org/$repo/os/$arch' "$host" "$host")
   [[ $(<"$TARGET_ROOT/etc/pacman.d/mirrorlist") == "$expected" ]] || fail "$channel mirror order and variables"
   {
     cat "$ROOT/default/pacman/pacman-$channel.conf"
@@ -43,7 +43,7 @@ for channel in stable rc edge; do
   cmp "$TARGET_ROOT/etc/pacman.conf.bak" "$TARGET_ROOT/etc/pacman.conf"
   cmp "$TARGET_ROOT/etc/pacman.d/mirrorlist.bak" "$TARGET_ROOT/etc/pacman.d/mirrorlist"
 done
-pass "China keeps each channel first, appends only CN defaults, and is idempotent"
+pass "China puts its channel mirror first, keeps the global one as fallback, and is idempotent"
 
 cp "$TARGET_ROOT/etc/pacman.conf" "$scratch/before.conf"
 cp "$TARGET_ROOT/etc/pacman.d/mirrorlist" "$scratch/before.mirrors"
@@ -75,8 +75,8 @@ mkdir -p "$scratch/rendered"
 "$ROOT/bin/omarchy-apply-pacman" --render rc "$scratch/rendered" "$TARGET_ROOT"
 rg -qxF 'Server = https://pkgs.omarchy.org/rc/$arch' "$scratch/rendered/pacman.conf"
 rg -qxF '[archlinuxcn]' "$scratch/rendered/pacman.conf"
-[[ $(<"$scratch/rendered/mirrorlist") == $'Server = https://rc-mirror.omarchy.org/$repo/os/$arch\nServer = https://mirrors.ustc.edu.cn/archlinux/$repo/os/$arch' ]] ||
-  fail "render keeps the channel mirror first"
+[[ $(<"$scratch/rendered/mirrorlist") == $'Server = https://rc-mirror.omarchy.cn/$repo/os/$arch\nServer = https://rc-mirror.omarchy.org/$repo/os/$arch' ]] ||
+  fail "render puts the regional channel mirror first"
 cmp "$scratch/before.conf" "$TARGET_ROOT/etc/pacman.conf"
 pass "render builds the regional channel files without touching the target"
 

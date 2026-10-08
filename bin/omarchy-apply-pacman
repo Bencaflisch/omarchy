@@ -62,14 +62,17 @@ else
   trap 'rm -rf "$staging"' EXIT
 fi
 cp "$templates/pacman-$channel.conf" "$staging/pacman.conf"
-cp "$templates/mirrorlist-$channel" "$staging/mirrorlist"
 # Regional profiles carry x86 repositories only so far, so other platforms keep
 # their channel templates as they are.
-if [[ $region != "global" && $platform == "x86" ]]; then
+if [[ $region == "global" || $platform != "x86" ]]; then
+  cp "$templates/mirrorlist-$channel" "$staging/mirrorlist"
+else
   profile="$OMARCHY_PATH/default/regions/$region/pacman"
   printf '\n' >> "$staging/pacman.conf"
   cat "$profile/pacman.conf.append" >> "$staging/pacman.conf"
-  cat "$profile/mirrorlist.append" >> "$staging/mirrorlist"
+  # pacman tries servers in order, so the regional mirror leads and the
+  # channel's own mirror stays as the fallback.
+  cat "$profile/mirrorlist-$channel.prepend" "$templates/mirrorlist-$channel" > "$staging/mirrorlist"
 fi
 [[ -z $render_dir ]] || exit 0
 
