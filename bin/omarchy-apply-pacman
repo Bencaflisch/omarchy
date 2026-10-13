@@ -46,7 +46,7 @@ esac
 
 # Each platform has its own channel templates (install/helpers/pacman.sh).
 source "$OMARCHY_PATH/install/helpers/pacman.sh"
-platform=$("$OMARCHY_PATH/bin/omarchy-hw-platform")
+platform=$(omarchy-hw-platform)
 templates=$(omarchy_pacman_templates "$platform")
 if [[ ! -f $templates/pacman-$channel.conf || ! -f $templates/mirrorlist-$channel ]]; then
   echo "Omarchy has no $channel channel for $platform." >&2

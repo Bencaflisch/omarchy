@@ -8,13 +8,15 @@ trap 'rm -rf "$scratch"' EXIT
 export TARGET_ROOT="$scratch/target root"
 mkdir -p "$TARGET_ROOT/etc/omarchy"
 
-# A package root with the platform pinned, so no test reads the host's hardware.
-# x86 unless a test says otherwise.
+# The platform is pinned, so no test reads the host's hardware: x86 unless a
+# test says otherwise.
+mkdir -p "$scratch/bin"
+printf '#!/bin/bash\necho "${REGION_TEST_PLATFORM:-x86}"\n' > "$scratch/bin/omarchy-hw-platform"
+chmod +x "$scratch/bin/omarchy-hw-platform"
+export PATH="$scratch/bin:$PATH"
 fixture_root() {
-  mkdir -p "$1/bin" "$1/install/helpers"
+  mkdir -p "$1/install/helpers"
   cp "$ROOT/install/helpers/pacman.sh" "$1/install/helpers/"
-  printf '#!/bin/bash\necho "${REGION_TEST_PLATFORM:-x86}"\n' > "$1/bin/omarchy-hw-platform"
-  chmod +x "$1/bin/omarchy-hw-platform"
 }
 export OMARCHY_PATH="$scratch/root"
 fixture_root "$OMARCHY_PATH"
