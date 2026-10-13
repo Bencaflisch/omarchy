@@ -5,9 +5,20 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
-export OMARCHY_PATH="$ROOT"
 export TARGET_ROOT="$scratch/target root"
 mkdir -p "$TARGET_ROOT/etc/omarchy"
+
+# A package root with the platform pinned, so no test reads the host's hardware.
+# x86 unless a test says otherwise.
+fixture_root() {
+  mkdir -p "$1/bin" "$1/install/helpers"
+  cp "$ROOT/install/helpers/pacman.sh" "$1/install/helpers/"
+  printf '#!/bin/bash\necho "${REGION_TEST_PLATFORM:-x86}"\n' > "$1/bin/omarchy-hw-platform"
+  chmod +x "$1/bin/omarchy-hw-platform"
+}
+export OMARCHY_PATH="$scratch/root"
+fixture_root "$OMARCHY_PATH"
+cp -a "$ROOT/default" "$OMARCHY_PATH/"
 
 apply() { "$ROOT/bin/omarchy-apply-pacman" "$1" "$TARGET_ROOT"; }
 
@@ -58,12 +69,14 @@ done
 pass "unsupported and malformed regions fail before replacing either config"
 
 printf 'cn\n' > "$TARGET_ROOT/etc/omarchy/region"
+fixture_root "$scratch/incomplete"
 mkdir -p "$scratch/incomplete/default/regions/cn/pacman"
 cp -a "$ROOT/default/pacman" "$scratch/incomplete/default/"
 cp "$ROOT/default/regions/cn/pacman/pacman.conf.append" "$scratch/incomplete/default/regions/cn/pacman/"
 if OMARCHY_PATH="$scratch/incomplete" apply stable > "$scratch/error" 2>&1; then
   fail "incomplete region profile accepted"
 fi
+rg -q 'mirrorlist-stable.prepend' "$scratch/error" || fail "incomplete profile fails on the missing fragment" "$(<"$scratch/error")"
 cmp "$scratch/before.conf" "$TARGET_ROOT/etc/pacman.conf"
 cmp "$scratch/before.mirrors" "$TARGET_ROOT/etc/pacman.d/mirrorlist"
 pass "missing fragment cannot leave a half-generated config"
@@ -84,6 +97,18 @@ if "$ROOT/bin/omarchy-apply-pacman" --render dev "$scratch/rendered" "$TARGET_RO
   fail "render accepts a nonexistent dev pacman template"
 fi
 pass "render rejects channels without pacman templates"
+
+# The China profile's mirrors are x86 repositories, so an ARM platform keeps its
+# own channel templates in that region.
+for platform in aarch64 aarch64-apple; do
+  REGION_TEST_PLATFORM=$platform apply edge
+  cmp "$ROOT/default/pacman/$platform/pacman-edge.conf" "$TARGET_ROOT/etc/pacman.conf"
+  cmp "$ROOT/default/pacman/$platform/mirrorlist-edge" "$TARGET_ROOT/etc/pacman.d/mirrorlist"
+  if REGION_TEST_PLATFORM=$platform apply stable > "$scratch/error" 2>&1; then
+    fail "$platform accepted a channel it has no templates for"
+  fi
+done
+pass "ARM platforms apply their own templates and keep regional x86 mirrors out"
 
 printf 'global\n' > "$TARGET_ROOT/etc/omarchy/region"
 apply stable
