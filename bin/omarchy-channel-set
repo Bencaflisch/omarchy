@@ -60,7 +60,7 @@ validate_dev_region() {
   # dev later refreshes stable or rc with this checkout's tools.
   local profile="$checkout/default/regions/$region/pacman" fragment supported=true
   [[ -x $checkout/bin/omarchy-apply-pacman ]] || supported=false
-  for fragment in pacman.conf.append mirrorlist-stable.prepend mirrorlist-rc.prepend mirrorlist-edge.prepend; do
+  for fragment in omarchy-{stable,rc,edge}.prepend mirrorlist-{stable,rc,edge}.prepend; do
     [[ -r $profile/$fragment ]] || supported=false
   done
   if ! $supported; then

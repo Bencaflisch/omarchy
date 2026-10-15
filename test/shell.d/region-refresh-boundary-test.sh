@@ -7,7 +7,7 @@ source "$SHELL_TEST_DIR/fixtures/sudo-boundary-test.sh"
 copy_boundary_file bin/omarchy-refresh-pacman
 copy_boundary_file bin/omarchy-apply-pacman
 for file in default/pacman/pacman-rc.conf default/pacman/mirrorlist-rc \
-  default/regions/cn/pacman/pacman.conf.append default/regions/cn/pacman/mirrorlist-rc.prepend; do
+  default/regions/cn/pacman/omarchy-rc.prepend default/regions/cn/pacman/mirrorlist-rc.prepend; do
   copy_boundary_file "$file"
 done
 
@@ -58,11 +58,8 @@ assert render[0] < copies[0], events
 transaction = next(i for i, e in enumerate(events) if e.startswith('step:pacman '))
 assert max(copies) < transaction, events
 PY
-{
-  cat "$ROOT/default/pacman/pacman-rc.conf"
-  printf '\n'
-  cat "$ROOT/default/regions/cn/pacman/pacman.conf.append"
-} >"$boundary_tmp/expected-pacman.conf"
+sed "/^\[omarchy\]\$/r $ROOT/default/regions/cn/pacman/omarchy-rc.prepend" \
+  "$ROOT/default/pacman/pacman-rc.conf" >"$boundary_tmp/expected-pacman.conf"
 cat "$ROOT/default/regions/cn/pacman/mirrorlist-rc.prepend" "$ROOT/default/pacman/mirrorlist-rc" >"$boundary_tmp/expected-mirrorlist"
 cmp -s "$boundary_tmp/expected-pacman.conf" "$SUDO_TEST_CAPTURE/etc/pacman.conf" ||
   fail "root installs the rendered China pacman.conf" "$(diff "$boundary_tmp/expected-pacman.conf" "$SUDO_TEST_CAPTURE/etc/pacman.conf" 2>&1)"

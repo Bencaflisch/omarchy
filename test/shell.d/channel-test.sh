@@ -213,7 +213,7 @@ if grep -Eq $'^(link|refresh)\t' "$log_file"; then
   fail "dev refuses an empty region profile before linking or refreshing pacman" "$(cat "$log_file")"
 fi
 mkdir -p "$checkout/default/regions/cn/pacman"
-cn_fragments=(pacman.conf.append mirrorlist-stable.prepend mirrorlist-rc.prepend mirrorlist-edge.prepend)
+cn_fragments=(omarchy-stable.prepend omarchy-rc.prepend omarchy-edge.prepend mirrorlist-stable.prepend mirrorlist-rc.prepend mirrorlist-edge.prepend)
 for missing in "${cn_fragments[@]}"; do
   for fragment in "${cn_fragments[@]}"; do
     if [[ $fragment == "$missing" ]]; then

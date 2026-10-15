@@ -61,17 +61,24 @@ else
   staging=$(mktemp -d)
   trap 'rm -rf "$staging"' EXIT
 fi
-cp "$templates/pacman-$channel.conf" "$staging/pacman.conf"
-# Regional profiles carry x86 repositories only so far, so other platforms keep
+# Regional profiles carry x86 mirrors only so far, so other platforms keep
 # their channel templates as they are.
 if [[ $region == "global" || $platform != "x86" ]]; then
+  cp "$templates/pacman-$channel.conf" "$staging/pacman.conf"
   cp "$templates/mirrorlist-$channel" "$staging/mirrorlist"
 else
   profile="$OMARCHY_PATH/default/regions/$region/pacman"
-  printf '\n' >> "$staging/pacman.conf"
-  cat "$profile/pacman.conf.append" >> "$staging/pacman.conf"
-  # pacman tries servers in order, so the regional mirror leads and the
-  # channel's own mirror stays as the fallback.
+  for fragment in "omarchy-$channel.prepend" "mirrorlist-$channel.prepend"; do
+    [[ -r $profile/$fragment ]] || { echo "Region $region lacks $profile/$fragment" >&2; exit 1; }
+  done
+  # pacman tries servers in order, so each regional mirror leads and the
+  # channel's own server stays as the fallback, for [omarchy] and for Arch.
+  awk -v fragment="$profile/omarchy-$channel.prepend" '
+    { print }
+    $0 == "[omarchy]" { while ((getline line < fragment) > 0) print line; found++ }
+    END { exit found == 1 ? 0 : 1 }
+  ' "$templates/pacman-$channel.conf" > "$staging/pacman.conf" ||
+    { echo "pacman-$channel.conf has no single [omarchy] section" >&2; exit 1; }
   cat "$profile/mirrorlist-$channel.prepend" "$templates/mirrorlist-$channel" > "$staging/mirrorlist"
 fi
 
