@@ -45,16 +45,16 @@ import re
 import sys
 events = open(sys.argv[1]).read().splitlines()
 root = sys.argv[2]
-render = [i for i, e in enumerate(events) if e.startswith('step:cp ' + root + '/default/pacman/pacman-rc.conf ')]
-assert len(render) == 1, events
-rendered = events[render[0]].split()[-1].rsplit('/', 1)[0]
 copies = [i for i, e in enumerate(events) if e.startswith('sudo -N cp ')]
+# The China render writes pacman.conf itself, so the rendered directory is the
+# one root copies from, and it is a scratch directory, never the templates.
+rendered = events[copies[2]].split()[-2].rsplit('/', 1)[0]
+assert not rendered.startswith(root), events
 assert [events[i] for i in copies[2:]] == [
     f'sudo -N cp -f {rendered}/pacman.conf /etc/pacman.conf',
     f'sudo -N cp -f {rendered}/mirrorlist /etc/pacman.d/mirrorlist',
 ], events
 assert not any(e.startswith('sudo ') and 'omarchy-apply-pacman' in e for e in events), events
-assert render[0] < copies[0], events
 transaction = next(i for i, e in enumerate(events) if e.startswith('step:pacman '))
 assert max(copies) < transaction, events
 PY

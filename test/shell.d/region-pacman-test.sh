@@ -51,7 +51,7 @@ for channel in stable rc edge; do
   sed "/^\[omarchy\]\$/a Server = https://pkgs.omarchy.cn/$channel/\$arch" \
     "$ROOT/default/pacman/pacman-$channel.conf" > "$scratch/expected.conf"
   cmp "$scratch/expected.conf" "$TARGET_ROOT/etc/pacman.conf"
-  diff "$ROOT/default/pacman/pacman-$channel.conf" "$TARGET_ROOT/etc/pacman.conf" | grep -c '^>' | grep -qx 1 ||
+  { diff "$ROOT/default/pacman/pacman-$channel.conf" "$TARGET_ROOT/etc/pacman.conf" || true; } | grep -c '^>' | grep -qx 1 ||
     fail "$channel China pacman.conf adds exactly one line"
   apply "$channel"
   cmp "$TARGET_ROOT/etc/pacman.conf.bak" "$TARGET_ROOT/etc/pacman.conf"
