@@ -7,25 +7,35 @@ source "$SHELL_TEST_DIR/fixtures/passwordless-sudo-test.sh"
 # Under sudo's default verifypw=all, `sudo -v` asks for a password unless every
 # entry the user has is passwordless. The installer's own admin grant is
 # password-requiring, so a user who asked for passwordless sudo could not
-# validate their credentials without a password. The published grant therefore
+# validate credentials without a password. The published grant therefore
 # carries the sudoers default that makes validation read the grant instead of
-# every other entry in the policy.
+# every other entry in the policy. The default names the account that asked
+# for the grant, so it changes the rule for that account alone.
 
 (
   source "$library"
   enable_locked 1000 15
-  head -1 "$(rule_file 1000)" | grep -qx 'Defaults verifypw = any'
-  tail -1 "$(rule_file 1000)" | grep -qx 'audituser ALL=(ALL) NOTAFTER=[0-9]\{14\}Z NOPASSWD: ALL'
+  head -1 "$(rule_file 1000)" | grep -qx 'Defaults:audituser verifypw = any'
+  tail -1 "$(rule_file 1000)" | grep -qxE 'audituser ALL=\(ALL\) NOTAFTER=[0-9]{14}Z NOPASSWD: ALL'
 )
 pass "the published grant carries the sudoers default above its rule"
 
 (
   source "$library"
   enable_locked 1000 permanent
-  head -1 "$(rule_file 1000 permanent)" | grep -qx 'Defaults verifypw = any'
+  head -1 "$(rule_file 1000 permanent)" | grep -qx 'Defaults:audituser verifypw = any'
   tail -1 "$(rule_file 1000 permanent)" | grep -qx 'audituser ALL=(ALL) NOPASSWD: ALL'
 )
 pass "a permanent grant carries the sudoers default above its rule"
+
+# The default is scoped to the account that asked for the grant, so it never
+# changes the rule for another account on the host.
+(
+  source "$library"
+  enable_locked 1000 15
+  ! grep -q '^Defaults verifypw' "$(rule_file 1000)"
+)
+pass "the published default is scoped to the account that asked for the grant"
 
 # A grant published before the default existed is still this command's grant,
 # so it keeps working until it is rewritten.
@@ -38,6 +48,15 @@ pass "a permanent grant carries the sudoers default above its rule"
 )
 pass "a grant published before the default existed is still read as the user's grant"
 
+# A default that names another account is not this command's grant.
+(
+  source "$library"
+  reset_grant
+  printf 'Defaults:root verifypw = any\naudituser ALL=(ALL) NOPASSWD: ALL\n' >"$(rule_file 1000 permanent)"
+  assert_status 2 read_grant 1000
+)
+pass "a default that names another account is not read as the user's grant"
+
 # The upgrade rewrites such a grant in place, keeping the rule and its
 # deadline exactly as they were.
 (
@@ -45,7 +64,7 @@ pass "a grant published before the default existed is still read as the user's g
   reset_grant
   printf 'audituser ALL=(ALL) NOTAFTER=20261231235959Z NOPASSWD: ALL\n' >"$(rule_file 1000)"
   upgrade_grant_format_locked
-  head -1 "$(rule_file 1000)" | grep -qx 'Defaults verifypw = any'
+  head -1 "$(rule_file 1000)" | grep -qx 'Defaults:audituser verifypw = any'
   tail -1 "$(rule_file 1000)" | grep -qx 'audituser ALL=(ALL) NOTAFTER=20261231235959Z NOPASSWD: ALL'
   [[ $(wc -l <"$(rule_file 1000)") == 2 ]]
 )
@@ -58,6 +77,7 @@ pass "the upgrade rewrites a grant published before the default existed"
   upgrade_grant_format_locked
   upgrade_grant_format_locked
   [[ $(wc -l <"$(rule_file 1000 permanent)") == 2 ]]
+  head -1 "$(rule_file 1000 permanent)" | grep -qx 'Defaults:audituser verifypw = any'
   tail -1 "$(rule_file 1000 permanent)" | grep -qx 'audituser ALL=(ALL) NOPASSWD: ALL'
 )
 pass "the upgrade leaves a grant that already carries the default alone"
