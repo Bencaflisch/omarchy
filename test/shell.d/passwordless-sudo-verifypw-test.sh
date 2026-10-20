@@ -91,3 +91,21 @@ pass "the upgrade leaves a grant that already carries the default alone"
   [[ $(cat "$test_tmp/etc/sudoers.d/99-omarchy-nopasswd-custom") == 'admin ALL=(ALL) NOPASSWD: /usr/bin/true' ]]
 )
 pass "the upgrade leaves administrator policy under the generated prefix alone"
+
+# The migration reaches the upgrade through the command's own dispatch, so the
+# action has to be reachable from the executable and not only from inside it.
+(
+  PATH="$test_tmp/bin:$PATH" TEST_EUID=0 "$test_tmp/omarchy-sudo-passwordless" __upgrade-grant-format
+)
+pass "the upgrade action is reachable through the command's own dispatch"
+
+# The migration itself has to run: it reaches the upgrade through that
+# dispatch, and a failure there would stop the queue and leave every later
+# migration pending.
+mkdir -p "$test_tmp/source/bin"
+ln -sf "$test_tmp/omarchy-sudo-passwordless" "$test_tmp/source/bin/omarchy-sudo-passwordless"
+(
+  PATH="$test_tmp/bin:$PATH" TEST_MIGRATION=1 OMARCHY_PATH="$test_tmp/source" \
+    /usr/bin/bash "$ROOT/migrations/1792527479.sh"
+)
+pass "the migration runs the upgrade through the command's own dispatch"
