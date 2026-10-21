@@ -90,6 +90,7 @@ for (let i = 0; i < 1000; i++) {
   assert.equal(real.groupKey, 'web:app.slack.com')
   assert.equal(real.source, 'app.slack.com')
   assert.equal(id('Chromium', '<a href="https://evil.example/">bank.example</a>hi').source, 'evil.example', 'the href is the origin')
+  assert.equal(id('Brave Origin', '<a href="https://app.basecamp.com/">app.basecamp.com</a>\n\nKendall: hi').groupKey, 'web:app.basecamp.com')
   // A restored row cannot claim a site either unless it came from a browser.
   assert.equal(Store.restored({ key: 'r', app: 'Chat', source: 'bank.example' }).groupKey, 'app:chat')
   assert.equal(Store.restored({ key: 'r', app: 'Chromium', source: 'app.slack.com' }).groupKey, 'web:app.slack.com')
