@@ -188,7 +188,7 @@ if script -qec true /dev/null >/dev/null 2>&1; then
 #!/bin/bash
 case $2 in
   listPlugins)
-    printf '[{"id":"omarchy.monitor","enabled":%s},{"id":"acme.display","enabled":false}]\n' "$SOURCE_ON_BAR" ;;
+    printf '[{"id":"omarchy.monitor","enabled":%s},{"id":"acme.display","enabled":false},{"id":"acme.odd","enabled":false}]\n' "$SOURCE_ON_BAR" ;;
   enablePlugin)
     printf '%s\n' "$4" >"$ENABLE_LOG"
     echo ok ;;
@@ -218,7 +218,7 @@ STUB
     mkdir -p "$home"
     SOURCE_ON_BAR="$1" ENABLE_LOG="$TMPDIR/enable-log" CHOOSE_MARKER="$TMPDIR/choose-marker" \
       HOME="$home" OMARCHY_PATH="$ROOT" PATH="$place_stubs:$ROOT/bin:$PATH" \
-      script -qec "omarchy-plugin-add '$clone_repo' --enable" /dev/null 2>&1
+      script -qec "omarchy-plugin-add '${2:-$clone_repo}' --enable" /dev/null 2>&1
   }
 
   output=$(add_clone true) || fail "plugin add enables a clone whose source is on the bar" "$output"
@@ -234,6 +234,19 @@ STUB
   [[ $(cat "$TMPDIR/enable-log") == '{"section":"right"}' ]] ||
     fail "plugin add places a clone whose source is off the bar where asked" "$(cat "$TMPDIR/enable-log")"
   pass "plugin add asks where to put a clone whose source is off the bar"
+
+  odd_repo="$TMPDIR/odd-repo"
+  write_plugin "$odd_repo" "acme.odd" "Odd"
+  jq '.omarchy = "not an object"' "$odd_repo/manifest.json" >"$odd_repo/manifest.tmp"
+  mv "$odd_repo/manifest.tmp" "$odd_repo/manifest.json"
+  git -C "$odd_repo" init -q
+  git -C "$odd_repo" add .
+  git -C "$odd_repo" -c user.name=Test -c user.email=test@example.com commit -qm "Initial"
+
+  output=$(add_clone false "$odd_repo") || fail "plugin add enables a widget whose omarchy metadata is not an object" "$output"
+  [[ $(cat "$TMPDIR/enable-log") == '{"section":"right"}' ]] ||
+    fail "plugin add places a widget whose omarchy metadata is not an object" "$output"
+  pass "plugin add treats omarchy metadata that is not an object as no clone"
 else
   skip "script -qec unavailable; skipping the interactive clone placement cases"
 fi
