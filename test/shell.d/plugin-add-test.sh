@@ -188,7 +188,7 @@ if script -qec true /dev/null >/dev/null 2>&1; then
 #!/bin/bash
 case $2 in
   listPlugins)
-    printf '[{"id":"omarchy.monitor","enabled":%s},{"id":"acme.display","enabled":false},{"id":"acme.odd","enabled":false}]\n' "$SOURCE_ON_BAR" ;;
+    printf '[{"id":"omarchy.monitor","enabled":%s},{"id":"acme.display","enabled":false,"clonedFrom":"omarchy.monitor"},{"id":"acme.odd","enabled":false,"clonedFrom":""}]\n' "$SOURCE_ON_BAR" ;;
   enablePlugin)
     printf '%s\n' "$4" >"$ENABLE_LOG"
     echo ok ;;
