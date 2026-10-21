@@ -95,7 +95,7 @@ CLAIMED_PROVIDERS = {
   "alibaba-coding-plan", "alibaba-coding-plan-cn", "alibaba-token-plan", "alibaba-token-plan-cn",  # qwen
   "qwen-token-plan", "qwen-token-plan-cn", "qwen-token-plan-individual", "qwen-portal",  # qwen
   "synthetic",  # synthetic
-  "zai", "zhipu",  # zai
+  "zai", "zai-coding-cn", "zai-coding-plan", "zhipu-coding-plan", "zhipuai", "zhipuai-coding-plan",  # zai
 }
 
 # The Codex collector counts rollouts on the built-in provider, and ones too
