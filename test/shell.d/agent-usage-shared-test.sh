@@ -487,8 +487,8 @@ try:
 except collectors.HttpError as error:
   dripped = error
 check(
-  "a reply dripping a byte at a time runs out of time as a transport failure instead of holding the collector",
-  dripped is not None and dripped.transport and time.monotonic() - began < 5,
+  "a reply dripping a byte at a time runs out of time as one cut short instead of holding the collector",
+  dripped is not None and dripped.cut_short and not dripped.transport and time.monotonic() - began < 5,
   repr(dripped and vars(dripped)),
 )
 bad_key = urllib.request.Request("https://example.invalid", headers={"Authorization": "Bearer sk-secret\nX: y"})

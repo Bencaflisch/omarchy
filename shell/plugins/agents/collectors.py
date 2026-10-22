@@ -1114,6 +1114,10 @@ class HttpError(Exception):
     self.headers = headers
 
 
+class _TooSlow(Exception):
+  """A reply still arriving at the deadline."""
+
+
 def _read_by(response: Any, size: int, deadline: float) -> bytes:
   """Up to `size` bytes of a reply, by `deadline`. The socket timeout only
   bounds each wait, so a server dripping a byte at a time would otherwise
@@ -1123,7 +1127,7 @@ def _read_by(response: Any, size: int, deadline: float) -> bytes:
   chunks, got = [], 0
   while got < size:
     if time.monotonic() > deadline:
-      raise TimeoutError("reply too slow")
+      raise _TooSlow()
     chunk = response.read1(min(65536, size - got))
     if not chunk:
       break
@@ -1147,6 +1151,10 @@ def open_json(request: urllib.request.Request, timeout: float = 10, limit: int =
     except Exception:
       body = b""
     raise HttpError(status=error.code, body=body, headers=error.headers) from error
+  except _TooSlow as error:
+    # The server answered, just never finished: a reply cut short, so no
+    # reason to ask again sooner.
+    raise HttpError(cut_short=True) from error
   except OSError as error:
     # URLError and every socket failure, a reset and a timeout included: the
     # connection failed or dropped before a reply. RemoteDisconnected is
