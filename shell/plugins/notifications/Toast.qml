@@ -471,32 +471,8 @@ Item {
                 color: Commons.Color.notifications.text
                 opacity: 0.9
                 font.family: Style.font.family
-                font.pixelSize: Style.font.body * card.fontScale
+                font.pixelSize: Style.font.body
               }
-            }
-          }
-
-          Rectangle {
-            id: badge
-            // The row, not the time inside it: Qt only anchors to siblings.
-            anchors.right: rightSide.left
-            anchors.rightMargin: Style.space(6)
-            anchors.verticalCenter: title.verticalCenter
-            visible: card.stands > 1
-            width: badgeText.implicitWidth + Style.spacing.sm * 2
-            height: badgeText.implicitHeight + Style.spacing.xxs * 2
-            radius: Style.cornerRadius
-            color: Style.normalFillFor(Commons.Color.notifications.text, card.accentColor,
-                                       Commons.Color.urgent)
-
-            Text {
-              textFormat: Text.PlainText
-              id: badgeText
-              anchors.centerIn: parent
-              text: I18n.formatNumber(card.stands)
-              color: card.dimColor
-              font.family: Style.font.family
-              font.pixelSize: Style.font.caption * card.fontScale
             }
           }
 
@@ -506,11 +482,11 @@ Item {
             anchors.verticalCenter: title.verticalCenter
             spacing: Style.space(5)
 
-            // The time and the close mark share one square and crossfade on
-            // hover, so nothing in the headline moves.
+            // The time and the hover controls (snooze, close) share one
+            // square and crossfade, so nothing in the headline moves.
             Item {
-              width: Math.max(stamp.implicitWidth, shut.implicitWidth)
-              height: Math.max(stamp.implicitHeight, shut.implicitHeight)
+              width: Math.max(stamp.implicitWidth, controls.implicitWidth)
+              height: Math.max(stamp.implicitHeight, controls.implicitHeight)
               anchors.verticalCenter: parent.verticalCenter
 
               Text {
@@ -522,38 +498,70 @@ Item {
                 opacity: card.hovered ? 0 : 1
                 visible: opacity > 0.01
                 font.family: Style.font.family
-                font.pixelSize: Style.font.bodySmall * card.fontScale
+                font.pixelSize: Style.font.bodySmall
                 Behavior on opacity { NumberAnimation { duration: card.fade } }
               }
 
-              Item {
-                id: shut
-                anchors.centerIn: parent
-                implicitWidth: closeMark.implicitWidth + Style.space(6)
-                implicitHeight: closeMark.implicitHeight
-                readonly property bool hot: card.pointerOver(shut)
+              Row {
+                id: controls
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
                 enabled: card.hovered
                 opacity: card.hovered ? 1 : 0
                 visible: opacity > 0.01
                 Behavior on opacity { NumberAnimation { duration: card.fade } }
 
-                Text {
-                  id: closeMark
-                  anchors.centerIn: parent
-                  textFormat: Text.PlainText
-                  text: "✕"
-                  color: shut.hot ? Commons.Color.notifications.text : card.dimColor
-                  font.pixelSize: Math.round(Style.font.caption * 1.44 * card.fontScale)
+                // Opens the snooze choices, as a right-click does.
+                Item {
+                  id: nap
+                  anchors.verticalCenter: parent.verticalCenter
+                  implicitWidth: napMark.implicitWidth + Style.space(6)
+                  implicitHeight: napMark.implicitHeight
+                  readonly property bool hot: card.pointerOver(nap)
+
+                  Text {
+                    id: napMark
+                    anchors.centerIn: parent
+                    textFormat: Text.PlainText
+                    text: "\u{f04b2}"
+                    color: nap.hot || card.menuOpen ? Commons.Color.notifications.text : card.dimColor
+                    font.family: Style.font.family
+                    font.pixelSize: Math.round(Style.font.caption * 1.44)
+                  }
+
+                  MouseArea {
+                    anchors.fill: parent
+                    anchors.margins: -Style.space(3)
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: card.menuOpen = !card.menuOpen
+                  }
                 }
 
-                MouseArea {
-                  anchors.fill: parent
-                  anchors.margins: -Style.space(3)
-                  acceptedButtons: Qt.LeftButton | Qt.RightButton
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: function(mouse) {
-                    if (mouse.button === Qt.RightButton) card.menuOpen = !card.menuOpen
-                    else card.dismissed()
+                Item {
+                  id: shut
+                  anchors.verticalCenter: parent.verticalCenter
+                  implicitWidth: closeMark.implicitWidth + Style.space(6)
+                  implicitHeight: closeMark.implicitHeight
+                  readonly property bool hot: card.pointerOver(shut)
+
+                  Text {
+                    id: closeMark
+                    anchors.centerIn: parent
+                    textFormat: Text.PlainText
+                    text: "✕"
+                    color: shut.hot ? Commons.Color.notifications.text : card.dimColor
+                    font.pixelSize: Math.round(Style.font.caption * 1.44)
+                  }
+
+                  MouseArea {
+                    anchors.fill: parent
+                    anchors.margins: -Style.space(3)
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: function(mouse) {
+                      if (mouse.button === Qt.RightButton) card.menuOpen = !card.menuOpen
+                      else card.dismissed()
+                    }
                   }
                 }
               }

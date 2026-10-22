@@ -8,7 +8,7 @@ Notifications from the same app or site stack into a deck, so a chatty Slack cha
 
 Cards offer what they carry: _Copy code_ for verification codes (kept out of [clipboard history](08-unified-clipboard-history.md) and cleared after a minute), _Open link_, _Join_ for meetings, _Copy number_ for phone numbers, plus any buttons the app provides.
 
-Right-click a card to snooze its source or turn on Do Not Disturb. Snoozed notifications are held back, not thrown away.
+Hover a card and click the zzz next to its close mark, or right-click the card, to snooze its source for 15 minutes, an hour, or until tomorrow morning. Snoozed notifications are held back, not thrown away.
 
 Right-click the bell in the bar (hover the middle of the bar to reveal it) to open the notification panel: what's been held back, recent notifications, and the past day's history. From there you can snooze everything, wake a snoozed source, or choose whether verification codes get through while you're quiet (they do by default). The cog opens preferences for which display to use, stepping aside for fullscreen games, and the screen-sharing snooze. When you share your screen, the bell offers a timed snooze; nothing is muted until you pick one.
 

@@ -32,7 +32,7 @@ The surface is one fixed-width `WlrLayer.Overlay` window per output (namespace `
 
 ## Toast lifecycle
 
-A card stays at least 5s (low), 8s (normal), or until dismissed (critical), stretched up to 30s by a longer `expire_timeout`. The countdown pauses while the deck is open; a content update restarts it. Left-click activates, middle-click dismisses, right-click opens the source menu (snooze, Do Not Disturb).
+A card stays at least 5s (low), 8s (normal), or until dismissed (critical), stretched up to 30s by a longer `expire_timeout`. The countdown pauses while the deck is open; a content update restarts it. Left-click activates, middle-click dismisses, the zzz beside the close mark on hover, or a right-click, opens the source's snooze choices (15 minutes, an hour, tomorrow at 8).
 
 A click tries, in order: the card's `omarchy-exec-argv` command; the sender's `default` action; the sender's window by pid; a window showing the source (exact class, then for a site a browser window whose title names it); the site itself; the first link in the text; `omarchy-hyprland-focus-app` by app name.
 
