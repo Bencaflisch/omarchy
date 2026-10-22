@@ -288,6 +288,18 @@ expect("Codex rereads per-file totals after a timezone change", list(file_cache(
 record = incremental()
 expect("Codex keeps the usage read before a line that stops the read", record["modelUsage"].get("gpt-broken", {}).get("inputTokens"), 6, record)
 
+# A scan that couldn't read a rollout serves its own run, but isn't cached as
+# the whole story: the next run reads it again.
+if os.geteuid() != 0:
+  new_home()
+  unreadable = rollout("unreadable.jsonl", context("gpt-test"), tokens(7, 0))
+  unreadable.chmod(0)
+  partial = codex("--force")
+  unreadable.chmod(0o644)
+  record = codex("--limits-only")
+  expect("Codex never caches a scan that couldn't read a rollout",
+         [partial["todayTotalTokens"], record["todayTotalTokens"]], [0, 7], record)
+
 # ------------------------------------------------------- pi and opencode
 
 # pi and omp replies count on the openai-codex provider or the Responses API

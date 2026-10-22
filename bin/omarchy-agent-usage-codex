@@ -237,6 +237,8 @@ def scan_opencode_sessions():
 
 
 def scan_native_codex_sessions(cached_files, scanned_files):
+  """Fold every native rollout into the run, and say whether each was read in
+  full."""
   home = codex_home()
   roots = [home / "sessions", home / "archived_sessions"]
   files = []
@@ -252,14 +254,18 @@ def scan_native_codex_sessions(cached_files, scanned_files):
       if stat_result.st_mtime >= cutoff:
         files.append((path, stat_result))
 
+  complete = True
   for path, stat_result in files:
     key = str(path)
     record = reusable_record(cached_files, key, stat_result)
     if record is None:
       record = read_native_codex_session(path, stat_result)
-    if record["mtime"] is not None:
+    if record["mtime"] is None:
+      complete = False
+    else:
       scanned_files[key] = record
     merge_file_record(key, record)
+  return complete
 
 
 # The rollout lines the reader parses: usage, the model and provider serving
@@ -453,7 +459,7 @@ def run_local_scans(max_age):
   cached_files = read_file_cache() if max_age > 0 else {}
   scanned_files = {}
   complete = scan_pi_sessions_into_stats()
-  scan_native_codex_sessions(cached_files, scanned_files)
+  complete = scan_native_codex_sessions(cached_files, scanned_files) and complete
   complete = scan_opencode_sessions() and complete
   write_file_cache(scanned_files)
   return local_stats(), complete
