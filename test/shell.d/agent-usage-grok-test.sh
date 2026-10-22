@@ -236,12 +236,13 @@ for name, stamp in (("year1", "0001-01-01T00:00:00+00:00"), ("1970", "1970-01-01
 record = grok()
 expect("Grok skips sessions and turns with out-of-range times",
        [record["totalSessions"], record["totalPrompts"], record["todayPrompts"], record["todayTotalTokens"], record["activeDates"]],
-       [1, 2, 1, 11, [datetime.now().date().isoformat()]], record)
+       [1, 1, 1, 11, [datetime.now().date().isoformat()]], record)
 
 # ---------------------------------------------------------- local stats
 
-# Sessions come from each session's summary; tokens and today's prompts from
-# its usage.json, one entry per finished turn, with cached input kept apart.
+# Sessions come from each session's summary; tokens and prompts from its
+# usage.json, one entry per finished turn, with cached input kept apart. The
+# summary's num_messages counts the model's replies too, so it isn't read.
 sandbox()
 signed_in(grok_home())
 now = iso_in(0)
@@ -260,10 +261,36 @@ record = grok()
 expect("Grok counts sessions, prompts, and tokens from its session files",
        {key: record[key] for key in ("hasLocalStats", "todayPrompts", "todaySessions", "totalPrompts", "totalSessions", "activeDays", "todayTotalTokens", "todayTokensByModel")}
        | {"today": record["recentDays"][6]["messageCount"]},
-       {"hasLocalStats": True, "todayPrompts": 2, "todaySessions": 2, "totalPrompts": 10, "totalSessions": 3, "activeDays": 2,
+       {"hasLocalStats": True, "todayPrompts": 2, "todaySessions": 2, "totalPrompts": 3, "totalSessions": 3, "activeDays": 2,
         "todayTotalTokens": 1265, "todayTokensByModel": {"grok-4.7-build": 1265}, "today": 1265}, record)
 expect("Grok's tokens by model keep cached input apart", record["modelUsage"], {
   "grok-4.6": {"inputTokens": 500, "outputTokens": 20, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0},
   "grok-4.7-build": {"inputTokens": 300, "outputTokens": 60, "cacheReadInputTokens": 900, "cacheCreationInputTokens": 5},
 }, record)
+
+# A fork repeats its source's turns verbatim ahead of its own, as `grok -r
+# <id> --fork-session` leaves its usage.json; each turn counts once. A
+# subagent's turns are tokens spent, but no prompts typed.
+sandbox()
+signed_in(grok_home())
+sessions = grok_home() / "sessions" / "%2Fhome%2Fme"
+
+
+def turn(number, seconds_ago, tokens):
+  ended = (datetime.now(timezone.utc) - timedelta(seconds=seconds_ago)).strftime("%Y-%m-%dT%H:%M:%S.620236893+00:00")
+  usage = {"inputTokens": tokens, "outputTokens": 10, "cachedReadTokens": 0, "cacheCreationTokens": 0, "reasoningTokens": 5, "totalTokens": tokens + 10, "modelCalls": 1}
+  return {"turnNumber": number, "endedAt": ended, **usage, "turnCount": 1, "primaryModelId": "grok-build", "modelUsage": {"grok-build": usage}}
+
+
+first, second = turn(1, 4, 100), turn(2, 3, 200)
+write_json(sessions / "source" / "summary.json", {"last_active_at": iso_in(-3), "num_messages": 7, "session_kind": "headless"})
+write_json(sessions / "source" / "usage.json", {"turns": [first, second]})
+write_json(sessions / "fork" / "summary.json", {"last_active_at": iso_in(-1), "num_messages": 11, "session_kind": "headless",
+                                                 "parent_session_id": "source", "forked_at": iso_in(-2)})
+write_json(sessions / "fork" / "usage.json", {"turns": [first, second, turn(3, 1, 400)]})
+write_json(sessions / "child" / "summary.json", {"last_active_at": iso_in(-2), "num_messages": 5, "session_kind": "subagent"})
+write_json(sessions / "child" / "usage.json", {"turns": [turn(1, 2, 800)]})
+record = grok()
+expect("a fork's copied turns count once, and a subagent's turns as tokens but no prompts",
+       [record["totalSessions"], record["totalPrompts"], record["todayPrompts"], record["todayTotalTokens"]], [3, 3, 3, 1540], record)
 PY

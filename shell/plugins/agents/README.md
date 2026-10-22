@@ -71,7 +71,7 @@ Adding an agent needs no QML changes: ship a collector that follows the contract
 |---|---|---|
 | `claude` | Anthropic's OAuth usage endpoint (5-hour session, 7-day weekly, and any model-scoped windows) | `~/.claude/projects` transcripts, pi/omp sessions and opencode sessions on an Anthropic provider, plus `stats-cache.json` and `history.jsonl` as fallback |
 | `codex` | The Codex app-server's `account/rateLimits/read`, every bucket (general windows plus any model's own), plus an individual spend cap and its reported reset time when present | native Codex CLI session files on the built-in `openai` provider, pi/omp sessions on `openai-codex`, and opencode sessions on the `openai` provider |
-| `grok` | The credits endpoint behind Grok's `/usage` view (the billing period's included usage) | Each session's `usage.json` (the ledger `grok usage` prints: tokens by model per finished turn), plus `summary.json` for sessions |
+| `grok` | The credits endpoint behind Grok's `/usage` view (the billing period's included usage) | Each session's `usage.json` (the ledger `grok usage` prints: tokens by model per finished turn, one turn per typed prompt, a fork's copied turns counted once), plus `summary.json` for sessions |
 | `kimi` | Kimi Code quotas (5-hour session, weekly, and monthly allowances) | Kimi Code's per-agent `wire.jsonl` session logs under its home on Kimi's routes, pi, omp, and opencode sessions on the Kimi Code plan (`kimi-coding`, `kimi-code`, `kimi-code-plan-global`, `kimi-code-plan-cn`), plus Claude Code turns sent to Kimi's or Moonshot's API or answered by a `kimi-*` or `moonshot*` model |
 | `cursor` | Cursor's dashboard RPCs: the included total for the billing month, with the auto-model, named-model, and on-demand meters attached to it | the same dashboard RPCs, one call per day for the last week |
 | `grokbot` | Grok Bot's weekly included usage from Cursor's `GetSandUsageStatus` RPC, asked as the Cursor sign-in | none; limit only |
@@ -121,7 +121,7 @@ Codex CLI will front any OpenAI-compatible backend — `--oss`, or a custom `mod
 
 ### Grok
 
-The plan comes from the settings Grok caches in its home (`GROK_HOME`, default `~/.grok`), and the limit from the credits endpoint its own `/usage` view reads, asked with each account's sign-in from `auth.json`. A lapsed access token with a live refresh token is routine: Grok renews it when it starts, so until then the limits read "Limits paused" with the last credits kept stale. A refused sign-in, or one past Grok's 30 days, reads "Sign-in expired". Local stats come from each session's `usage.json` and `summary.json`; sessions on disk count Grok as in use even without a sign-in.
+The plan comes from the settings Grok caches in its home (`GROK_HOME`, default `~/.grok`), and the limit from the credits endpoint its own `/usage` view reads, asked with each account's sign-in from `auth.json`. A lapsed access token with a live refresh token is routine: Grok renews it when it starts, so until then the limits read "Limits paused" with the last credits kept stale. A refused sign-in, or one past Grok's 30 days, reads "Sign-in expired". Local stats come from each session's `usage.json` and `summary.json`: a turn is a typed prompt, except in a subagent's session, and the turns a fork copies from its source count once; sessions on disk count Grok as in use even without a sign-in.
 
 ### Kimi
 

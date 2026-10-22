@@ -35,7 +35,6 @@ from collectors import (  # noqa: E402
   emit,
   empty_bucket,
   local_day,
-  number,
   obj,
   open_json,
   read_json,
@@ -82,12 +81,18 @@ def active_day(value):
 
 
 # Every session under <home>/sessions/<folder>/<session>/: its summary says
-# when it was last active and how many prompts it had, and its usage.json
-# lists each finished turn with its tokens by model. Added accounts link
-# their sessions to the primary's, so this covers all of them. Grok counts
-# cached input inside inputTokens; the record keeps the two apart, as the
-# other collectors do. Counts are read as every collector reads them: one
-# that isn't a plain number is no count.
+# when it was last active, and its usage.json lists each finished turn with
+# its tokens by model, one turn per typed prompt. Added accounts link their
+# sessions to the primary's, so this covers all of them. Grok counts cached
+# input inside inputTokens; the record keeps the two apart, as the other
+# collectors do. Counts are read as every collector reads them: one that
+# isn't a plain number is no count.
+#
+# A fork's usage.json repeats its source's turns verbatim before its own, so
+# a turn already seen (same end time, same tokens) counts once. A subagent's
+# turns are tokens it spent, but its prompts came from the parent agent, not
+# the person typing. The summary's num_messages counts system and assistant
+# messages, inherited ones too, so it is no prompt count.
 def local_stats(home):
   now = datetime.now().astimezone()
   today = now.date().isoformat()
@@ -97,13 +102,15 @@ def local_stats(home):
   by_day = {day: 0 for day in week}
   today_by_model = {}
   models = {}
+  seen = set()
   for session in (Path(home) / "sessions").glob("*/*/"):
     summary = read_json(session / "summary.json")
+    subagent = False
     if isinstance(summary, dict):
+      subagent = str(summary.get("session_kind") or "").startswith("subagent")
       day = active_day(summary.get("last_active_at"))
       if day:
         sessions += 1
-        prompts += number(summary.get("num_messages"))
         days.add(day)
         if day == today:
           today_sessions += 1
@@ -114,9 +121,15 @@ def local_stats(home):
       day = active_day(turn.get("endedAt")) if isinstance(turn, dict) else None
       if not day:
         continue
+      copy = json.dumps([turn.get("endedAt"), turn.get("modelUsage")], sort_keys=True, default=str)
+      if copy in seen:
+        continue
+      seen.add(copy)
       days.add(day)
-      if day == today:
-        today_prompts += 1
+      if not subagent:
+        prompts += 1
+        if day == today:
+          today_prompts += 1
       for model, bucket in obj(turn.get("modelUsage")).items():
         if not isinstance(bucket, dict):
           continue
