@@ -89,3 +89,31 @@ omarchy-webapp-remove "Tilt Maze" >/dev/null
 [[ ! -e $desktop && ! -e $icons/tilt-maze.png ]] || fail "removing the web app deletes the game's launcher and icon"
 [[ -f $HOME/Games/tilt-maze/index.html ]] || fail "removing the web app leaves the game itself"
 pass "Remove > Web App takes a game out of the launcher and leaves its file"
+
+# The games that come with Omarchy: installed from $OMARCHY_PATH/games, played from an
+# offline copy with the vendored three.js built in.
+omarchy-games-install minesweeper >/dev/null || fail "games install adds a game that comes with Omarchy"
+grep -qx 'Comment=Minesweeper, a game that comes with Omarchy' "$applications/Minesweeper.desktop" || fail "the launcher says the game comes with Omarchy"
+url=$(launched_argument "$applications/Minesweeper.desktop")
+page=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.unquote(sys.argv[1].removeprefix("file://").split("#")[0]))' "$url")
+[[ $page == "$HOME/.cache/omarchy/games/minesweeper/index.html" ]] || fail "a shipped game plays from its offline copy" "$url"
+grep -q 'data:text/javascript;base64' "$page" && ! grep -q 'cdn.jsdelivr.net' "$page" ||
+  fail "the offline copy carries three.js itself instead of loading it from the CDN"
+pass "a game that comes with Omarchy plays offline from the launcher"
+
+make_game chess
+OMARCHY_TEST_ARGV="$test_tmp/chess-argv" omarchy-games-launch chess
+url=$(head -1 "$test_tmp/chess-argv")
+[[ $url == *"/Games/chess/index.html#palette="* ]] || fail "a game in ~/Games wins over the one Omarchy ships by that name" "$url"
+pass "a game in ~/Games wins over the one Omarchy ships by that name"
+
+mkdir -p "$HOME/Games/loader"
+cat >"$HOME/Games/loader/index.html" <<'HTML'
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.min.js" } }</script>
+<script type="module">import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';</script>
+HTML
+OMARCHY_TEST_ARGV="$test_tmp/loader-argv" omarchy-games-launch loader
+[[ $(head -1 "$test_tmp/loader-argv") == *"/Games/loader/index.html#palette="* ]] ||
+  fail "a game using an addon Omarchy doesn't vendor plays from its own page" "$(head -1 "$test_tmp/loader-argv")"
+[[ ! -e $HOME/.cache/omarchy/games/loader/index.html ]] || fail "no half-built offline copy is left behind"
+pass "a game using an addon Omarchy doesn't vendor falls back to the CDN"

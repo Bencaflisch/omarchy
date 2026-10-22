@@ -1,32 +1,30 @@
 #!/bin/bash
 
-# omarchy:summary=Play a game from ~/Games in the current theme's colours
+# omarchy:summary=Play a game in the current theme's colours
 # omarchy:args=<name>
 # omarchy:examples=omarchy games launch snake
 
-# A page opened from a file can't read the theme, so the palette rides in the URL
-# fragment, which never leaves the machine, and the game's themed() reads it.
+# A game is ~/Games/<name>, or one that comes with Omarchy. It plays from an offline copy
+# with three.js built in, and a page opened from a file can't read the theme, so the
+# palette rides in the URL fragment, which never leaves the machine.
 
 set -euo pipefail
+
+source "$OMARCHY_PATH/install/helpers/games.sh"
 
 if (( $# != 1 )); then
   echo "Usage: omarchy-games-launch <name>" >&2
   exit 1
 fi
 
-name=$1
-[[ $name =~ ^[a-z0-9][a-z0-9-]{0,39}$ ]] || { echo "Game name must be lowercase letters, digits and dashes: $name" >&2; exit 1; }
-
-games=$(realpath -e "$HOME/Games" 2>/dev/null) || { echo "No ~/Games directory" >&2; exit 1; }
-folder=$(realpath -e "$HOME/Games/$name" 2>/dev/null) || { echo "No game at ~/Games/$name" >&2; exit 1; }
-game="$folder/index.html"
-if [[ $folder != "$games/$name" || ! -f $game || -L $game ]]; then
-  echo "No game at ~/Games/$name/index.html" >&2
-  exit 1
+find_game "$1"
+page=$(game_cache_page "$1")
+if ! build_offline_game "$GAME_PAGE" "$page"; then
+  page=$GAME_PAGE
 fi
 
 palette=$(omarchy-theme-color --all | jq -Rrn '
   [inputs | split("\t") | select(.[0] | IN("mode", "background", "foreground", "accent", "muted",
     "red", "green", "yellow", "blue", "magenta", "cyan", "orange")) | {(.[0]): .[1]}] | add // {} | tojson | @uri')
 
-exec omarchy-launch-webapp "file://$(jq -rn --arg path "$game" '$path | split("/") | map(@uri) | join("/")')#palette=$palette"
+exec omarchy-launch-webapp "$(file_url "$page")#palette=$palette"
