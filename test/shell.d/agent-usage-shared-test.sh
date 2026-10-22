@@ -826,7 +826,7 @@ check("finite reads only finite numbers", [collectors.finite(value) for value in
 
 config = work / "config"
 os.environ["XDG_CONFIG_HOME"] = str(config)
-for name in ("CURSOR_API_KEY", "CURSOR_AUTH_PATH"):
+for name in ("CURSOR_API_KEY", "CURSOR_AUTH_PATH", "CURSOR_AUTH_TOKEN"):
   os.environ.pop(name, None)
 check("no Cursor sign-in anywhere is no token", collectors.cursor_token() == "")
 state_db = collectors.cursor_state_db()
@@ -850,7 +850,15 @@ os.environ["CURSOR_AUTH_PATH"] = str(moved_auth)
 check("CURSOR_AUTH_PATH moves the CLI's sign-in", collectors.cursor_auth_path() == moved_auth and collectors.cursor_token() == "moved-key")
 check("an explicit auth path wins over CURSOR_AUTH_PATH", collectors.account_key(collectors.cursor_token(cli)) == "cli")
 os.environ["CURSOR_API_KEY"] = " exported "
-check("an exported key comes first", collectors.cursor_token() == "exported")
+check("an exported API key is never sent as a bearer, and with no token traded for it there is none",
+      collectors.cursor_token() == "")
+moved_auth.write_text(json.dumps({"accessToken": "traded-token", "apiKey": "exported"}))
+check("an exported API key stands for the token the CLI traded it for", collectors.cursor_token() == "traded-token")
+moved_auth.write_text(json.dumps({"accessToken": "traded-token", "apiKey": "another-key"}))
+check("a token traded for another key never stands for this one", collectors.cursor_token() == "")
+os.environ["CURSOR_AUTH_TOKEN"] = " direct "
+check("CURSOR_AUTH_TOKEN is a bearer as it stands, ahead of everything", collectors.cursor_token() == "direct")
+os.environ.pop("CURSOR_AUTH_TOKEN")
 check(
   "the editor's database is read without touching it",
   state_db.read_bytes() == state_db_bytes and sorted(path.name for path in state_db.parent.iterdir()) == ["state.vscdb"],

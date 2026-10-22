@@ -1286,17 +1286,29 @@ def _cursor_ide_token(state_db: Path) -> str:
 
 
 def cursor_token(auth_path: Path | None = None, state_db: Path | None = None) -> str:
-  """The key the user exported, the credential the Cursor CLI stores, or the
-  editor's sign-in, in that order.
+  """The token the user exported, the credential the Cursor CLI stores, or
+  the editor's sign-in, in that order.
+
+  CURSOR_AUTH_TOKEN is a bearer as it stands. CURSOR_API_KEY is not: the CLI
+  trades it for an access token and keeps that beside the key in its auth
+  file, so the stored token stands for the key only while it was traded for
+  this one. The key itself never goes out as a bearer.
 
   A sign-in that has lapsed gives way to the next one that hasn't: someone
   who ran the CLI once and now lives in the editor would otherwise wait on a
   token nothing renews. With all of them lapsed, the first one decides.
   """
+  bearer = str(os.environ.get("CURSOR_AUTH_TOKEN") or "").strip()
+  if bearer:
+    return bearer
+  auth = read_json(auth_path or cursor_auth_path())
   key = str(os.environ.get("CURSOR_API_KEY") or "").strip()
+  traded = str(auth.get("accessToken") or "").strip()
   if key:
-    return key
-  cli = str(read_json(auth_path or cursor_auth_path()).get("accessToken") or "").strip()
+    # With no token traded for this key, any other sign-in is someone else's
+    # account than the one the CLI runs as.
+    return traded if str(auth.get("apiKey") or "").strip() == key else ""
+  cli = traded
   if cli and not token_lapsed(cli):
     return cli
   ide = _cursor_ide_token(state_db or cursor_state_db())
