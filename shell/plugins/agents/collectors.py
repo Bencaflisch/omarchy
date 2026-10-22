@@ -1926,6 +1926,18 @@ def codex_rollouts(cache_file: Path | None, reuse: bool = True) -> tuple[dict[st
       warn(f"could not write file cache ({exc})")
   return records, complete
 
+# ------------------------------------------------------------ Kimchi
+
+
+def kimchi_sessions_root() -> Path:
+  """Where Kimchi's harness keeps its pi-format sessions: under
+  KIMCHI_CODING_AGENT_DIR when set, as the CLI itself reads it, else
+  ~/.config/kimchi/harness. Kimchi has no profiles that move it. Its own
+  gateway routes are the kimchi collector's; a session `--provider` sent
+  elsewhere (OpenRouter) is that provider's."""
+  return Path(os.environ.get("KIMCHI_CODING_AGENT_DIR") or (Path.home() / ".config" / "kimchi" / "harness")) / "sessions"
+
+
 # ---------------------------------------------------- DeepSeek Harness
 #
 # dsh keeps one append-only event log per session under
@@ -2132,6 +2144,201 @@ def scan_dsh_sessions(accept: Accept) -> tuple[list[UsageRow], bool]:
     complete = read and complete
   return rows, complete
 
+
+
+# ------------------------------------------------------- MiniMax Code
+#
+# MiniMax Code keeps one directory per session under its data dir's
+# v2/sessions, with a messages.jsonl whose assistant lines name the route
+# they ran on: its own (`minimax`, `minimax_api`, `minimax_oauth`) bill
+# MiniMax, and `custom_provider:<name>` (a custom endpoint, or a models.dev
+# preset such as Z.AI or OpenRouter) bills whoever runs that provider's
+# baseURL in config.yaml.
+
+# MiniMax Code's own routes: `minimax` is its signed-in Token Plan (or a key
+# set on it), `minimax_api` the MiniMax API key it reserves, and
+# `minimax_oauth` the name its provider list gives the sign-in.
+MCODE_PROVIDERS = ("minimax", "minimax_api", "minimax_oauth")
+
+
+def mcode_data_dir() -> Path:
+  for name in ("MINIMAX_DATA_DIR", "MAVIS_DATA_DIR"):
+    value = os.environ.get(name, "").strip()
+    if value:
+      return Path(os.path.abspath(os.path.expanduser(value)))
+  return Path.home() / ".minimax"
+
+
+def _yaml_blocks(text: str) -> dict[str, Any]:
+  """The block mappings of a YAML file, scalars as plain strings: enough to
+  read MiniMax Code's config.yaml without a YAML dependency. Lists, flow
+  values, anchors and multi-line scalars aren't read."""
+  root: dict[str, Any] = {}
+  stack: list[tuple[int, dict[str, Any]]] = [(-1, root)]
+  for raw in text.splitlines():
+    body = raw.rstrip()
+    stripped = body.lstrip(" ")
+    if not stripped or stripped.startswith(("#", "-")):
+      continue
+    indent = len(body) - len(stripped)
+    key, colon, value = stripped.partition(":")
+    if not colon or (value and not value.startswith(" ")):
+      continue
+    while stack[-1][0] >= indent:
+      stack.pop()
+    key = key.strip().strip("'\"")
+    value = value.split(" #", 1)[0].strip()
+    if value:
+      stack[-1][1][key] = value.strip("'\"")
+    else:
+      child: dict[str, Any] = {}
+      stack[-1][1][key] = child
+      stack.append((indent, child))
+  return root
+
+
+def mcode_routes(data_dir: Path | None = None) -> dict[str, str]:
+  """custom_provider name -> the collector that bills its baseURL ("" for
+  one nothing here can place), from MiniMax Code's config.yaml."""
+  try:
+    text = ((data_dir or mcode_data_dir()) / "config.yaml").read_text(encoding="utf-8", errors="replace")
+  except OSError:
+    return {}
+  providers = _yaml_blocks(text).get("custom_provider")
+  if not isinstance(providers, dict):
+    return {}
+  routes = {}
+  for name, entry in providers.items():
+    options = entry.get("options") if isinstance(entry, dict) else None
+    routes[str(name)] = endpoint_owner(options.get("baseURL")) if isinstance(options, dict) else ""
+  return routes
+
+
+def mcode_route_owner(provider: Any, routes: dict[str, str]) -> str | None:
+  """The collector that bills a MiniMax Code reply on route `provider`. A
+  reply naming none predates third-party routes and ran on MiniMax. A
+  custom provider is its baseURL's (a provider's host, or the user's own
+  hardware); one gone from the config, or behind a gateway nothing here can
+  place, is nobody's here."""
+  if provider in (None, "", *MCODE_PROVIDERS):
+    return "minimax"
+  name = str(provider)
+  if name.startswith("custom_provider:"):
+    return routes.get(name.partition(":")[2]) or None
+  return None
+
+
+def mcode_scan_match() -> dict[str, Any]:
+  """For a collector's cached_scan(match=...): which collector each custom
+  provider bills, which the config can change without a session changing."""
+  return {"mcodeRoutes": sorted(mcode_routes().items())}
+
+
+def _mcode_tokens(usage: dict[str, Any]) -> tuple[int, int, int, int]:
+  input_tokens = token_count(usage.get("input"))
+  output_tokens = token_count(usage.get("output"))
+  cache_read = token_count(usage.get("cacheRead"))
+  cache_write = token_count(usage.get("cacheWrite"))
+  if not (input_tokens or output_tokens):
+    # Only a total: MiniMax's input excludes the cache tokens, which keep
+    # their own buckets.
+    input_tokens = max(0, token_count(usage.get("totalTokens")) - cache_read - cache_write)
+  return input_tokens, output_tokens, cache_read, cache_write
+
+
+def _mcode_day(message: dict[str, Any], entry: dict[str, Any]) -> str | None:
+  """The day of a MiniMax Code line: the message's time, else the line's.
+  A line with neither, or with neither trusted, is skipped."""
+  for value in (message.get("timestamp"), entry.get("timestamp")):
+    if value is not None and (day := local_day(value)):
+      return day
+  return None
+
+
+def scan_mcode(owner: str) -> tuple[list[UsageRow], bool]:
+  """MiniMax Code's replies and typed prompts that `owner` bills, as rows
+  (replies with no prompts of their own, prompts with no tokens), and
+  whether every session was read. A prompt goes with the route of the reply
+  that answers it; one left unanswered with the session's last route."""
+  root = mcode_data_dir() / "v2" / "sessions"
+  if not root.is_dir():
+    return [], True
+  routes = mcode_routes()
+  # A directory the walk can't list has sessions the scan missed.
+  unlisted: list[OSError] = []
+  found = [directory / "messages.jsonl" for directory, _, names in root.walk(on_error=unlisted.append) if "messages.jsonl" in names]
+  complete = not unlisted
+  rows: list[UsageRow] = []
+  for path in sorted(found):
+    # One directory per session; its messages carry no session id of their own.
+    session = "mcode:" + str(path.parent)
+    pending: list[str] = []
+    route = "minimax"
+    try:
+      with path.open("r", encoding="utf-8", errors="replace") as handle:
+        for raw in handle:
+          try:
+            entry = json.loads(raw)
+          except Exception:
+            # A line nested too deep to parse is a RecursionError, not a
+            # ValueError; either way only that line is lost.
+            continue
+          message = entry.get("message") if isinstance(entry, dict) else None
+          if not isinstance(message, dict):
+            continue
+          day = _mcode_day(message, entry)
+          if day is None:
+            continue
+          # MiniMax Code books a typed prompt and the assistant's usage on
+          # lines of their own.
+          if message.get("role") == "user":
+            pending.append(day)
+            continue
+          if message.get("role") != "assistant":
+            continue
+          route = mcode_route_owner(message.get("provider"), routes)
+          if route == owner:
+            rows.extend(UsageRow(prompt_day, session, owner, "", 0, 0, 0, 0) for prompt_day in pending)
+          pending = []
+          usage = message.get("usage")
+          if route != owner or not isinstance(usage, dict):
+            continue
+          input_tokens, output_tokens, cache_read, cache_write = _mcode_tokens(usage)
+          if not (input_tokens or output_tokens or cache_read or cache_write):
+            continue
+          model = str(message.get("model") or entry.get("model") or "minimax").strip() or "minimax"
+          rows.append(UsageRow(day, session, owner, model, input_tokens, output_tokens, cache_read, cache_write, prompts=0))
+      if route == owner:
+        rows.extend(UsageRow(prompt_day, session, owner, "", 0, 0, 0, 0) for prompt_day in pending)
+    except OSError:
+      complete = False
+  return rows, complete
+
+
+# -------------------------------------------- harnesses routed by base URL
+#
+# Claude Code and MiniMax Code send to whatever endpoint they are given, and
+# record only a model or a route's name, so the collector of every provider
+# they can be pointed at (and `local`, for the user's own hardware) reads
+# both, each keeping what claude_code_owner() and mcode_route_owner() say it
+# bills.
+
+
+def routed_sources() -> list[Path]:
+  """The stores scan_routed() reads, for a collector's scan sources."""
+  return [claude_code_dir() / "projects", mcode_data_dir()]
+
+
+def routed_match() -> dict[str, Any]:
+  """What scan_routed() decided owners under, for cached_scan(match=...)."""
+  return {**claude_code_scan_match(), **mcode_scan_match()}
+
+
+def scan_routed(owner: str) -> tuple[list[UsageRow], bool]:
+  """Claude Code's and MiniMax Code's usage that `owner` bills, and whether
+  every session was read."""
+  mcode_rows, complete = scan_mcode(owner)
+  return scan_claude_code(owner) + mcode_rows, complete
 
 
 # ------------------------------------------------------------------ limits

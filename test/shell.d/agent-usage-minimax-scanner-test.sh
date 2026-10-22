@@ -165,6 +165,17 @@ record = minimax()
 expect("MiniMax counts every Claude Code reply while Claude Code is pointed at MiniMax",
        [record["todayTokensByModel"], record["todayPrompts"]], [{"MiniMax-M2": 300, "claude-sonnet-4-5": 40}, 2], record)
 
+# A MiniMax Code custom provider is billed by whoever runs its baseURL in
+# config.yaml: one at MiniMax's own host is MiniMax's, one at OpenRouter's
+# isn't, and neither is one gone from the config.
+sandbox()
+mcode_routed_session("own", "custom_provider:mm", "MiniMax-M2", 300, base_url="https://api.minimax.io/anthropic")
+mcode_routed_session("router", "custom_provider:router", "MiniMax-M2-or", 40, base_url="https://openrouter.ai/api/v1")
+mcode_routed_session("gone", "custom_provider:gone", "MiniMax-M2-gone", 5)
+record = minimax()
+expect("MiniMax counts a MiniMax Code custom provider at MiniMax's host, and no other",
+       [record["todayTokensByModel"], record["todayPrompts"], record["todaySessions"]], [{"MiniMax-M2": 300}, 1, 1], record)
+
 # ---------------------------------------------------------------- contract
 
 sandbox()

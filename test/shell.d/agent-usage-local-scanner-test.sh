@@ -276,6 +276,16 @@ record = local()
 expect("Local counts the Claude Code replies a self-hosted endpoint ran itself",
        [record["todayTokensByModel"], record["todayPrompts"], record["todaySessions"]], [{"qwen3-coder": 30}, 1, 1], record)
 
+# A MiniMax Code custom provider on this machine or the LAN ran its models
+# here; one at a gateway nothing can place is nobody's.
+sandbox()
+mcode_routed_session("box", "custom_provider:box", "qwen-box", 1387, base_url="http://127.0.0.1:18082/anthropic")
+mcode_routed_session("lan", "custom_provider:lan", "qwen-lan", 30, base_url="http://gpu-box.lan:8080/v1")
+mcode_routed_session("far", "custom_provider:far", "qwen-far", 5, base_url="https://gateway.example.com/v1")
+record = local()
+expect("Local counts MiniMax Code replies on a self-hosted custom provider, and none elsewhere",
+       [record["todayTokensByModel"], record["todayPrompts"], record["todaySessions"]], [{"qwen-box": 1387, "qwen-lan": 30}, 2, 2], record)
+
 # ---------------------------------------------------------------- contract
 
 use_home()

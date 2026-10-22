@@ -113,6 +113,11 @@ run_all() {
 # - Codex rollouts on the built-in provider, on `--oss`'s local daemon (a
 #   cloud-tagged model and a local one), on a provider named `ollama-cloud`,
 #   on LM Studio, and on a custom provider nothing can place.
+# - DeepSeek Harness logs on its DeepSeek routes, pi-ai's openrouter route
+#   and a hand-declared gateway; Kimchi harness sessions on its gateway,
+#   `--provider openrouter` and a custom provider; and MiniMax Code replies
+#   on its own route and on custom providers at MiniMax, OpenRouter, Z.ai,
+#   this machine, an unplaceable gateway, and one gone from its config.
 #
 # Every row carries a unique tag (zqNNN) in its model name and a
 # recognizable token total, 100 * provider + source, so a collector's
@@ -332,6 +337,96 @@ for n, (provider, stem, owner) in enumerate(CODEX_ROLLOUTS):
   ]
   (rollouts / f"rollout-{tag}.jsonl").write_text("".join(json.dumps(line) + "\n" for line in lines))
   cells.append({"tag": tag, "provider": provider, "api": "", "source": "codex-rollout", "tokens": tokens, "owner": owner})
+
+
+# DeepSeek Harness session logs, one per route, as dsh 0.2 writes them (left
+# uncompressed): its DeepSeek routes and pi-ai's `deepseek` are DeepSeek's,
+# pi-ai's `openrouter` OpenRouter's, and a hand-declared gateway nobody's.
+DSH_ROUTES = [
+  ("deepseek-official", "deepseek-dsh@", "deepseek"),
+  ("deepseek", "deepseek-piai@", "deepseek"),
+  ("openrouter", "router-dsh@", "openrouter"),
+  ("acme-gateway", "acme-dsh@", None),
+]
+for n, (provider, stem, owner) in enumerate(DSH_ROUTES):
+  tag = f"zq{len(cells):03d}"
+  tokens = 81000 + 100 * n
+  log = home / f".dsh/sessions/--home-me--/session-{tag}/session.v4.jsonl"
+  log.parent.mkdir(parents=True)
+  log.write_text("".join(json.dumps(record) + "\n" for record in (
+    {"type": "session", "version": 4, "id": f"dsh-{tag}", "createdAt": now_ms, "isSeeded": False},
+    {"type": "request/header", "seq": 1, "time": now_ms, "data": {"header": {"config": {"provider": provider, "model": model_for(stem, tag)}}}},
+    {"type": "assistant/message", "seq": 2, "time": now_ms, "data": {"turn": 1, "step": 1, "usage": {"inputTokens": tokens}}},
+  )))
+  cells.append({"tag": tag, "provider": provider, "api": "", "source": "dsh", "tokens": tokens, "owner": owner})
+
+# Kimchi's harness sessions, in pi's format: its own gateway routes are
+# Kimchi's, a session run with `--provider openrouter` OpenRouter's, and one
+# on a custom provider nobody's.
+kimchi_lines = []
+for n, (provider, stem, owner) in enumerate([
+  ("kimchi-dev/zai", "glm-kimchi@", "kimchi"),
+  ("openrouter", "router-kimchi@", "openrouter"),
+  ("my-gateway", "acme-kimchi@", None),
+]):
+  tag = f"zq{len(cells):03d}"
+  tokens = 82000 + 100 * n
+  kimchi_lines.append({"type": "message", "id": f"kimchi-{tag}", "timestamp": stamp,
+                       "message": {"role": "assistant", "provider": provider, "model": model_for(stem, tag), "usage": {"input": tokens}}})
+  cells.append({"tag": tag, "provider": provider, "api": "", "source": "kimchi-harness", "tokens": tokens, "owner": owner})
+kimchi_sessions = home / ".config/kimchi/harness/sessions/--home-me--"
+kimchi_sessions.mkdir(parents=True)
+(kimchi_sessions / "session.jsonl").write_text("".join(json.dumps(line) + "\n" for line in kimchi_lines))
+
+# MiniMax Code sessions, one per route, and the custom providers its
+# config.yaml declares: its own routes are MiniMax's, a custom provider
+# whatever its baseURL's host bills (MiniMax, OpenRouter, Z.ai, this
+# machine), and one at a gateway nothing can place, or gone from the config,
+# nobody's.
+MCODE_ROUTES = [
+  ("minimax", "MiniMax-mcode@", "minimax"),
+  ("custom_provider:mm", "MiniMax-custom@", "minimax"),
+  ("custom_provider:router", "router-mcode@", "openrouter"),
+  ("custom_provider:zed", "glm-mcode@", "zai"),
+  ("custom_provider:box", "plain-mcode@", "local"),
+  ("custom_provider:acme", "acme-mcode@", None),
+  ("custom_provider:gone", "acme-gone@", None),
+]
+(home / ".minimax").mkdir()
+(home / ".minimax/config.yaml").write_text("""logLevel: info
+custom_provider:
+  mm:
+    name: mm
+    kind: custom
+    options:
+      apiKey: sk-placeholder
+      baseURL: https://api.minimax.io/anthropic
+  router:
+    name: router
+    api: openai-completions
+    options:
+      apiKey: sk-placeholder
+      baseURL: https://openrouter.ai/api/v1
+  zed:
+    options:
+      baseURL: "https://api.z.ai/api/coding/paas/v4"
+  box:
+    options:
+      baseURL: http://127.0.0.1:8080/v1 # llama.cpp
+  acme:
+    options:
+      baseURL: https://llm.acme.example/v1
+""")
+for n, (provider, stem, owner) in enumerate(MCODE_ROUTES):
+  tag = f"zq{len(cells):03d}"
+  tokens = 83000 + 100 * n
+  session = home / f".minimax/v2/sessions/2026/01/01/{tag}/messages.jsonl"
+  session.parent.mkdir(parents=True)
+  session.write_text("".join(json.dumps(line) + "\n" for line in (
+    {"message": {"role": "user", "timestamp": now_ms, "content": "go"}},
+    {"message": {"role": "assistant", "timestamp": now_ms, "provider": provider, "model": model_for(stem, tag), "usage": {"input": tokens}}},
+  )))
+  cells.append({"tag": tag, "provider": provider, "api": "", "source": "mcode", "tokens": tokens, "owner": owner})
 
 cells_path.write_text(json.dumps(cells))
 PY

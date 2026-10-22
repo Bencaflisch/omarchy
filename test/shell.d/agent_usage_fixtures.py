@@ -569,6 +569,26 @@ def claude_code_session(name: str, replies: list, base_url: str | None = None) -
     _merge(home() / ".claude" / "settings.json", "env", {"ANTHROPIC_BASE_URL": base_url})
   return path
 
+
+def mcode_routed_session(name, provider, model, tokens, base_url=None):
+  """A MiniMax Code session with one prompt and its reply on `provider`, and,
+  for a `custom_provider:<id>`, that provider declared at `base_url` in
+  config.yaml, as `mcode provider add` writes it."""
+  root = home() / ".minimax"
+  session = root / "v2" / "sessions" / "2026" / "10" / "22" / name / "messages.jsonl"
+  session.parent.mkdir(parents=True, exist_ok=True)
+  session.write_text("".join(json.dumps(line) + "\n" for line in (
+    {"message": {"role": "user", "timestamp": ms_in(0), "content": "go"}},
+    {"message": {"role": "assistant", "timestamp": ms_in(0), "provider": provider, "model": model, "usage": {"input": tokens}}},
+  )))
+  if base_url is not None:
+    config = root / "config.yaml"
+    text = config.read_text() if config.exists() else "custom_provider:\n"
+    pid = provider.partition(":")[2]
+    config.write_text(text + f"  {pid}:\n    name: {pid}\n    kind: custom\n    options:\n      apiKey: sk-placeholder\n      baseURL: {base_url}\n")
+  return session
+
+
 # ------------------------------------------------------ credentials and state
 
 

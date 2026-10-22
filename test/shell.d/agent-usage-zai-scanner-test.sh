@@ -84,6 +84,15 @@ record = zai()
 expect("Z.ai counts every Claude Code reply while Claude Code is pointed at Z.ai",
        [record["todayTokensByModel"], record["todayPrompts"]], [{"glm-4.6": 500, "claude-sonnet-4-5": 40}, 2], record)
 
+# MiniMax Code's Z.AI preset is a custom provider at api.z.ai: Z.ai's, with
+# the prompt it answered. One at another host isn't.
+sandbox()
+mcode_routed_session("zed", "custom_provider:zai-coding-plan", "glm-4.7", 2358, base_url="https://api.z.ai/api/coding/paas/v4")
+mcode_routed_session("other", "custom_provider:acme", "glm-elsewhere", 40, base_url="https://llm.acme.example/v1")
+record = zai()
+expect("Z.ai counts MiniMax Code replies on a custom provider at api.z.ai",
+       [record["todayTokensByModel"], record["todayPrompts"], record["todaySessions"]], [{"glm-4.7": 2358}, 1, 1], record)
+
 # ---------------------------------------------------------------- contract
 
 sandbox()

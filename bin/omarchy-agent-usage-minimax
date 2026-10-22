@@ -17,7 +17,6 @@ reads the JSON this prints.
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import os
 import sys
@@ -35,20 +34,18 @@ from collectors import (  # noqa: E402
   Stats,
   base_record as shared_base_record,
   cached_scan,
-  claude_code_dir,
-  claude_code_scan_match,
   data_home,
   emit,
-  local_day,
   open_json,
   opencode_db,
   pi_session_roots,
   read_json,
-  scan_claude_code,
+  routed_match,
+  routed_sources,
   scan_max_age,
   scan_opencode,
   scan_pi_sessions,
-  token_count,
+  scan_routed,
   trusted_endpoint,
   warn,
 )
@@ -64,12 +61,6 @@ TIER_LABEL = "Token Plan"
 # The pi/omp and opencode provider names MiniMax bills, by region. Exact
 # names: a custom gateway in front of MiniMax is not this account.
 PROVIDERS = ("minimax", "minimax-cn", "minimax-coding-plan", "minimax-cn-coding-plan")
-# MiniMax Code's own routes: `minimax` is its signed-in Token Plan (or a key
-# set on it), `minimax_api` the MiniMax API key it reserves, and
-# `minimax_oauth` the name its provider list gives the sign-in. Every other
-# route is `custom_provider:<name>` (a custom endpoint or a models.dev preset
-# such as Z.AI or OpenRouter) and is billed by whoever runs it.
-MCODE_PROVIDERS = ("minimax", "minimax_api", "minimax_oauth")
 # base_resp codes MiniMax answers a bad key with: 1004 is an authentication
 # failure, 2049 an invalid API key.
 AUTH_STATUS_CODES = {1004, 2049}
@@ -384,97 +375,6 @@ def collect_limits(api_key: str, base_url: str, force: bool) -> dict[str, Any]:
 # Local session stats
 # --------------------------------------------------------------------------
 
-def pi_style_tokens(usage: dict[str, Any]) -> tuple[int, int, int, int]:
-  inp = token_count(usage.get("input"))
-  out = token_count(usage.get("output"))
-  cread = token_count(usage.get("cacheRead"))
-  cwrite = token_count(usage.get("cacheWrite"))
-  if not (inp or out):
-    # Only a total: MiniMax's input excludes the cache tokens, which keep
-    # their own buckets.
-    inp = max(0, token_count(usage.get("totalTokens")) - cread - cwrite)
-  return inp, out, cread, cwrite
-
-
-def mcode_day(message: dict[str, Any], entry: dict[str, Any]) -> str | None:
-  """The day of a MiniMax Code line: the message's time, else the line's.
-  A line with neither, or with neither trusted, is skipped."""
-  for value in (message.get("timestamp"), entry.get("timestamp")):
-    if value is not None and (day := local_day(value)):
-      return day
-  return None
-
-
-def mcode_data_dir() -> Path:
-  for name in ("MINIMAX_DATA_DIR", "MAVIS_DATA_DIR"):
-    value = os.environ.get(name, "").strip()
-    if value:
-      return Path(os.path.abspath(os.path.expanduser(value)))
-  return Path.home() / ".minimax"
-
-
-def scan_mcode(stats: Stats) -> bool:
-  """Add MiniMax Code's own sessions: user messages are prompts, assistant usage is tokens."""
-  root = mcode_data_dir() / "v2" / "sessions"
-  if not root.is_dir():
-    return True
-  # A directory the walk can't list has sessions the scan missed.
-  unlisted: list[OSError] = []
-  found = [directory / "messages.jsonl" for directory, _, names in root.walk(on_error=unlisted.append) if "messages.jsonl" in names]
-  complete = not unlisted
-  for path in sorted(found):
-    # One directory per session; its messages carry no session id of their own.
-    session = "mcode:" + str(path.parent)
-    # A prompt waits for the reply that answers it: one answered on another
-    # route is that route's. One left unanswered goes with the session's last
-    # route, so a file with no route named still counts its prompts.
-    pending: list[str] = []
-    billed = True
-    try:
-      with path.open("r", encoding="utf-8", errors="replace") as handle:
-        for raw in handle:
-          try:
-            entry = json.loads(raw)
-          except Exception:
-            # A line nested too deep to parse is a RecursionError, not a
-            # ValueError; either way only that line is lost.
-            continue
-          message = entry.get("message") if isinstance(entry, dict) else None
-          if not isinstance(message, dict):
-            continue
-          day = mcode_day(message, entry)
-          if day is None:
-            continue
-          # MiniMax Code books a typed prompt and the assistant's usage on
-          # lines of their own.
-          if message.get("role") == "user":
-            pending.append(day)
-            continue
-          if message.get("role") != "assistant":
-            continue
-          # A reply names the route it ran on; one that names none predates
-          # third-party routes and ran on MiniMax.
-          billed = message.get("provider") in (None, "", *MCODE_PROVIDERS)
-          if billed:
-            for prompt_day in pending:
-              stats.add_prompts(prompt_day, session)
-          pending = []
-          usage = message.get("usage")
-          if not billed or not isinstance(usage, dict):
-            continue
-          inp, out, cread, cwrite = pi_style_tokens(usage)
-          if not (inp or out or cread or cwrite):
-            continue
-          model = str(message.get("model") or entry.get("model") or "minimax").strip() or "minimax"
-          stats.add(day, session, model, inp, out, cread, cwrite, prompts=0)
-      if billed:
-        for prompt_day in pending:
-          stats.add_prompts(prompt_day, session)
-    except OSError:
-      complete = False
-  return complete
-
-
 # pi, omp, and opencode name the provider alike. Exact names: a custom
 # gateway in front of MiniMax is not this account.
 def billed_here(provider: str, model: str, entry: dict) -> bool:
@@ -484,7 +384,11 @@ def billed_here(provider: str, model: str, entry: dict) -> bool:
 def scan_sessions() -> tuple[dict[str, Any], bool]:
   stats = Stats()
   # Every source runs, so one unreadable source still leaves the others.
-  mcode_complete = scan_mcode(stats)
+  # MiniMax Code on MiniMax's own routes or a custom provider at MiniMax's
+  # host, and Claude Code pointed at MiniMax or answered by a MiniMax model.
+  routed_rows, routed_complete = scan_routed(AGENT_ID)
+  for row in routed_rows:
+    stats.add_row(row, row.model or "minimax")
   pattern = r'"provider"\s*:\s*"(' + "|".join(PROVIDERS) + r')"'
   pi_rows, pi_complete = scan_pi_sessions(pattern, billed_here)
   for row in pi_rows:
@@ -494,16 +398,13 @@ def scan_sessions() -> tuple[dict[str, Any], bool]:
   db_rows, db_complete = scan_opencode(["minimax"], billed_here)
   for row in db_rows:
     stats.add_row(row, row.model.rstrip("/").split("/")[-1] or "minimax")
-  # Claude Code pointed at MiniMax's API, or answered by a MiniMax model.
-  for row in scan_claude_code(AGENT_ID):
-    stats.add_row(row, row.model or "minimax")
-  return stats.snapshot(), mcode_complete and pi_complete and db_complete
+  return stats.snapshot(), routed_complete and pi_complete and db_complete
 
 
 def cached_local_stats(max_age_seconds: float) -> dict[str, Any]:
   # The digest covers every data path the scan reads.
-  sources = [mcode_data_dir(), opencode_db(), *pi_session_roots(), claude_code_dir() / "projects"]
-  return cached_scan(AGENT_ID, sources, max_age_seconds, scan_sessions, match=claude_code_scan_match())
+  sources = [opencode_db(), *pi_session_roots(), *routed_sources()]
+  return cached_scan(AGENT_ID, sources, max_age_seconds, scan_sessions, match=routed_match())
 
 
 # --------------------------------------------------------------------------

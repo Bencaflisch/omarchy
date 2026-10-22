@@ -31,6 +31,7 @@ from collectors import (  # noqa: E402
   base_record,
   cached_scan,
   emit,
+  kimchi_sessions_root,
   open_json,
   read_json,
   scan_max_age,
@@ -84,17 +85,11 @@ def parse_time(value):
   return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
-# The harness directory Kimchi keeps its sessions under: KIMCHI_CODING_AGENT_DIR
-# when set, as the CLI itself reads it, else ~/.config/kimchi/harness. Kimchi
-# has no profiles that move it.
-def harness_dir():
-  return Path(os.environ.get("KIMCHI_CODING_AGENT_DIR") or (Path.home() / ".config" / "kimchi" / "harness"))
-
-
 # Kimchi's own gateway routes, as its isKimchiProvider names them: kimchi-dev,
 # kimchi-dev/<upstream> and kimchi-experimental. `--provider` runs a session on
 # any other pi provider (OpenRouter, a custom one in harness/models.json),
-# which that provider bills.
+# which that provider bills: the openrouter collector reads these sessions for
+# its own, and a custom provider's count nowhere.
 def billed_here(provider, model, entry):
   return provider in ("", "kimchi-dev", "kimchi-experimental") or provider.startswith("kimchi-dev/")
 
@@ -357,7 +352,7 @@ def main():
   # A scan is reused on the day it was made only, since one from before
   # midnight would count yesterday's sessions as today's. A limits-only
   # refresh needs fresh credits, not a fresh history scan.
-  sessions_root = harness_dir() / "sessions"
+  sessions_root = kimchi_sessions_root()
   stats = cached_scan(AGENT_ID, [sessions_root], scan_max_age(args.force, args.limits_only), lambda: local_stats(sessions_root))
   billing = collect_billing(args.force)
   signed_in = billing.pop("signedIn")

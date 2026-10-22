@@ -46,13 +46,13 @@ from collectors import (  # noqa: E402
   base_record as shared_base_record,
   cache_root,  # noqa: F401 - the tests find the cached answers through it
   cached_scan,
-  claude_code_dir,
-  claude_code_scan_match,
   config_home,
   data_home,
+  dsh_home,
   emit,
   empty_bucket,
   empty_stats,
+  kimchi_sessions_root,
   limits_cache_path,
   now_ms,
   number,
@@ -61,11 +61,14 @@ from collectors import (  # noqa: E402
   opencode_db,
   pi_session_roots,
   read_json,
+  routed_match,
+  routed_sources,
   scan_cache_paths as shared_scan_cache_paths,
-  scan_claude_code,
+  scan_dsh_sessions,
   scan_max_age,
   scan_opencode as shared_scan_opencode,
   scan_pi_sessions,
+  scan_routed,
   stamp,
   warn,
   write_json,
@@ -291,10 +294,24 @@ def scan_opencode(stats: Stats) -> bool:
   return complete
 
 
+def pi_roots() -> list[Path]:
+  # Kimchi's harness keeps pi-format sessions of its own, and one run with
+  # `--provider openrouter` is OpenRouter's.
+  return [*pi_session_roots(), kimchi_sessions_root()]
+
+
 def scan_pi(stats: Stats) -> bool:
-  """Add pi/omp messages on the openrouter provider. Returns whether every
-  session file could be read, like scan_opencode."""
-  rows, complete = scan_pi_sessions(r'"provider"\s*:\s*"openrouter"', billed_here)
+  """Add pi/omp and Kimchi messages on the openrouter provider. Returns
+  whether every session file could be read, like scan_opencode."""
+  rows, complete = scan_pi_sessions(r'"provider"\s*:\s*"openrouter"', billed_here, pi_roots())
+  for row in rows:
+    stats.add_row(row, model_name(row.model))
+  return complete
+
+
+def scan_dsh(stats: Stats) -> bool:
+  """Add DeepSeek Harness attempts on its pi-ai adapter's openrouter route."""
+  rows, complete = scan_dsh_sessions(lambda provider, model, request: provider == PROVIDER)
   for row in rows:
     stats.add_row(row, model_name(row.model))
   return complete
@@ -304,14 +321,17 @@ def scan_local(stats: Stats) -> bool:
   # Every source always runs, so one failing still leaves the others' numbers.
   opencode_complete = scan_opencode(stats)
   pi_complete = scan_pi(stats)
-  # Claude Code pointed at OpenRouter's Anthropic-compatible API.
-  for row in scan_claude_code(AGENT_ID):
+  dsh_complete = scan_dsh(stats)
+  # Claude Code pointed at OpenRouter's Anthropic-compatible API, and MiniMax
+  # Code's custom providers (its OpenRouter preset among them) at OpenRouter.
+  routed_rows, routed_complete = scan_routed(AGENT_ID)
+  for row in routed_rows:
     stats.add_row(row, model_name(row.model))
-  return opencode_complete and pi_complete
+  return opencode_complete and pi_complete and dsh_complete and routed_complete
 
 
 def scan_sources() -> list[Path]:
-  return [opencode_db(), *pi_session_roots(), claude_code_dir() / "projects"]
+  return [opencode_db(), *pi_roots(), dsh_home(), *routed_sources()]
 
 
 def scan_cache_paths() -> tuple[Path, Path]:
@@ -331,7 +351,7 @@ def cached_local_stats(max_age: float) -> tuple[dict, bool]:
     complete = scan_local(stats)
     return stats.snapshot(), complete
 
-  return cached_scan(AGENT_ID, scan_sources(), max_age, scan, match=claude_code_scan_match(), with_complete=True)
+  return cached_scan(AGENT_ID, scan_sources(), max_age, scan, match=routed_match(), with_complete=True)
 
 
 # ---------------------------------------------------------------- record

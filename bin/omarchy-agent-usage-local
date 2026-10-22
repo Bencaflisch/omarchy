@@ -42,8 +42,6 @@ from collectors import (  # noqa: E402
   base_record,
   cache_root,
   cached_scan,
-  claude_code_dir,
-  claude_code_scan_match,
   cloud_model,
   codex_home,
   codex_rollouts,
@@ -53,10 +51,12 @@ from collectors import (  # noqa: E402
   opencode_db,
   pi_session_roots,
   read_json,
-  scan_claude_code,
+  routed_match,
+  routed_sources,
   scan_max_age,
   scan_opencode,
   scan_pi_sessions,
+  scan_routed,
   self_hosted,
   warn,
   write_json,
@@ -259,7 +259,7 @@ def scan_codex(stats, use_file_cache):
 def scan_sources():
   # Every path the scan reads, and which providers it counts as local, so a
   # changed local.json or Codex config is a new scan rather than a stale one.
-  return [Path.home(), codex_home(), opencode_db(), *pi_session_roots(), claude_code_dir() / "projects", json.dumps(classifier().fingerprint())]
+  return [Path.home(), codex_home(), opencode_db(), *pi_session_roots(), *routed_sources(), json.dumps(classifier().fingerprint())]
 
 
 def scan_digest():
@@ -273,10 +273,11 @@ def run_local_scans(max_age):
   # The closing quote makes the database's prefilter match the whole id.
   db_rows, db_complete = scan_opencode([pid + '"' for pid in sorted(classifier().local_ids)], accept_opencode)
   # Claude Code pointed at a self-hosted endpoint, for the models that ran
-  # there.
-  for row in pi_rows + db_rows + scan_claude_code(AGENT_ID):
+  # there, and MiniMax Code's custom providers on one.
+  routed_rows, routed_complete = scan_routed(AGENT_ID)
+  for row in pi_rows + db_rows + routed_rows:
     stats.add_row(row, model_name(row.model))
-  return stats.snapshot(), complete and pi_complete and db_complete
+  return stats.snapshot(), complete and pi_complete and db_complete and routed_complete
 
 
 # ------------------------------------------------------------------ record
@@ -291,7 +292,7 @@ def main():
   args = parser.parse_args()
 
   max_age = scan_max_age(args.force, args.limits_only)
-  stats = cached_scan(AGENT_ID, scan_sources(), max_age, lambda: run_local_scans(max_age), match=claude_code_scan_match())
+  stats = cached_scan(AGENT_ID, scan_sources(), max_age, lambda: run_local_scans(max_age), match=routed_match())
   # Self-hosted work has no plan, no limits and no balance.
   record = base_record(AGENT_ID, AGENT_NAME, ready=number(stats.get("totalSessions")) > 0, hasLocalStats=True)
   record.update(stats)

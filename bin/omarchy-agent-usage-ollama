@@ -34,8 +34,6 @@ from collectors import (  # noqa: E402
   Stats,
   base_record,
   cached_scan as shared_cached_scan,
-  claude_code_dir,
-  claude_code_scan_match,
   cloud_model,
   codex_home,
   codex_rollout_cache,
@@ -47,10 +45,12 @@ from collectors import (  # noqa: E402
   opencode_db,
   pi_session_roots,
   read_json,
-  scan_claude_code,
+  routed_match,
+  routed_sources,
   scan_max_age,
   scan_opencode,
   scan_pi_sessions,
+  scan_routed,
 )
 
 AGENT_ID = "ollama"
@@ -112,7 +112,7 @@ def api_key() -> str:
 # counts here; the local collector leaves exactly those out. Codex's `--oss`
 # rollouts name the same `ollama` provider, and count here on the same
 # models. Claude Code pointed at ollama.com, or answering with a cloud-tagged
-# model, is Ollama's too.
+# model, is Ollama's too, as is a MiniMax Code custom provider at ollama.com.
 
 
 def billed_by_ollama_cloud(provider: str, model: str, entry: Any = None) -> bool:
@@ -144,26 +144,27 @@ def scan_sessions(model_prefix: str, reuse: bool = True) -> tuple[dict[str, Any]
   pi_rows, pi_complete = scan_pi_sessions(r'"provider"\s*:\s*"ollama(-cloud)?"', billed_by_ollama_cloud)
   # The database's prefilter matches both provider ids.
   db_rows, db_complete = scan_opencode(["ollama"], billed_by_ollama_cloud)
-  for row in pi_rows + db_rows + scan_claude_code(AGENT_ID):
+  routed_rows, routed_complete = scan_routed(AGENT_ID)
+  for row in pi_rows + db_rows + routed_rows:
     model = model_name(row.model)
     if model_prefix and not model.lower().startswith(model_prefix):
       continue
     stats.add_row(row, model)
   codex_complete = scan_codex(stats, model_prefix, reuse)
-  return stats.snapshot(), pi_complete and db_complete and codex_complete
+  return stats.snapshot(), pi_complete and db_complete and codex_complete and routed_complete
 
 
 def cached_scan(max_age_seconds: float, model_prefix: str) -> dict[str, Any]:
   # The digest covers every data path the scan reads: the pi/omp session
-  # roots, the opencode DB, Codex's home, and Claude Code's transcripts. A
-  # scan only answers for the model filter it applied, and the endpoint
-  # Claude Code was sent to.
+  # roots, the opencode DB, Codex's home, and Claude Code's and MiniMax
+  # Code's sessions. A scan only answers for the model filter it applied, and
+  # the endpoints those were sent to.
   return shared_cached_scan(
     AGENT_ID,
-    [*pi_session_roots(), opencode_db(), codex_home(), claude_code_dir() / "projects"],
+    [*pi_session_roots(), opencode_db(), codex_home(), *routed_sources()],
     max_age_seconds,
     lambda: scan_sessions(model_prefix, reuse=max_age_seconds > 0),
-    match={"modelPrefix": model_prefix, **claude_code_scan_match()},
+    match={"modelPrefix": model_prefix, **routed_match()},
   )
 
 

@@ -297,4 +297,31 @@ record = openrouter()
 expect("OpenRouter counts every Claude Code reply while Claude Code is pointed at it",
        [record["todayTokensByModel"], record["todayPrompts"], record["usageStatusText"]], [{"claude-sonnet-4.5": 70, "claude-sonnet-4-5": 40}, 2, "Waiting for auth"], record)
 
+# OpenRouter usage that other harnesses keep: DeepSeek Harness's pi-ai
+# `openrouter` route (its DeepSeek routes are DeepSeek's), a Kimchi session
+# run with `--provider openrouter` (its gateway routes are Kimchi's), and a
+# MiniMax Code custom provider at openrouter.ai (one elsewhere isn't).
+sandbox()
+os.environ["DSH_HOME"] = str(home() / "dsh")
+dsh_log = home() / "dsh" / "sessions" / "--home-me--" / "s1" / "session.v4.jsonl"
+dsh_log.parent.mkdir(parents=True)
+dsh_log.write_text("".join(json.dumps(line) + "\n" for line in (
+  {"type": "session", "version": 4, "id": "s1", "createdAt": ms_in(0), "isSeeded": False},
+  {"type": "request/header", "seq": 1, "time": ms_in(0), "data": {"header": {"config": {"provider": "openrouter", "model": "z-ai/glm-mock"}}}},
+  {"type": "assistant/message", "seq": 2, "time": ms_in(0), "data": {"turn": 1, "step": 1, "usage": {"inputTokens": 5234, "outputTokens": 55, "cacheReadTokens": 75}}},
+  {"type": "request/header", "seq": 3, "time": ms_in(0), "data": {"header": {"config": {"provider": "deepseek-official", "model": "deepseek-flash"}}}},
+  {"type": "assistant/message", "seq": 4, "time": ms_in(0), "data": {"turn": 2, "step": 1, "usage": {"inputTokens": 999}}},
+)))
+write_pi_session(home() / ".config" / "kimchi" / "harness" / "sessions" / "--home-me--" / "k.jsonl", [
+  pi_reply("openrouter", id="k1", model="z-ai/glm-or-mock", usage={"input": 5234, "output": 55, "cacheRead": 75, "totalTokens": 5364}),
+  pi_reply("kimchi-dev/zai", id="k2", model="glm-mock", usage={"input": 777}),
+])
+mcode_routed_session("m1", "custom_provider:router", "z-ai/glm-mcode", 2358, base_url="https://openrouter.ai/api/v1")
+mcode_routed_session("m2", "custom_provider:acme", "acme", 444, base_url="https://llm.acme.example/v1")
+record = openrouter()
+expect("OpenRouter counts dsh's openrouter route, Kimchi's --provider openrouter, and MiniMax Code at openrouter.ai, nothing else of theirs",
+       [record["todayTokensByModel"], record["todayPrompts"], record["todaySessions"]],
+       [{"glm-mock": 5364, "glm-or-mock": 5364, "glm-mcode": 2358}, 3, 3], record)
+del os.environ["DSH_HOME"]
+
 PY

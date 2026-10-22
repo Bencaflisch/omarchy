@@ -34,8 +34,6 @@ from collectors import (  # noqa: E402
   Stats,
   base_record as shared_base_record,
   cached_scan,
-  claude_code_dir,
-  claude_code_scan_match,
   config_home,
   data_home,
   dsh_home,
@@ -48,11 +46,13 @@ from collectors import (  # noqa: E402
   opencode_db,
   pi_session_roots,
   read_json,
-  scan_claude_code,
+  routed_match,
+  routed_sources,
   scan_dsh_sessions,
   scan_max_age,
   scan_opencode,
   scan_pi_sessions,
+  scan_routed,
   trusted_endpoint,
   warn,
 )
@@ -123,16 +123,17 @@ def run_local_scans() -> tuple[dict[str, Any], bool]:
   complete = add_harness_rows(stats)
   complete = scan_dsh(stats) and complete
   # Claude Code pointed at DeepSeek's Anthropic API, or answered by a
-  # DeepSeek model.
-  for row in scan_claude_code(AGENT_ID):
+  # DeepSeek model, and a MiniMax Code custom provider at DeepSeek's host.
+  routed_rows, routed_complete = scan_routed(AGENT_ID)
+  for row in routed_rows:
     stats.add_row(row, model_name(row.model))
-  return stats.snapshot(), complete
+  return stats.snapshot(), complete and routed_complete
 
 
 def cached_local_stats(max_age: float) -> dict[str, Any]:
   # The digest covers every data path the scan reads.
-  sources = [opencode_db(), dsh_home(), *pi_session_roots(), claude_code_dir() / "projects"]
-  return cached_scan(AGENT_ID, sources, max_age, run_local_scans, match=claude_code_scan_match())
+  sources = [opencode_db(), dsh_home(), *pi_session_roots(), *routed_sources()]
+  return cached_scan(AGENT_ID, sources, max_age, run_local_scans, match=routed_match())
 
 
 # -------------------------------------------------------------- credentials

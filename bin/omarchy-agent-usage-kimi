@@ -33,15 +33,15 @@ from collectors import (  # noqa: E402
   Stats,
   base_record as shared_base_record,
   cached_scan,
-  claude_code_dir,
-  claude_code_scan_match,
   emit,
   local_day,
   obj,
   open_json,
   read_json,
-  scan_claude_code,
+  routed_match,
+  routed_sources,
   scan_max_age,
+  scan_routed,
   token_count,
   warn,
   write_json,
@@ -526,9 +526,9 @@ def read_wire(path: Path) -> tuple[bool, list[tuple]]:
 
 def scan() -> tuple[dict[str, Any], bool]:
   """Kimi Code's usage and typed prompts, each counted once though forks
-  copy them, and Claude Code's turns on Kimi (pointed at Kimi's or
-  Moonshot's API, or answered by a Kimi model), and whether every
-  wire.jsonl was read."""
+  copy them, Claude Code's turns on Kimi (pointed at Kimi's or Moonshot's
+  API, or answered by a Kimi model) and MiniMax Code's custom providers at
+  those hosts, and whether every session was read."""
   stats = Stats()
   complete = True
   wires = []
@@ -554,9 +554,10 @@ def scan() -> tuple[dict[str, Any], bool]:
         stats.add(row[2], session, row[3], input_tokens, output_tokens, cache_read, cache_write, prompts=0)
       else:
         stats.add_prompts(row[2], session)
-  for row in scan_claude_code(AGENT_ID):
+  routed_rows, routed_complete = scan_routed(AGENT_ID)
+  for row in routed_rows:
     stats.add_row(row, row.model)
-  return stats.snapshot(), complete
+  return stats.snapshot(), complete and routed_complete
 
 
 # Keyed by the credential store, the endpoint, and the token, so another
@@ -615,10 +616,10 @@ def main() -> int:
   args = parser.parse_args()
 
   # The digest covers Kimi Code's home, so another home never reuses this
-  # one's numbers, and Claude Code's transcripts, whose owner depends on
-  # where Claude Code is sent.
-  sources = [code_home(), claude_code_dir() / "projects"]
-  stats = cached_scan(AGENT_ID, sources, scan_max_age(args.force, args.limits_only), scan, match=claude_code_scan_match())
+  # one's numbers, and Claude Code's and MiniMax Code's sessions, whose owner
+  # depends on where they are sent.
+  sources = [code_home(), *routed_sources()]
+  stats = cached_scan(AGENT_ID, sources, scan_max_age(args.force, args.limits_only), scan, match=routed_match())
   if not in_use() and not stats.get("modelUsage") and not stats.get("totalPrompts"):
     emit(base_record())
     return 0

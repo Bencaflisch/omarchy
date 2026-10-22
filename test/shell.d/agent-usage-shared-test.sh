@@ -1005,6 +1005,32 @@ check(
   and collectors.claude_code_endpoint("http://127.0.0.1:4000") == "local",
 )
 
+# MiniMax Code's routes: its own are MiniMax's, a custom provider its
+# config.yaml baseURL's (read without a YAML library: block mappings, quoted
+# and commented scalars), and one it no longer declares nobody's.
+mcode_home = home / "mcode"
+mcode_home.mkdir()
+(mcode_home / "config.yaml").write_text("""# written by mcode
+defaultModel: custom_provider:router/glm
+custom_provider:
+  router:
+    models:
+      - glm
+    options:
+      apiKey: "sk: placeholder"
+      baseURL: 'https://openrouter.ai/api/v1' # preset
+  box:
+    options:
+      baseURL: http://127.0.0.1:8080/v1
+  bare: {}
+""")
+routes = collectors.mcode_routes(mcode_home)
+check("MiniMax Code's custom providers are read from config.yaml by their baseURL's owner",
+      routes == {"router": "openrouter", "box": "local", "bare": ""}, json.dumps(routes))
+check("a MiniMax Code reply goes to its route's owner",
+      [collectors.mcode_route_owner(provider, routes) for provider in (None, "minimax_oauth", "custom_provider:router", "custom_provider:box", "custom_provider:bare", "custom_provider:gone", "zai")]
+      == ["minimax", "minimax", "openrouter", "local", None, None, None])
+
 # --------------------------------------------------------------- sign-ins
 
 import base64  # noqa: E402
