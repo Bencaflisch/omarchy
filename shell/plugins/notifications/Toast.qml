@@ -18,7 +18,6 @@ Item {
   id: card
 
   property var row: ({})
-  property var iconOverrides: ({})          // slug -> file URL, from the service
   property var place: ({ y: 0, scale: 1, opacity: 1, z: 1, front: true, hidden: false })
   property var scene: null                   // owns the clock; without it the card stands still
   property bool expanded: false
@@ -275,9 +274,8 @@ Item {
         readonly property string sent: /^image:\/\/qsimage\/[0-9]+\/[0-9]+$/.test(String(card.row.image || ""))
                                        ? String(card.row.image) : Security.localImageUrl(card.row.image)
 
-        // Best first: the sender's picture, then your override for the source,
-        // then the icon theme, then a desktop entry's icon (Icons.candidates
-        // has the names). A file that will not load gives way to the next.
+        // Best first: the sender's picture, then the icon theme, then a
+        // desktop entry's icon (Icons.candidates has the names). A file that will not load gives way to the next.
         function firstOf(names, look) {
           for (var i = 0; i < names.length; i++) {
             var found = look(names[i])
@@ -289,7 +287,6 @@ Item {
           var appsRevision = DesktopEntries.applications.values.length
           var want = Icons.candidates(card.row)
           var found = [sent,
-            firstOf(want.overrides, function(name) { return card.iconOverrides[name] || "" }),
             firstOf(want.themed, function(name) { return Quickshell.iconPath(name, true) }),
             firstOf(want.entries, function(name) {
               var entry = DesktopEntries.heuristicLookup(name)

@@ -55,10 +55,9 @@ At startup one process makes the directory and those files, and removes older la
 Icons are resolved in the shell, the way the dock resolves its own, by each card (`Toast.qml`, with the names from `Icons.js`). The first that loads wins:
 
 1. The sender's image: an in-memory `image-data` picture (`image://qsimage/…`), or a local file named by the `image-path` hint.
-2. Your override in `~/.config/omarchy/notifications/icons/<name>.png` (or `.svg`, `.jpg`, `.jpeg`, `.webp`, `.ico`), named after the site (`app.slack.com`, `slack`), the icon hint, the source or the app, lowercased with other characters as `-`. The folder is watched; one created after the shell started is seen from the next restart.
-3. The icon theme (`Quickshell.iconPath`): for a browser notification the site's own names first (`app.slack.com`, then `slack`), then the app's icon hint (or its `desktop-entry` hint), source and name.
-4. The icon of a desktop entry matching the hint, source or app (`DesktopEntries.heuristicLookup`); for a site, only the browser's, since a fuzzy match on a domain label would put Google Contacts on `mail.google.com`.
-5. The glyph an Omarchy sender asked for, else the first letter of the source.
+2. The icon theme (`Quickshell.iconPath`): for a browser notification the site's own names first (`app.slack.com`, then `slack`), then the app's icon hint (or its `desktop-entry` hint), source and name. An icon of your own under one of those names in `~/.local/share/icons/hicolor/` is found here, unless the active theme has its own by that name.
+3. The icon of a desktop entry matching the hint, source or app (`DesktopEntries.heuristicLookup`); for a site, only the browser's, since a fuzzy match on a domain label would put Google Contacts on `mail.google.com`.
+4. The glyph an Omarchy sender asked for, else the first letter of the source.
 
 An icon named `*-symbolic`, or a file under a `symbolic/` directory, is a one-colour mark and is tinted with the theme's text colour.
 

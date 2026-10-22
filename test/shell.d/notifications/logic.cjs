@@ -210,21 +210,16 @@ for (const body of ['Your verification code is 938271', 'Your code is 938 271', 
   // Only the browser is looked up among desktop entries: a fuzzy match on a
   // domain label is how mail.google.com would wear Google Contacts.
   same(Icons.candidates(Store.restored({ key: 'w', app: 'Google Chrome', appIcon: 'google-chrome', source: 'app.slack.com' })), {
-    overrides: ['app.slack.com', 'slack', 'google-chrome', 'web-app.slack.com'],
     themed: ['app.slack.com', 'slack', 'google-chrome'],
     entries: ['google-chrome', 'Google Chrome'] })
   // An app: its hint, then its source and name, as given and slugged; a name
   // with a space is no theme name.
   same(Icons.candidates(Store.restored({ key: 'a', app: 'Spotify', appIcon: 'spotify-client' })), {
-    overrides: ['spotify-client', 'spotify', 'app-spotify'],
     themed: ['spotify-client', 'Spotify', 'spotify'],
     entries: ['spotify-client', 'Spotify'] })
   // A hostname-looking app is not a site unless a browser lifted it.
   same(Icons.candidates({ app: 'example.com', source: 'example.com', groupKey: 'app:example-com' }).themed, ['example.com'])
-  same(Icons.candidates({}), { overrides: [], themed: [], entries: [] })
-  // Overrides: by slug, PNG first, any case, image formats only.
-  same(Icons.overrideMap(['slack.svg', 'slack.png', 'Spotify.PNG', 'notes.txt', '.png', 'x.jpg', 'x.ico', 'readme']),
-       { slack: 'slack.png', spotify: 'Spotify.PNG', x: 'x.jpg' })
+  same(Icons.candidates({}), { themed: [], entries: [] })
   assert.equal(Icons.slug('  Google Chrome!! '), 'google-chrome')
   assert.equal(Icons.slug('../../etc/passwd'), 'etc-passwd')
   // One-colour icons go by their freedesktop name, as a theme name or a file.

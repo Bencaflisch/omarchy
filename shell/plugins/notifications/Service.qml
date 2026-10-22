@@ -5,7 +5,6 @@
 // the MIT License (https://github.com/omacom/omapager).
 
 import QtQuick
-import Qt.labs.folderlistmodel
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
@@ -529,35 +528,6 @@ Item {
     if (!liveKeys[key]) return
     delete liveKeys[key]
     held = held.filter(function(heldKey) { return heldKey !== key })
-  }
-
-  // ------------------------------------------------------------- icons
-  //
-  // Each card looks its icon up itself (Icons.js, Toast.qml); this only lists
-  // your own, ~/.config/omarchy/notifications/icons/<name>.png, kept current
-  // by the folder's watch. A folder made after the shell started is seen from
-  // the next restart.
-  property var iconOverrides: ({})
-  FolderListModel {
-    id: iconOverrideFolder
-    folder: Util.fileUrl(Quickshell.env("HOME") + "/.config/omarchy/notifications/icons")
-    showDirs: false
-    caseSensitive: false
-    nameFilters: Icons.OVERRIDE_EXTENSIONS.map(function(ext) { return "*." + ext })
-    // A swapped file keeps the count, so every finished reload is read too.
-    onCountChanged: service.readIconOverrides()
-    onStatusChanged: if (status === FolderListModel.Ready) service.readIconOverrides()
-  }
-  function readIconOverrides() {
-    var names = [], urls = {}
-    for (var i = 0; i < iconOverrideFolder.count; i++) {
-      var name = String(iconOverrideFolder.get(i, "fileName"))
-      names.push(name)
-      urls[name] = String(iconOverrideFolder.get(i, "fileUrl"))
-    }
-    var files = Icons.overrideMap(names), out = {}
-    for (var key in files) out[key] = urls[files[key]]
-    iconOverrides = out
   }
 
   // One clock the cards' relative times hang off, rather than a timer per card.
@@ -1735,7 +1705,6 @@ Item {
               hoverY: service.hoverY
               onActionInvoked: function(identifier) { service.invokeAction(model.key, identifier) }
               onOfferTaken: function(kind, value) { service.takeOffer(kind, value, model.key) }
-              iconOverrides: service.iconOverrides
               now: service.nowTick
               expanded: service.expanded
                         && service.openDeck === Layout.groupKeyFor(model)
