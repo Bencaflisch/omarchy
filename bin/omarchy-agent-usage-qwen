@@ -15,7 +15,9 @@ user record.
 
 pi, omp and opencode turns billed by Alibaba's Qwen plans count here too:
 Model Studio's Coding Plan and Token Plan, in their international and
-mainland-China forms, and omp's Qwen OAuth (portal.qwen.ai) sign-in.
+mainland-China forms, and omp's Qwen OAuth (portal.qwen.ai) sign-in. So do
+Claude Code's and MiniMax Code's turns sent to Model Studio's
+Anthropic-compatible API.
 
 Neither Qwen Code nor Alibaba publishes a way to read a plan's quota: the
 Coding Plan's usage shows on its console page alone, and Qwen Code reads none
@@ -47,12 +49,14 @@ from collectors import (  # noqa: E402
   opencode_db,
   pi_session_roots,
   read_json,
+  routed_match,
+  routed_sources,
   scan_cache_paths,
   scan_max_age,
   scan_opencode,
   scan_pi_sessions,
+  scan_routed,
   token_count,
-  url_host,
   warn,
   write_json,
 )
@@ -293,10 +297,6 @@ def load_index(path):
 
 # ------------------------------------------------------------------ routes
 
-# Alibaba's hosts: Model Studio's (DashScope, the Coding and Token Plans) and
-# Qwen's own sign-in, the services this record counts.
-ALIBABA_HOSTS = ("aliyuncs.com", "alibabacloud.com", "qwen.ai")
-
 
 def model_routes(home):
   """(auth type, model id) -> base URL, from settings.json's modelProviders:
@@ -318,20 +318,18 @@ def model_routes(home):
 def route_owner(auth_type, model, routes):
   """The collector that bills a reply, by the auth type Qwen Code recorded
   for it and, where settings.json names one, the base URL its model is sent
-  to: Alibaba's hosts are Qwen's, and any other is read the way every
-  collector reads Claude Code's (claude_code_owner): a provider's host is
-  that provider's, a server you run local's unless the model is a Claude or
-  an Ollama cloud one it only forwards, and a gateway nobody's. Without a URL, an OpenAI-compatible reply (and one from
-  before Qwen Code kept the type) ran on Qwen Code's default service, as
-  every reply was read before, while Anthropic, Gemini and Vertex AI are
-  their own services, which no collector here bills."""
+  to, read the way every collector reads Claude Code's (claude_code_owner):
+  Alibaba's hosts are Qwen's, a provider's host is that provider's, a
+  server you run local's unless the model is a Claude or an Ollama cloud one
+  it only forwards, and a gateway nobody's. Without a URL, an
+  OpenAI-compatible reply (and one from before Qwen Code kept the type) ran
+  on Qwen Code's default service, as every reply was read before, while
+  Anthropic, Gemini and Vertex AI are their own services, which no collector
+  here bills."""
   if auth_type == "qwen-oauth":
     return AGENT_ID
   url = routes.get((auth_type, model)) or next((value for (_, routed), value in routes.items() if routed == model), "")
   if url:
-    host = url_host(url)
-    if any(host == name or host.endswith("." + name) for name in ALIBABA_HOSTS):
-      return AGENT_ID
     return claude_code_owner(model, url)
   return AGENT_ID if auth_type in ("", "openai", "openai-responses") else None
 
@@ -421,8 +419,9 @@ def billed_here(provider, model, entry):
 
 
 def scan():
-  """Qwen Code's transcripts and the Qwen plan turns in pi/omp sessions and
-  both of opencode's message stores. Returns (stats, complete); a scan that
+  """Qwen Code's transcripts, the Qwen plan turns in pi/omp sessions and
+  both of opencode's message stores, and Claude Code's and MiniMax Code's
+  turns sent to Model Studio. Returns (stats, complete); a scan that
   couldn't read every source is not cached."""
   stats = Stats()
   # Every source runs, so one unreadable source still leaves the others.
@@ -433,16 +432,19 @@ def scan():
   pi_rows, pi_complete = scan_pi_sessions(pattern, billed_here)
   # The closing quote makes the database's prefilter match the whole id.
   db_rows, db_complete = scan_opencode([provider + '"' for provider in PROVIDERS], billed_here)
-  for row in pi_rows + db_rows:
-    # pi and opencode count each reply as the prompt that asked for it.
+  routed_rows, routed_complete = scan_routed(AGENT_ID)
+  for row in pi_rows + db_rows + routed_rows:
+    # pi and opencode count each reply as the prompt that asked for it;
+    # Claude Code's rows carry their typed prompts apart.
     stats.add_row(row, model_label(row.model) or "qwen")
-  return stats.snapshot(), transcripts_complete and pi_complete and db_complete
+  return stats.snapshot(), transcripts_complete and pi_complete and db_complete and routed_complete
 
 
 def scan_sources():
   # Every data path the scan reads: Qwen Code's directories, the pi/omp
-  # session roots and the opencode database.
-  return [*runtime_dirs(), *pi_session_roots(), opencode_db()]
+  # session roots, the opencode database, and Claude Code's and MiniMax
+  # Code's sessions.
+  return [*runtime_dirs(), *pi_session_roots(), opencode_db(), *routed_sources()]
 
 
 def main():
@@ -455,7 +457,9 @@ def main():
 
   # The digest covers every path the scan reads, so another home, runtime
   # directory, session root or database never reuses this one's numbers.
-  stats = cached_scan(AGENT_ID, scan_sources(), scan_max_age(args.force, args.limits_only), scan)
+  # Where Claude Code and MiniMax Code send their turns decides whose they
+  # are, so a scan only answers for the routes it was made under.
+  stats = cached_scan(AGENT_ID, scan_sources(), scan_max_age(args.force, args.limits_only), scan, match=routed_match())
 
   # There is no quota to read, so nothing waits on a sign-in: the status stays
   # empty and local stats show alone. A machine that never ran Qwen Code or a

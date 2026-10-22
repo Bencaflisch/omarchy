@@ -1119,3 +1119,56 @@ if [[ -z $harness_report ]]; then
 else
   fail "each Kimi Code, Qwen Code, Hermes and Vibe request is counted once, by the collector that bills its recorded route, or by none" "$harness_report"
 fi
+
+# ------------------------------------------- Claude Code sent to Model Studio
+
+# Alibaba's Model Studio documents pointing Claude Code at its
+# Anthropic-compatible API (international, mainland and the Coding Plan's),
+# the hosts Qwen Code's replies are billed under qwen from. Every reply in
+# the Claude Code home above, whatever model answered, is then qwen's, once,
+# and no other collector's.
+ALIBABA_ENDPOINTS=(
+  https://dashscope-intl.aliyuncs.com/apps/anthropic
+  https://dashscope.aliyuncs.com/apps/anthropic
+  https://coding.dashscope.aliyuncs.com/apps/anthropic
+)
+for endpoint in "${!ALIBABA_ENDPOINTS[@]}"; do
+  run_all "$CLAUDE_HOME" "$WORK/alibaba-results-$endpoint" ANTHROPIC_BASE_URL="${ALIBABA_ENDPOINTS[endpoint]}"
+done
+
+alibaba_report=$(python3 - "$WORK" "${ALIBABA_ENDPOINTS[@]}" -- "${collectors[@]}" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+work = Path(sys.argv[1])
+split = sys.argv.index("--")
+endpoints, collectors = sys.argv[2:split], sys.argv[split + 1:]
+tokens = {cell["tag"]: cell["tokens"] for cell in json.load(open(work / "claude-cells.json"))}
+for index, url in enumerate(endpoints):
+  seen = {tag: {} for tag in tokens}
+  for cid in collectors:
+    try:
+      record = json.loads((work / f"alibaba-results-{index}" / f"{cid}.json").read_text())
+    except ValueError:
+      print(f"{url}: {cid} printed no JSON record")
+      continue
+    for model, bucket in (record.get("modelUsage") or {}).items():
+      total = sum(bucket.get(key) or 0 for key in ("inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"))
+      for tag in re.findall(r"zq\d{3}", model):
+        if tag in seen and total:
+          seen[tag][cid] = seen[tag].get(cid, 0) + total
+  for tag, expected in sorted(tokens.items()):
+    wrong = [f"{cid} counted it {total / expected:g}x" for cid, total in sorted(seen[tag].items()) if cid != "qwen" or total != expected]
+    if "qwen" not in seen[tag]:
+      wrong.insert(0, "qwen missed it")
+    if wrong:
+      print(f"{tag} sent to {url}, expected qwen: {'; '.join(wrong)}")
+PY
+)
+if [[ -z $alibaba_report ]]; then
+  pass "each Claude Code reply sent to Model Studio's Anthropic API is counted once, by qwen"
+else
+  fail "each Claude Code reply sent to Model Studio's Anthropic API is counted once, by qwen" "$alibaba_report"
+fi

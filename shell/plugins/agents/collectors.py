@@ -1212,8 +1212,9 @@ def scan_opencode(providers: Iterable[str], accept: Accept) -> tuple[list[UsageR
 # Some harnesses send to whatever base URL they are given and record only the
 # model that answered, or a route's name: Claude Code fronts any endpoint
 # ANTHROPIC_BASE_URL names, and a MiniMax Code custom provider any baseURL.
-# Z.ai, Ollama, MiniMax, DeepSeek, Kimi and OpenRouter each document pointing
-# them at their own APIs, so the host says whose tokens those turns are.
+# Z.ai, Ollama, MiniMax, DeepSeek, Kimi, Alibaba's Model Studio and
+# OpenRouter each document pointing them at their own APIs, so the host says
+# whose tokens those turns are.
 
 # The hosts a harness is pointed at in place of its own service, by the
 # collector that bills them. A subdomain of one is the same service.
@@ -1228,6 +1229,11 @@ PROVIDER_HOSTS = {
   "api.moonshot.cn": "kimi",
   "api.kimi.com": "kimi",
   "api.kimi.ai": "kimi",
+  # Model Studio (DashScope, the Coding and Token Plans) and Qwen's own
+  # sign-in.
+  "aliyuncs.com": "qwen",
+  "alibabacloud.com": "qwen",
+  "qwen.ai": "qwen",
   "openrouter.ai": "openrouter",
 }
 
