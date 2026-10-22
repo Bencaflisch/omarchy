@@ -17,22 +17,31 @@ from agent_usage_fixtures import *
 
 PERIOD_END = iso_in(9 * 86400)
 USED = {"token-main": 42.0, "token-side": 7.0, "token-fresh": 0}
-answer = {"percent": None}
+answer = {"percent": None, "end": None}
 
 
 # Shaped like xAI's answer: protobuf JSON under config, which drops a
-# percentage of zero.
+# percentage of zero. A unified-billing account has no percentage there at
+# all; its monthly quota comes on the billing answer without the credits
+# format, its amounts money fields of {"val": n}.
 def credits(request):
   token = request.get_header("Authorization").split(" ", 1)[1]
-  config = {"currentPeriod": {"type": "USAGE_PERIOD_TYPE_WEEKLY", "end": PERIOD_END}, "billingPeriodEnd": PERIOD_END}
+  config = {"currentPeriod": {"type": "USAGE_PERIOD_TYPE_WEEKLY", "end": answer["end"] or PERIOD_END}, "billingPeriodEnd": PERIOD_END}
   if USED.get(token):
     config["creditUsagePercent"] = USED[token]
   if answer["percent"] is not None:
     config["creditUsagePercent"] = answer["percent"]
+  if token == "token-unified":
+    config["isUnifiedBillingUser"] = True
   return {"config": config}
 
 
-ROUTES = {"cli-chat-proxy.grok.com/v1/billing?format=credits": credits}
+def monthly(request):
+  return {"config": {"isUnifiedBillingUser": True, "billingPeriodStart": iso_in(-20 * 86400), "billingPeriodEnd": PERIOD_END,
+                     "monthlyLimit": {"val": 1000}, "used": {"val": 900}}}
+
+
+ROUTES = {"cli-chat-proxy.grok.com/v1/billing?format=credits": credits, "cli-chat-proxy.grok.com/v1/billing": monthly}
 
 
 # A home signed in the way the Grok CLI leaves it.
@@ -158,6 +167,23 @@ signed_in(grok_home(), token="token-fresh")
 record = grok()
 expect("an untouched period reads as 0% rather than nothing known",
        [record["limits"][0]["label"], record["limits"][0]["percent"]], ["Weekly", 0.0], record)
+
+# A period already over without a percentage says nothing about this one: no
+# answer, the last numbers kept as stale.
+answer["end"] = iso_in(-3600)
+record = grok()
+answer["end"] = None
+expect("an ended period without a percentage is no answer, keeping the last numbers",
+       [record["limits"][0]["percent"], record["limitsStale"]], [0.0, True], record)
+
+# A unified-billing account leaves the percentage out of the credits answer,
+# its usage counted against the monthly quota the plain billing answer gives.
+sandbox()
+signed_in(grok_home(), token="token-unified")
+record = grok()
+expect("a unified-billing account reads its monthly quota, not a confident 0%",
+       [record["limits"][0]["label"], record["limits"][0]["percent"], record["limitsStale"], bool(record["limits"][0]["resetsAt"])],
+       ["Monthly", 0.9, False, True], record)
 
 # ------------------------------------------------------------- accounts
 

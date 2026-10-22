@@ -48,6 +48,9 @@ AGENT_ID = "grok"
 AGENT_NAME = "Grok"
 AUTH_HELP = "Start Grok, or run `grok login`, to sign in."
 CREDITS_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
+# A unified-billing account counts its usage against a monthly quota, which
+# the same endpoint answers without the credits format.
+MONTHLY_URL = "https://cli-chat-proxy.grok.com/v1/billing"
 # Grok's docs give a saved sign-in 30 days; a refresh token older than that
 # can't renew the access token, so it no longer counts as signed in.
 REFRESH_LIFETIME_SECONDS = 30 * 24 * 3600
@@ -174,24 +177,55 @@ def plan(home):
   return str(settings.get("subscription_tier_display") or "")
 
 
+# A percentage or amount from xAI's answer: a number, or a money field's
+# {"val": n}, whose val protobuf JSON leaves out when it's zero.
+def amount(value):
+  if isinstance(value, dict):
+    value = value.get("val") or 0
+  if isinstance(value, bool):
+    raise ValueError("not a number")
+  value = float(value)
+  # NaN would pass any clamp as 100%; a number that isn't one is no answer.
+  if not math.isfinite(value):
+    raise ValueError("not a number")
+  return value
+
+
 # The credits answer as one limit window: how much of this period's included
 # usage is gone, and when the period ends. The answer is protobuf JSON, which
 # leaves out a field holding zero, so a period with nothing used yet has no
-# percentage at all.
+# percentage at all. A unified-billing account leaves it out too, its usage
+# counted against the monthly quota instead, so it has no window here (None);
+# and a period already over without one says nothing about this one.
 def credits_limit(data):
   config = data["config"]
   period = config["currentPeriod"]
-  used = config.get("creditUsagePercent") or 0
-  if isinstance(used, bool):
-    raise ValueError("creditUsagePercent is not a number")
-  used = float(used)
-  # NaN would pass any clamp as 100%; a percentage that isn't one is no answer.
-  if not math.isfinite(used):
-    raise ValueError("creditUsagePercent is not a number")
+  ends = parse_time(period["end"])
+  used = config.get("creditUsagePercent")
+  if used is None:
+    if config.get("isUnifiedBillingUser") is True:
+      return None
+    if ends.timestamp() <= time.time():
+      raise ValueError("an ended period without a percentage")
+    used = 0
   return {
     "label": "Weekly" if "WEEK" in str(period.get("type")) else "Monthly",
-    "percent": max(0.0, min(1.0, used / 100)),
-    "resetsAt": parse_time(period["end"]).isoformat(),
+    "percent": max(0.0, min(1.0, amount(used) / 100)),
+    "resetsAt": ends.isoformat(),
+  }
+
+
+# The monthly answer as one limit window: how much of the month's included
+# quota is used, and when the billing period ends.
+def monthly_limit(data):
+  config = data["config"]
+  quota = amount(config["monthlyLimit"])
+  if quota <= 0:
+    raise ValueError("no monthly quota")
+  return {
+    "label": "Monthly",
+    "percent": max(0.0, min(1.0, amount(config["used"]) / quota)),
+    "resetsAt": parse_time(config["billingPeriodEnd"]).isoformat(),
   }
 
 
@@ -234,10 +268,12 @@ def collect_limits(home, key, force):
     result.update(limits=fallback, live=True, authHelpText="")
     return result
 
-  request = urllib.request.Request(CREDITS_URL, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
+  headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
   limit = None
   try:
-    limit = credits_limit(open_json(request, timeout=8))
+    limit = credits_limit(open_json(urllib.request.Request(CREDITS_URL, headers=headers), timeout=8))
+    if limit is None:
+      limit = monthly_limit(open_json(urllib.request.Request(MONTHLY_URL, headers=headers), timeout=8))
   except HttpError as error:
     if error.status in (401, 403):
       # The token was turned away before it lapsed: a sign-in to redo.
