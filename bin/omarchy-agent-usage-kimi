@@ -334,14 +334,16 @@ def reset_at(detail: dict[str, Any]) -> str:
     raw = str(detail.get(key) or "").strip()
     if not raw:
       continue
+    # A time that won't parse names no reset, rather than passing through as
+    # one the panel can't read.
     if raw.isdigit():
-      stamp = int(raw)
-      if stamp < 1_000_000_000_000:
-        stamp *= 1000
       try:
+        stamp = int(raw)
+        if stamp < 1_000_000_000_000:
+          stamp *= 1000
         return datetime.fromtimestamp(stamp / 1000, tz=timezone.utc).isoformat().replace("+00:00", "Z")
       except (OverflowError, OSError, ValueError):
-        return raw
+        return ""
     # Kimi stamps carry nanosecond fractions Python cannot parse; trim them.
     normalized = raw.replace("Z", "+00:00")
     if "." in normalized:
@@ -356,7 +358,7 @@ def reset_at(detail: dict[str, Any]) -> str:
     try:
       return datetime.fromisoformat(normalized).isoformat().replace("+00:00", "Z")
     except ValueError:
-      return raw
+      return ""
   return ""
 
 

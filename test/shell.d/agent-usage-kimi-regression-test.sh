@@ -340,6 +340,15 @@ def legacy_quota(root):
     {"label": "Weekly quota", "percent": 0.25, "resetsAt": ""}], data)
 
 
+def odd_resets(root):
+  os.environ["KIMI_API_KEY"] = "AT_env"
+  odd = ("garbage", "2030-13-45", "99999999999999999999999", "9" * 5000, "-5", "1e10", True, [1])
+  for value in odd:
+    state["payload"] = {"usages": {"limit_5h": {"used_ratio": 0.5, "reset_time": value}}}
+    data = record()
+    expect(f"a reset time that won't parse names no reset ({str(value)[:30]})", [row["resetsAt"] for row in data["limits"]], [""], data)
+
+
 # ------------------------------------------------------------------ the cache
 
 def cache_identity(root):
@@ -405,7 +414,7 @@ cases = {"contract": contract, "env_key": env_key, "stores": stores, "home": hom
          "waiting_for_auth": waiting_for_auth, "trust": trust, "destination": destination, "redirects": redirects,
          "quota": modern_quota, "legacy_quota": legacy_quota, "cache_identity": cache_identity,
          "rotation_cache": rotated_cache, "switched_cache": switched_cache, "empty_answer": empty_answer,
-         "odd_answer": odd_answer}
+         "odd_answer": odd_answer, "odd_resets": odd_resets}
 selected = os.environ.get("OMARCHY_TEST_KIMI_CASE")
 for name, case in cases.items():
   if selected and name != selected:
