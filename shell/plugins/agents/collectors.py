@@ -1686,6 +1686,241 @@ def claude_code_scan_match(claude_dir: Path | None = None) -> dict[str, str]:
   return {"claudeCodeEndpoint": claude_code_endpoint(claude_code_base_url(claude_dir))}
 
 
+# ------------------------------------------------------- Codex rollouts
+#
+# Codex writes one JSONL rollout per session under $CODEX_HOME/sessions (and
+# archived_sessions), naming the model provider it ran on. The Codex
+# collector reads its own `openai` rollouts with a reader of its own; the
+# rest (`--oss` on a local daemon, a custom model_providers entry) are read
+# here for the collectors that bill them: the local collector for a
+# self-hosted provider, Ollama Cloud for a cloud-tagged model the local
+# daemon forwarded.
+
+# The Codex collector counts rollouts on the built-in provider, and ones too
+# old to name a provider at all.
+CODEX_NATIVE_PROVIDER = "openai"
+
+# Codex rollouts are read back this far, matching the Codex collector.
+CODEX_WINDOW_DAYS = 30
+
+# Per-file totals of Codex rollouts survive between runs, so a rescan only
+# reads the files that changed. Bumping it retires every older record; version
+# 2 drops totals cached while an untrusted time still counted on the file's day,
+# and version 3 those that counted every request as a prompt.
+CODEX_ROLLOUT_SCHEMA = 3
+
+_CODEX_MARKERS = ('"token_count"', '"turn_context"', '"session_meta"', '"user_message"', '"UserMessage"')
+
+
+def codex_home() -> Path:
+  return Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
+
+
+# Records hold local days, so they are only true in the timezone that wrote
+# them.
+def _codex_cache_zone() -> list[Any]:
+  return [os.environ.get("TZ"), list(time.tzname), time.timezone, time.altzone]
+
+
+def _codex_record_valid(value: Any) -> bool:
+  try:
+    counts = [totals for models in value["days"].values() for totals in models.values()]
+    return (
+      type(value["mtime"]) in (int, float) and type(value["size"]) is int and isinstance(value["provider"], str)
+      and all(len(totals) == 5 and all(type(n) is int for n in totals) for totals in counts)
+    )
+  except Exception:
+    return False
+
+
+def _codex_typed_prompt(entry: dict[str, Any]) -> bool:
+  """Whether a rollout line is a prompt the user typed, as the Codex collector
+  reads it: an item_completed UserMessage in paginated rollouts, a plain
+  user_message event in legacy ones."""
+  if entry.get("type") != "event_msg":
+    return False
+  payload = obj(entry.get("payload"))
+  if payload.get("type") == "user_message":
+    return payload.get("kind") in (None, "plain")
+  return payload.get("type") == "item_completed" and obj(payload.get("item")).get("type") == "UserMessage"
+
+
+def _codex_typed_session(meta: dict[str, Any]) -> bool:
+  # A subagent's or Codex's own internal thread is prompted by Codex itself.
+  source = meta.get("source")
+  return not (isinstance(source, dict) and ("subagent" in source or "internal" in source))
+
+
+def read_codex_rollout(path: Path, stat_result: os.stat_result) -> dict[str, Any]:
+  """One rollout's provider and day -> model -> [input, output, cacheRead,
+  cacheWrite, prompts], counted the way the Codex collector counts its own.
+  A rollout on the built-in provider, or naming none, is left unread.
+
+  A prompt counts on its own day, under the model that answered it: the one
+  in effect at the next request, since a legacy rollout can write the prompt
+  before the turn_context naming its model. A partial read has an mtime of
+  None, so it is never cached as the file's whole story.
+  """
+  record: dict[str, Any] = {"mtime": stat_result.st_mtime, "size": stat_result.st_size, "provider": "", "days": {}}
+  current_model = "local"
+  seen_meta = False
+  typed = True
+  pending_prompts: list[str] = []
+  previous_total_usage = None
+
+  def bucket(day: str, model: str) -> list[int]:
+    return record["days"].setdefault(day, {}).setdefault(model, [0, 0, 0, 0, 0])
+
+  try:
+    with path.open(errors="replace") as handle:
+      for raw in handle:
+        if not any(marker in raw for marker in _CODEX_MARKERS):
+          continue
+        try:
+          entry = json.loads(raw)
+        except Exception:
+          # A line nested too deep to parse is a RecursionError, not a
+          # ValueError; either way only that line is lost.
+          continue
+        if not isinstance(entry, dict):
+          continue
+        if entry.get("type") == "session_meta":
+          # A forked rollout copies its parent's session_meta after its own,
+          # so only the first one, as Codex reads it, says who served this.
+          if seen_meta:
+            continue
+          seen_meta = True
+          record["provider"] = str(obj(entry.get("payload")).get("model_provider") or "").strip().lower()
+          # The built-in provider, or none recorded, is the Codex
+          # collector's: nothing here can count it.
+          if record["provider"] in ("", CODEX_NATIVE_PROVIDER):
+            break
+          typed = _codex_typed_session(obj(entry.get("payload")))
+          continue
+        if not seen_meta:
+          continue
+        if _codex_typed_prompt(entry):
+          # A prompt with no time is the file's; one whose time can't be
+          # trusted counts nowhere.
+          timestamp = entry.get("timestamp")
+          day = local_day(stat_result.st_mtime if timestamp is None else timestamp)
+          if typed and day is not None:
+            pending_prompts.append(day)
+          continue
+        if entry.get("type") == "turn_context":
+          payload = obj(entry.get("payload"))
+          current_model = str(payload.get("model") or payload.get("model_slug") or current_model)
+          continue
+        payload = entry.get("payload") or entry
+        if entry.get("type") == "response_item" and isinstance(payload, dict):
+          payload = payload.get("payload") or payload
+        if not isinstance(payload, dict) or payload.get("type") != "token_count":
+          continue
+        info = obj(payload.get("info"))
+        # total_token_usage is cumulative for the session; the last turn is
+        # what this one spent.
+        usage = obj(info.get("last_token_usage"))
+        cache_read = token_count(usage.get("cached_input_tokens"))
+        cache_write = token_count(usage.get("cache_write_input_tokens"))
+        # Cached tokens are inside input_tokens, and reasoning inside
+        # output_tokens.
+        input_tokens = max(0, token_count(usage.get("input_tokens")) - cache_read - cache_write)
+        output_tokens = token_count(usage.get("output_tokens"))
+        if not (input_tokens or output_tokens or cache_read or cache_write):
+          continue
+        # Quota updates can repeat the previous request's last_token_usage.
+        # Only an unchanged cumulative snapshot proves this is a repeat:
+        # separate requests may spend identical counts.
+        total_usage = info.get("total_token_usage")
+        if isinstance(total_usage, dict) and total_usage:
+          if total_usage == previous_total_usage:
+            continue
+          previous_total_usage = total_usage
+        # A turn with no time is dated by the file; one whose time can't be
+        # trusted counts nowhere, as in the Codex collector.
+        timestamp = entry.get("timestamp")
+        day = local_day(stat_result.st_mtime if timestamp is None else timestamp)
+        if day is None:
+          continue
+        totals = bucket(day, current_model)
+        totals[0] += input_tokens
+        totals[1] += output_tokens
+        totals[2] += cache_read
+        totals[3] += cache_write
+        # One prompt can take many requests, one per tool call it makes; the
+        # requests count no prompts of their own.
+        for prompt_day in pending_prompts:
+          bucket(prompt_day, current_model)[4] += 1
+        pending_prompts = []
+  except OSError:
+    record["mtime"] = None
+  # A prompt no request answered yet, or ever, was put to the last model.
+  for prompt_day in pending_prompts:
+    bucket(prompt_day, current_model)[4] += 1
+  return record
+
+
+def codex_rollout_cache(agent_id: str) -> Path | None:
+  """Where a collector keeps its per-file Codex totals, for this Codex home,
+  or None when the cache root is unusable: that costs the reuse, never the
+  scan."""
+  digest = hashlib.sha1(str(codex_home()).encode("utf-8", "surrogatepass")).hexdigest()[:16]
+  try:
+    return cache_root() / f"{agent_id}-codex-files-{digest}.json"
+  except OSError:
+    return None
+
+
+def codex_rollouts(cache_file: Path | None, reuse: bool = True) -> tuple[dict[str, dict[str, Any]], bool]:
+  """Every Codex rollout of the last CODEX_WINDOW_DAYS not on the built-in
+  provider, as read_codex_rollout() reads it, keyed by path, and whether
+  every one was read in full.
+
+  Rollouts are append-only, so a file whose mtime and size both match its
+  cached record cannot have grown a turn since; `reuse=False` reads them all
+  again. A record keeps every turn whatever its provider, so the caller
+  decides which providers and models are its own. Only the files this scan
+  saw are written back, so deleted rollouts and ones past the window leave
+  the cache.
+  """
+  cached: dict[str, Any] = {}
+  if cache_file is not None and reuse:
+    try:
+      payload = read_json(cache_file)
+    except OSError:
+      payload = {}
+    if payload.get("schemaVersion") == CODEX_ROLLOUT_SCHEMA and payload.get("zone") == _codex_cache_zone():
+      cached = {path: record for path, record in obj(payload.get("files")).items() if _codex_record_valid(record)}
+  records: dict[str, dict[str, Any]] = {}
+  kept: dict[str, dict[str, Any]] = {}
+  cutoff = time.time() - CODEX_WINDOW_DAYS * 24 * 60 * 60
+  complete = True
+  for root in (codex_home() / "sessions", codex_home() / "archived_sessions"):
+    if not root.is_dir():
+      continue
+    for path in root.rglob("*.jsonl"):
+      try:
+        stat_result = path.stat()
+      except OSError:
+        continue
+      if stat_result.st_mtime < cutoff:
+        continue
+      key = str(path)
+      record = cached.get(key)
+      if record is None or record["mtime"] != stat_result.st_mtime or record["size"] != stat_result.st_size:
+        record = read_codex_rollout(path, stat_result)
+      if record["mtime"] is None:
+        complete = False
+      else:
+        kept[key] = record
+      records[key] = record
+  if cache_file is not None:
+    try:
+      write_json(cache_file, {"schemaVersion": CODEX_ROLLOUT_SCHEMA, "zone": _codex_cache_zone(), "files": kept})
+    except OSError as exc:
+      warn(f"could not write file cache ({exc})")
+  return records, complete
+
 # ------------------------------------------------------------------ limits
 
 
