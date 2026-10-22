@@ -79,9 +79,10 @@ TRANSPORT_ERRORS = (
 # only reads the session files that changed. Bumping the schema retires every
 # record written by an older layout; version 2 reads token counts and times
 # the way every collector reads them, and version 3 drops totals cached while a
-# falsy time still counted on the file's day, and version 4 counts typed prompts
-# apart from the requests that answered them.
-FILE_CACHE_SCHEMA = 4
+# falsy time still counted on the file's day, version 4 counts typed prompts
+# apart from the requests that answered them, and version 5 counts Codex
+# 0.163's token_usage_record lines.
+FILE_CACHE_SCHEMA = 5
 
 
 
@@ -270,7 +271,11 @@ def scan_native_codex_sessions(cached_files, scanned_files):
 
 # The rollout lines the reader parses: usage, the model and provider serving
 # it, and the prompts typed.
-ROLLOUT_MARKERS = ('"token_count"', '"turn_context"', '"session_meta"', '"user_message"', '"UserMessage"')
+ROLLOUT_MARKERS = ('"token_count"', '"token_usage_record"', '"turn_context"', '"session_meta"', '"user_message"', '"UserMessage"')
+
+
+# What a token_usage_record's running total is compared by.
+USAGE_FIELDS = ("input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens", "total_tokens")
 
 
 def read_native_codex_session(path, stat_result):
@@ -279,6 +284,13 @@ def read_native_codex_session(path, stat_result):
   seen_meta = False
   typed = True
   previous_total_usage = None
+  # Codex 0.163 writes a token_usage_record for every response it is billed
+  # for, a compaction's included, where token_count only follows a sampling
+  # request. Once one appears, the records are the usage and the token_count
+  # lines after it repeat them; those before it, from a Codex that wrote no
+  # records, still count.
+  seen_records = False
+  seen_responses = set()
   try:
     with path.open(errors="replace") as handle:
       for raw in handle:
@@ -326,17 +338,32 @@ def read_native_codex_session(path, stat_result):
           payload = obj(entry.get("payload"))
           current_model = model_name(payload.get("model") or payload.get("model_slug") or current_model)
           continue
-        payload = entry.get("payload") or entry
-        if entry.get("type") == "response_item" and isinstance(payload, dict):
-          payload = payload.get("payload") or payload
-        if not isinstance(payload, dict):
-          continue
-        if payload.get("type") != "token_count":
-          continue
-        info = obj(payload.get("info"))
-        # total_token_usage is cumulative for the session. Adding every
-        # snapshot makes usage grow quadratically, so count the last turn.
-        usage = obj(info.get("last_token_usage"))
+        if entry.get("type") == "token_usage_record":
+          seen_records = True
+          payload = obj(entry.get("payload"))
+          # One response, with its own usage and the thread's running total
+          # after it. Only the same response id under an unchanged total is a
+          # repeat: a backend may reuse an id from turn to turn.
+          thread_usage = obj(payload.get("thread_token_usage"))
+          response = (str(payload.get("response_id") or ""), *(token_count(thread_usage.get(field)) for field in USAGE_FIELDS))
+          if response in seen_responses:
+            continue
+          seen_responses.add(response)
+          usage = obj(payload.get("usage"))
+          total_usage = None
+        else:
+          payload = entry.get("payload") or entry
+          if entry.get("type") == "response_item" and isinstance(payload, dict):
+            payload = payload.get("payload") or payload
+          if not isinstance(payload, dict):
+            continue
+          if payload.get("type") != "token_count" or seen_records:
+            continue
+          info = obj(payload.get("info"))
+          # total_token_usage is cumulative for the session. Adding every
+          # snapshot makes usage grow quadratically, so count the last turn.
+          usage = obj(info.get("last_token_usage"))
+          total_usage = info.get("total_token_usage")
         cache_read = token_count(usage.get("cached_input_tokens"))
         cache_write = token_count(usage.get("cache_write_input_tokens"))
         # Cached tokens are included in input_tokens, and reasoning tokens
@@ -351,7 +378,6 @@ def read_native_codex_session(path, stat_result):
         # separate requests may have identical last-token counts, and older
         # records may not carry cumulative counters at all. Keep this state
         # per rollout and accept changed counters, including counter resets.
-        total_usage = info.get("total_token_usage")
         if isinstance(total_usage, dict) and total_usage:
           if total_usage == previous_total_usage:
             continue

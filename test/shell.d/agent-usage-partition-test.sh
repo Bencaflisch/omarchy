@@ -433,6 +433,41 @@ for n, (provider, stem, owner) in enumerate(MCODE_ROUTES):
   )))
   cells.append({"tag": tag, "provider": provider, "api": "", "source": "mcode", "tokens": tokens, "owner": owner})
 
+
+# Codex 0.163 rollouts with a remote compaction, as it writes one: a
+# token_usage_record for every response, the compaction's included, where the
+# token_count after the compaction spends nothing and the next one counts only
+# the reply. A record repeated under the same id and running total is one
+# response.
+CODEX_RECORD_ROLLOUTS = [
+  ("openai", "gpt-record@", "codex"),
+  ("ollama-cloud", "qwen-record@", "ollama"),
+  ("lmstudio", "plain-record@", "local"),
+]
+for n, (provider, stem, owner) in enumerate(CODEX_RECORD_ROLLOUTS):
+  tag = f"zq{len(cells):03d}"
+  compaction, reply = 84000 + 100 * n, 1000 + n
+  first = {"input_tokens": compaction, "output_tokens": 0}
+  thread = {"input_tokens": compaction + reply, "output_tokens": 0}
+  usage_record = {"timestamp": stamp, "type": "token_usage_record", "payload": {
+    "turn_id": "turn-1", "response_id": "resp_mock_0002", "usage": {"input_tokens": reply, "output_tokens": 0}, "thread_token_usage": thread}}
+  lines = [
+    {"timestamp": stamp, "type": "session_meta", "payload": {"model_provider": provider, "source": "exec"}},
+    {"timestamp": stamp, "type": "turn_context", "payload": {"model": model_for(stem, tag)}},
+    {"timestamp": stamp, "type": "token_usage_record", "payload": {
+      "turn_id": "turn-1", "response_id": "resp_mock_0001", "usage": first, "thread_token_usage": first}},
+    {"timestamp": stamp, "type": "compacted", "payload": {"message": ""}},
+    {"timestamp": stamp, "type": "event_msg", "payload": {"type": "token_count", "info": {
+      "last_token_usage": {"input_tokens": 0, "output_tokens": 0}, "total_token_usage": {}}}},
+    {"timestamp": stamp, "type": "event_msg", "payload": {"type": "item_completed", "item": {"type": "UserMessage", "id": "u1", "content": []}}},
+    usage_record,
+    {"timestamp": stamp, "type": "event_msg", "payload": {"type": "token_count", "info": {
+      "last_token_usage": {"input_tokens": reply, "output_tokens": 0}, "total_token_usage": {"input_tokens": reply, "output_tokens": 0}}}},
+    usage_record,
+  ]
+  (rollouts / f"rollout-{tag}.jsonl").write_text("".join(json.dumps(line) + "\n" for line in lines))
+  cells.append({"tag": tag, "provider": provider, "api": "", "source": "codex-record-rollout", "tokens": compaction + reply, "owner": owner})
+
 cells_path.write_text(json.dumps(cells))
 PY
 

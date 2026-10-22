@@ -144,6 +144,53 @@ expect("Codex counts each request once, without a quota notification or cache an
 expect("Codex starts its app-server read-only with a supported approval policy",
        (home() / "codex-args").read_text().split("\0"), ["-s", "read-only", "-a", "on-request", "app-server"])
 
+# Codex 0.163 writes a token_usage_record for every response it is billed for.
+# A remote compaction is one only a record names: the token_count after it
+# spends nothing and leaves the running total alone, and a resumed turn may
+# write a record and no token_count at all. Each record counts once, a line
+# repeated under the same id and total being the same response, while a mock
+# backend reusing an id in a later turn is a new one; the token_count lines
+# after the first record repeat them, and one before it, from an older Codex,
+# still counts.
+new_home()
+
+
+def usage(input, output, cached=0, written=0):
+  return {"input_tokens": input, "cached_input_tokens": cached, "cache_write_input_tokens": written, "output_tokens": output,
+          "reasoning_output_tokens": 0, "total_tokens": input + output}
+
+
+def usage_record(turn, response, spent, thread):
+  return {"type": "token_usage_record", "payload": {"thread_id": "t1", "turn_id": turn, "session_id": "t1", "root_turn_id": turn,
+                                                     "response_id": response, "usage": spent, "turn_token_usage": spent, "thread_token_usage": thread}}
+
+
+def snapshot(last, total):
+  return {"type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": total, "last_token_usage": last, "model_context_window": 258400}}}
+
+
+first, compaction, reply, resumed = usage(31234, 51, 71, 31), usage(61234, 51, 71, 31), usage(62234, 52, 72, 32), usage(1000, 10)
+after_reply = usage(93468, 103, 143, 63)
+rollout("rollout-compacted.jsonl", meta(model_provider="openai", source="exec", thread_source="user", id="t1", session_id="t1", cli_version="0.163.0"),
+        context("gpt-test"), typed("first"), usage_record("turn1", "resp_mock_0001", first, first), snapshot(first, first),
+        usage_record("turn2", "resp_mock_0001", compaction, usage(92468, 102, 142, 62)),
+        {"type": "compacted", "payload": {"message": "", "replacement_history": []}}, context("gpt-test"),
+        snapshot(usage(0, 0), first), typed("second"),
+        usage_record("turn2", "resp_mock_0002", reply, usage(154702, 154, 214, 94)), snapshot(reply, after_reply),
+        usage_record("turn2", "resp_mock_0002", reply, usage(154702, 154, 214, 94)),
+        typed("third"), usage_record("turn3", "resp_mock_0001", resumed, usage(155702, 164, 214, 94)))
+rollout("rollout-upgraded.jsonl", meta(model_provider="openai", source="cli"), context("gpt-older"), typed(),
+        snapshot(usage(100, 10), usage(100, 10)), typed(), usage_record("turn2", "resp_2", usage(200, 20), usage(300, 30)),
+        snapshot(usage(200, 20), usage(300, 30)))
+record = codex()
+expect("Codex counts every response a token_usage_record names, a compaction's and a resumed turn's included, each once", {
+  "today": record["todayTotalTokens"], "byModel": record["todayTokensByModel"], "prompts": record["todayPrompts"], "usage": record["modelUsage"]["gpt-test"],
+}, {
+  "today": 31285 + 61285 + 62286 + 1010 + 330, "byModel": {"gpt-test": 155866, "gpt-older": 330}, "prompts": 5,
+  "usage": {"inputTokens": 155702 - 214 - 94, "outputTokens": 164, "cacheReadInputTokens": 214, "cacheCreationInputTokens": 94},
+}, record)
+
+
 # Codex CLI can front any OpenAI-compatible backend (`--oss`, or a custom
 # model_provider), whose rollouts land beside the subscription's but spend a
 # local box or a third party. A rollout from before Codex recorded the

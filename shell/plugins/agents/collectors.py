@@ -1716,10 +1716,14 @@ CODEX_WINDOW_DAYS = 30
 # Per-file totals of Codex rollouts survive between runs, so a rescan only
 # reads the files that changed. Bumping it retires every older record; version
 # 2 drops totals cached while an untrusted time still counted on the file's day,
-# and version 3 those that counted every request as a prompt.
-CODEX_ROLLOUT_SCHEMA = 3
+# version 3 those that counted every request as a prompt, and version 4 those
+# that missed the responses only Codex 0.163's token_usage_record lines name.
+CODEX_ROLLOUT_SCHEMA = 4
 
-_CODEX_MARKERS = ('"token_count"', '"turn_context"', '"session_meta"', '"user_message"', '"UserMessage"')
+_CODEX_MARKERS = ('"token_count"', '"token_usage_record"', '"turn_context"', '"session_meta"', '"user_message"', '"UserMessage"')
+
+# What a token_usage_record's running total is compared by.
+_CODEX_USAGE_FIELDS = ("input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens", "total_tokens")
 
 
 def codex_home() -> Path:
@@ -1777,6 +1781,12 @@ def read_codex_rollout(path: Path, stat_result: os.stat_result) -> dict[str, Any
   typed = True
   pending_prompts: list[str] = []
   previous_total_usage = None
+  # Codex 0.163 writes a token_usage_record for every response it is billed
+  # for, a compaction's included, where token_count only follows a sampling
+  # request. Once one appears, the records are the usage and the token_count
+  # lines after it repeat them; those before it still count.
+  seen_records = False
+  seen_responses: set[tuple[Any, ...]] = set()
 
   def bucket(day: str, model: str) -> list[int]:
     return record["days"].setdefault(day, {}).setdefault(model, [0, 0, 0, 0, 0])
@@ -1821,15 +1831,30 @@ def read_codex_rollout(path: Path, stat_result: os.stat_result) -> dict[str, Any
           payload = obj(entry.get("payload"))
           current_model = str(payload.get("model") or payload.get("model_slug") or current_model)
           continue
-        payload = entry.get("payload") or entry
-        if entry.get("type") == "response_item" and isinstance(payload, dict):
-          payload = payload.get("payload") or payload
-        if not isinstance(payload, dict) or payload.get("type") != "token_count":
-          continue
-        info = obj(payload.get("info"))
-        # total_token_usage is cumulative for the session; the last turn is
-        # what this one spent.
-        usage = obj(info.get("last_token_usage"))
+        if entry.get("type") == "token_usage_record":
+          seen_records = True
+          payload = obj(entry.get("payload"))
+          # One response, with the thread's running total after it. Only the
+          # same response id under an unchanged total is a repeat: a backend
+          # may reuse an id from turn to turn.
+          thread_usage = obj(payload.get("thread_token_usage"))
+          response = (str(payload.get("response_id") or ""), *(token_count(thread_usage.get(field)) for field in _CODEX_USAGE_FIELDS))
+          if response in seen_responses:
+            continue
+          seen_responses.add(response)
+          usage = obj(payload.get("usage"))
+          total_usage = None
+        else:
+          payload = entry.get("payload") or entry
+          if entry.get("type") == "response_item" and isinstance(payload, dict):
+            payload = payload.get("payload") or payload
+          if not isinstance(payload, dict) or payload.get("type") != "token_count" or seen_records:
+            continue
+          info = obj(payload.get("info"))
+          # total_token_usage is cumulative for the session; the last turn is
+          # what this one spent.
+          usage = obj(info.get("last_token_usage"))
+          total_usage = info.get("total_token_usage")
         cache_read = token_count(usage.get("cached_input_tokens"))
         cache_write = token_count(usage.get("cache_write_input_tokens"))
         # Cached tokens are inside input_tokens, and reasoning inside
@@ -1841,7 +1866,6 @@ def read_codex_rollout(path: Path, stat_result: os.stat_result) -> dict[str, Any
         # Quota updates can repeat the previous request's last_token_usage.
         # Only an unchanged cumulative snapshot proves this is a repeat:
         # separate requests may spend identical counts.
-        total_usage = info.get("total_token_usage")
         if isinstance(total_usage, dict) and total_usage:
           if total_usage == previous_total_usage:
             continue
