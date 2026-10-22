@@ -44,8 +44,10 @@ AGENT_NAME = "Hermes"
 # ~/.hermes<HERMES_DATA_DIR_SUFFIX>. Named profiles sit under the root's
 # profiles/: the default home, unless HERMES_HOME lies outside it, where a
 # <root>/profiles/<name> home makes <root> the root and any other home is its
-# own (hermes_constants.get_default_hermes_root). ~/.hermes/profiles is read
-# whatever the root, as before. A profile linked to the home counts once.
+# own (hermes_constants.get_default_hermes_root). The root is the default
+# profile, so a profile home still counts the root's own state.db
+# (hermes_cli.profiles.list_profiles). ~/.hermes/profiles is read whatever the
+# root, as before. A profile linked to the home counts once.
 def state_paths():
   native = Path.home() / (".hermes" + os.environ.get("HERMES_DATA_DIR_SUFFIX", ""))
   configured = os.environ.get("HERMES_HOME", "").strip()
@@ -53,7 +55,7 @@ def state_paths():
   root = native
   if not home.resolve().is_relative_to(native.resolve()):
     root = home.parent.parent if home.parent.name == "profiles" else home
-  candidates = [home / "state.db"]
+  candidates = [home / "state.db", root / "state.db"]
   for profiles in dict.fromkeys((root / "profiles", native / "profiles", Path.home() / ".hermes" / "profiles")):
     if profiles.is_dir():
       candidates.extend(sorted(path / "state.db" for path in profiles.iterdir() if path.is_dir()))

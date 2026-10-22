@@ -137,6 +137,31 @@ expect("Hermes expands HERMES_HOME and reads the profiles beside a custom profil
        [record["modelUsage"].get("gpt-6-astra", {}).get("inputTokens"), record["modelUsage"].get("gpt-6-sol", {}).get("inputTokens"), record["totalSessions"]],
        [100, 1000, 2], record)
 
+# A shell with a profile active exports HERMES_HOME=~/.hermes/profiles/<name>;
+# the root ~/.hermes is still the default profile, so it counts too
+# (hermes_cli.profiles.list_profiles), as with HERMES_HOME unset.
+sandbox()
+state_db(home() / ".hermes" / "state.db", ("gpt-6-astra", 100))
+state_db(home() / ".hermes" / "profiles" / "side" / "state.db", ("gpt-6-sol", 1000))
+os.environ["HERMES_HOME"] = str(home() / ".hermes" / "profiles" / "side")
+record = hermes()
+del os.environ["HERMES_HOME"]
+expect("Hermes reads the default profile beside an active named profile",
+       [record["modelUsage"].get("gpt-6-astra", {}).get("inputTokens"), record["modelUsage"].get("gpt-6-sol", {}).get("inputTokens"), record["totalSessions"]],
+       [100, 1000, 2], record)
+
+# The same holds for a custom root's profile home: <root>/state.db is its
+# default profile.
+sandbox()
+state_db(home() / "srv" / "state.db", ("gpt-6-astra", 100))
+state_db(home() / "srv" / "profiles" / "work" / "state.db", ("gpt-6-sol", 1000))
+os.environ["HERMES_HOME"] = str(home() / "srv" / "profiles" / "work")
+record = hermes()
+del os.environ["HERMES_HOME"]
+expect("Hermes reads a custom root's default profile beside its active profile",
+       [record["modelUsage"].get("gpt-6-astra", {}).get("inputTokens"), record["modelUsage"].get("gpt-6-sol", {}).get("inputTokens"), record["totalSessions"]],
+       [100, 1000, 2], record)
+
 # HERMES_DATA_DIR_SUFFIX names the default home.
 sandbox()
 state_db(home() / ".hermes-beta" / "state.db", ("gpt-6-astra", 100))
