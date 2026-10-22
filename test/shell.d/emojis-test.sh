@@ -84,6 +84,9 @@ WL_COPY_OUT="$TMPDIR/emoji" WTYPE_OUT="$TMPDIR/wtype" PATH="$TMPDIR/bin:$PATH" \
 pass "emoji insert helper copies emoji transiently"
 
 copy_args=" $(<"$TMPDIR/emoji.args") "
+[[ $copy_args == *" --type text/plain "* ]] || fail "emoji insert helper offers the emoji as plain text"
+pass "emoji insert helper offers the emoji as plain text"
+
 [[ $copy_args == *" --sensitive "* ]] || fail "emoji insert helper keeps the emoji out of clipboard history"
 pass "emoji insert helper keeps the emoji out of clipboard history"
 
