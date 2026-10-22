@@ -117,7 +117,22 @@ pass "the upgrade action is reachable through the command's own dispatch"
 mkdir -p "$test_tmp/source/bin"
 ln -sf "$test_tmp/omarchy-sudo-passwordless" "$test_tmp/source/bin/omarchy-sudo-passwordless"
 (
-  PATH="$test_tmp/bin:$PATH" TEST_MIGRATION=1 OMARCHY_PATH="$test_tmp/source" \
-    /usr/bin/bash "$ROOT/migrations/1792527479.sh"
+  source "$library"
+  reset_grant
+  printf 'audituser ALL=(ALL) NOPASSWD: ALL\n' >"$(rule_file 1000 permanent)"
+  PATH="$test_tmp/bin:$PATH" TEST_MIGRATION=1 TEST_STATUS=0 OMARCHY_PATH="$test_tmp/source" \
+    /usr/bin/bash -euo pipefail "$ROOT/migrations/1792527479.sh"
+  head -1 "$(rule_file 1000 permanent)" | grep -qx 'Defaults:audituser verifypw = any'
 )
-pass "the migration runs the upgrade through the command's own dispatch"
+pass "the migration rewrites the grant of an account that holds one"
+
+# Migrations run for every account, and one without a grant, or without sudo
+# at all, must not be stopped by a prompt to authorize nothing.
+(
+  source "$library"
+  reset_grant
+  PATH="$test_tmp/bin:$PATH" TEST_MIGRATION=1 TEST_NO_SUDO=1 OMARCHY_PATH="$test_tmp/source" \
+    /usr/bin/bash -euo pipefail "$ROOT/migrations/1792527479.sh"
+  ! grep -q '__upgrade-grant-format' "$test_tmp/commands"
+)
+pass "the migration asks nothing of an account without a grant"
