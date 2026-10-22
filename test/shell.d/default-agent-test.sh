@@ -75,7 +75,7 @@ if [[ -n ${MISE_PRERELEASES:-} ]]; then
   printf 'prereleases=%s %s\n' "$MISE_PRERELEASES" "$*" >>"$OMARCHY_TEST_MISE_HISTORY"
 fi
 
-if [[ $1 == "where" ]]; then
+if [[ $1 == "where" || $1 == "which" ]]; then
   [[ ${OMARCHY_TEST_AGENT_INSTALLED:-false} == "true" ]]
   exit
 fi
@@ -1179,6 +1179,15 @@ for agent in cursor-agent muse claude kiro-cli devin amp dsh hermes; do
   [[ $output == "official $agent" ]] || fail "agent launcher preserves the user-installed $agent ahead of a mise shim"
   output=$(PATH="$lazy_shims:$PATH" omarchy-agent-prompt --inline "Review this project")
   [[ $output == "official $agent" ]] || fail "prompted agent launcher preserves the user-installed $agent ahead of a mise shim"
+  # Once mise has its own copy installed, a terminal runs that one, so the
+  # launcher does too rather than a leftover install in ~/.local/bin.
+  output=$(OMARCHY_TEST_AGENT_INSTALLED=true PATH="$lazy_shims:$PATH" "$ROOT/bin/omarchy-agent" --inline)
+  [[ $output == "lazy shim $agent" ]] || fail "agent launcher runs mise's installed $agent over a leftover ~/.local/bin copy"
+  # An older wrapper set its variable on the install line; it is still a
+  # wrapper, not the user's own install.
+  printf '#!/bin/bash\nMISE_MINIMUM_RELEASE_AGE=0 mise use -g --quiet "%s" || exit 1\nprintf "old wrapper %s\\n"\n' "$agent" "$agent" >"$test_home/.local/bin/$agent"
+  output=$(PATH="$lazy_shims:$PATH" "$ROOT/bin/omarchy-agent" --inline)
+  [[ $output == "lazy shim $agent" ]] || fail "agent launcher treats an older one-line mise wrapper for $agent as a wrapper"
   rm "$test_home/.local/bin/$agent" "$lazy_shims/$agent"
 done
 pass "agent launcher runs user-installed agents ahead of native lazy shims"
