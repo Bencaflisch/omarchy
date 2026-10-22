@@ -704,4 +704,20 @@ def add_message():
 
 
 check_scan_cache(Adapter("claude", grow=add_message, pi_root=lambda: home() / ".pi" / "agent" / "sessions"))
+
+# A scan that couldn't read one of the transcripts isn't kept for the next
+# run, so the missing tokens show as soon as the file can be read.
+if os.geteuid() != 0:
+  sandbox()
+  claude_code_session("seen", [("claude-sonnet-4-5", 300)])
+  locked = claude_code_session("late", [("claude-sonnet-4-5", 40)])
+  locked.chmod(0)
+  try:
+    claude()
+  finally:
+    locked.chmod(0o644)
+  record = claude("--limits-only")
+  expect("Claude does not cache a scan that missed a transcript", record["todayTokensByModel"], {"claude-sonnet-4-5": 340}, record)
+else:
+  print("ok - Claude does not cache a scan that missed a transcript # SKIP root reads anything")
 PY

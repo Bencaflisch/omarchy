@@ -53,7 +53,7 @@ from collectors import (  # noqa: E402
   read_json,
   recent_dates,
   registered_accounts,
-  scan_claude_code,
+  claude_code_usage,
   scan_opencode,
   scan_pi_sessions,
   today as today_string,
@@ -91,10 +91,17 @@ def expand_path(value: str) -> Path:
 
 
 def scan_projects(projects_path: Path, index_file: Path | None = None, base_url: str = "", reread: bool = False) -> Stats:
+  return scan_projects_read(projects_path, index_file, base_url, reread)[0]
+
+
+def scan_projects_read(projects_path: Path, index_file: Path | None = None, base_url: str = "", reread: bool = False) -> tuple[Stats, bool]:
+  """The transcripts' stats, and whether every transcript was read: a scan
+  that missed one isn't cached."""
   stats = Stats()
-  for row in scan_claude_code(AGENT_ID, projects_path, index_file, base_url, reread):
+  rows, read_all = claude_code_usage(AGENT_ID, projects_path, index_file, base_url, reread)
+  for row in rows:
     stats.add_row(row, row.model)
-  return stats
+  return stats, read_all
 
 
 def anthropic_served(model: Any, base_url: str) -> bool:
@@ -277,11 +284,11 @@ def scan_local(claude_dir: Path, index_file: Path | None, reread: bool = False) 
   back on Claude Code's own aggregate counters."""
   base_url = claude_code_base_url(claude_dir)
   projects = claude_dir / "projects"
-  stats = scan_projects(projects, index_file, base_url, reread)
+  stats, transcripts_complete = scan_projects_read(projects, index_file, base_url, reread)
   pi_rows, pi_complete = scan_pi_sessions(PI_PATTERN, billed_here)
   # The closing quote makes the database's prefilter match the whole id.
   db_rows, db_complete = scan_opencode(['anthropic"'], billed_here)
-  complete = pi_complete and db_complete
+  complete = transcripts_complete and pi_complete and db_complete
 
   if stats.total_prompts > 0 or stats.model_usage or has_transcripts(projects):
     add_shared_rows(stats, pi_rows, db_rows)
