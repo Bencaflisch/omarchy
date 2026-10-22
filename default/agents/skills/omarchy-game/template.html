@@ -162,13 +162,26 @@ Object.assign(sun.shadow.camera, { left: -20, right: 20, top: 20, bottom: -20, n
 scene.add(sun);
 
 // Aim the camera down at a width × depth area around target, tilted from the horizontal, and back it
-// off until the whole area fits the window with a margin. Call it from resized().
-function fitCamera(width, depth, { tilt = 0.9, target = [0, 0, 0], margin = 1.12 } = {}) {
-  const vertical = THREE.MathUtils.degToRad(camera.fov) / 2;
-  const horizontal = Math.atan(Math.tan(vertical) * camera.aspect);
-  const distance = margin * Math.max((depth * Math.sin(tilt) + 1) / 2 / Math.tan(vertical), width / 2 / Math.tan(horizontal) + depth * Math.cos(tilt) / 2);
-  camera.position.set(target[0], target[1] + distance * Math.sin(tilt), target[2] + distance * Math.cos(tilt));
-  camera.lookAt(...target);
+// off until all four corners of the area are inside the window with a margin. Call it from resized().
+function fitCamera(width, depth, { tilt = 0.9, target = [0, 0, 0], margin = 0.9 } = {}) {
+  const corners = [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([x, z]) => new THREE.Vector3(target[0] + x * width / 2, target[1], target[2] + z * depth / 2));
+  const place = distance => {
+    camera.position.set(target[0], target[1] + distance * Math.sin(tilt), target[2] + distance * Math.cos(tilt));
+    camera.lookAt(...target);
+    camera.updateMatrixWorld();
+  };
+  const fits = () => corners.every(corner => {
+    if (corner.clone().applyMatrix4(camera.matrixWorldInverse).z >= 0) return false;   // behind the camera
+    const p = corner.clone().project(camera);
+    return Math.abs(p.x) <= margin && Math.abs(p.y) <= margin;
+  });
+  let near = 0.5, far = 1000;
+  for (let i = 0; i < 40; i++) {
+    const distance = (near + far) / 2;
+    place(distance);
+    if (fits()) far = distance; else near = distance;
+  }
+  place(far);
 }
 
 addEventListener('resize', () => {
