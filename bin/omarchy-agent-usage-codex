@@ -79,7 +79,7 @@ TRANSPORT_ERRORS = (
 # only reads the session files that changed. Bumping the schema retires every
 # record written by an older layout; version 2 reads token counts and times
 # the way every collector reads them.
-FILE_CACHE_SCHEMA = 2
+FILE_CACHE_SCHEMA = 3
 
 
 
