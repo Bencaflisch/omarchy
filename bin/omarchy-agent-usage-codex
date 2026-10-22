@@ -625,16 +625,20 @@ def codex_rpc_help(proc, stderr_file, exc):
   return AUTH_HELP
 
 
+# Credits are an extra: a malformed field loses them, never the limits.
 def reset_credits(result):
-  granted = (result.get("rateLimitResetCredits") or {}).get("credits") or []
+  granted = obj(result.get("rateLimitResetCredits")).get("credits")
+  if not isinstance(granted, list):
+    return None
   available = [c for c in granted if isinstance(c, dict) and c.get("status") == "available"]
   if not available:
     return None
   expiries = [number(c.get("expiresAt")) for c in available if number(c.get("expiresAt")) > 0]
-  return {
-    "available": len(available),
-    "nextExpiresAt": datetime.fromtimestamp(min(expiries), timezone.utc).isoformat() if expiries else "",
-  }
+  try:
+    next_expiry = datetime.fromtimestamp(min(expiries), timezone.utc).isoformat() if expiries else ""
+  except (OverflowError, OSError, ValueError):
+    next_expiry = ""
+  return {"available": len(available), "nextExpiresAt": next_expiry}
 
 
 # Keyring and auto stores keep credentials outside auth.json, so only the file
@@ -745,7 +749,7 @@ def fetch_codex_rpc(home=None, primary=True):
     if not plan:
       try:
         account_msg = rpc_request(proc, 3, "account/read", timeout=2)
-        account = (account_msg.get("result") or {}).get("account") or {}
+        account = obj(obj(account_msg.get("result")).get("account"))
         plan = account.get("planType") or account.get("type") or ""
       except (TimeoutError, RuntimeError):
         pass

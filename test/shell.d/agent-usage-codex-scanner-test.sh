@@ -311,7 +311,9 @@ while read -r request; do
   id=$(jq -r '.id // empty' <<<"$request")
   case "$(jq -r '.method // empty' <<<"$request")" in
     initialize) jq -cn --argjson id "$id" '{id: $id, result: {}}' ;;
-    account/read) [[ -n ${CODEX_ACCOUNT_READ_HANGS:-} ]] || jq -cn --argjson id "$id" '{id: $id, result: {account: {}}}' ;;
+    account/read)
+      [[ -n ${CODEX_ACCOUNT_READ_HANGS:-} ]] ||
+        jq -cn --argjson id "$id" --argjson result "${CODEX_ACCOUNT_RESULT:-null}" '{id: $id, result: ($result // {account: {}})}' ;;
     account/rateLimits/read)
       jq -cn --argjson id "$id" --argjson limits "$CODEX_RATE_LIMITS" --argjson credits "${CODEX_RESET_CREDITS:-null}" \
         '{id: $id, result: {rateLimits: $limits, rateLimitResetCredits: $credits}}' ;;
@@ -335,6 +337,22 @@ record = codex(env={"CODEX_RATE_LIMITS": '{"planType":"pro","primary":{"usedPerc
                     "CODEX_RESET_CREDITS": json.dumps({"availableCount": 2, "credits": [
                       {"status": "available", "expiresAt": 2000000000}, {"status": "available", "expiresAt": 1900000000}, {"status": "used", "expiresAt": 1800000000}]})})
 expect("Codex reports its available free resets", record.get("resetCredits"), {"available": 2, "nextExpiresAt": "2030-03-17T17:46:40+00:00"}, record)
+
+# Credits and account/read are extras: a malformed one loses itself, never
+# the limits already read, which stay live.
+for name, credits in (("milliseconds", {"credits": [{"status": "available", "expiresAt": 1900000000000}]}), ("a list", [1]),
+                      ("a number", {"credits": 3}), ("a string", "lots")):
+  record = codex(env={"CODEX_RATE_LIMITS": '{"planType":"pro","primary":{"usedPercent":42,"windowDurationMins":10080}}',
+                      "CODEX_RESET_CREDITS": json.dumps(credits)})
+  expect(f"Codex keeps its limits live when the reset credits are {name}", {
+    "status": record["usageStatusText"], "stale": record["limitsStale"], "limits": [[entry["label"], entry["percent"]] for entry in record["limits"]],
+  }, {"status": "", "stale": False, "limits": [["Weekly (7-day)", 0.42]]}, record)
+for name, answer in (("a list", [1]), ("a string account", {"account": "pro"})):
+  record = codex(env={"CODEX_RATE_LIMITS": '{"primary":{"usedPercent":42,"windowDurationMins":10080}}', "CODEX_ACCOUNT_RESULT": json.dumps(answer)})
+  expect(f"Codex keeps its limits when account/read answers {name}", {
+    "tier": record["tierLabel"], "status": record["usageStatusText"], "stale": record["limitsStale"],
+    "limits": [[entry["label"], entry["percent"]] for entry in record["limits"]],
+  }, {"tier": "", "status": "", "stale": False, "limits": [["Weekly (7-day)", 0.42]]}, record)
 
 # A Business seat with a spend cap and no rate windows reports the cap alone,
 # its share taken from the amounts; a zero cap takes the reported percentage.
