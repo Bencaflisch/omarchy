@@ -22,6 +22,7 @@ import os
 import re
 import sys
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -94,8 +95,9 @@ def expand_path(value: str) -> Path:
 # Version 7 keeps the typed prompts too, which are the record's prompts; a
 # reply was counted as one before. Version 8 keys a reply by its request too,
 # and keeps its bare message id and whether a sidechain wrote it. Version 9
-# reads the advisor iterations a reply carries.
-INDEX_VERSION = 9
+# reads the advisor iterations a reply carries. Version 10 keeps the model
+# that answered each prompt.
+INDEX_VERSION = 10
 
 # How much of each end of what was read the index remembers a hash of, so a
 # file replaced or rewritten with more than it had is not mistaken for an
@@ -185,7 +187,8 @@ def parse_usage_records(path: Path, entry: dict[str, Any] | None) -> dict[str, A
   """Return the index entry for one transcript, reusing `entry` where the file
   only grew. Records are [key, model, day, input, output, cacheRead,
   cacheWrite, session, messageId, sidechain]; prompts are [key, day,
-  session]. A `day` is None when the line carries no timestamp."""
+  session, model], the model of the first reply after it (None until one
+  is read). A `day` is None when the line carries no timestamp."""
   stat = path.stat()
   size = stat.st_size
   mtime = stat.st_mtime_ns
@@ -203,7 +206,7 @@ def parse_usage_records(path: Path, entry: dict[str, Any] | None) -> dict[str, A
     and entry.get("head") == read_digest(path, number(entry.get("offset")))
   ):
     records = list(entry.get("records") or [])
-    prompts = list(entry.get("prompts") or [])
+    prompts = [list(prompt) for prompt in entry.get("prompts") or []]
     offset = number(entry.get("offset"))
     line_number = number(entry.get("lines"))
   else:
@@ -220,6 +223,8 @@ def parse_usage_records(path: Path, entry: dict[str, Any] | None) -> dict[str, A
   # across them over-counts cache tokens and credits the wrong model.
   positions = {record[0]: index for index, record in enumerate(records)}
   prompted = {prompt[0] for prompt in prompts}
+  # Prompts still waiting for their reply, which says who answered them.
+  unanswered = [prompt for prompt in prompts if prompt[3] is None]
   with path.open("rb") as handle:
     handle.seek(offset)
     for raw in handle:
@@ -252,7 +257,8 @@ def parse_usage_records(path: Path, entry: dict[str, Any] | None) -> dict[str, A
           prompt_key = str(parsed.get("uuid") or f"{path}:{line_number}")
           if trusted and prompt_key not in prompted:
             prompted.add(prompt_key)
-            prompts.append([prompt_key, day, str(parsed.get("sessionId") or path)])
+            prompts.append([prompt_key, day, str(parsed.get("sessionId") or path), None])
+            unanswered.append(prompts[-1])
         continue
 
       if parsed.get("type") != "assistant" and message.get("role") != "assistant":
@@ -295,6 +301,14 @@ def parse_usage_records(path: Path, entry: dict[str, Any] | None) -> dict[str, A
         if input_tokens + output_tokens + cache_read + cache_write <= 0:
           continue
 
+        # The first reply a model spent tokens on says who answered the
+        # prompts before it: not a subagent's, which answers the subagent,
+        # and not one Claude Code made up itself (`<synthetic>`, no tokens).
+        if record_key == key and not sidechain:
+          for prompt in unanswered:
+            prompt[3] = model
+          unanswered.clear()
+
         held = positions.get(record_key)
         if held is not None and output_tokens < records[held][4]:
           continue
@@ -318,7 +332,59 @@ def parse_usage_records(path: Path, entry: dict[str, Any] | None) -> dict[str, A
   }
 
 
-def scan_projects(projects_path: Path, index_file: Path | None = None) -> Stats:
+# ------------------------------------------------------------ who served it
+#
+# Claude Code sends to whatever ANTHROPIC_BASE_URL names, and Z.ai, Ollama,
+# MiniMax, DeepSeek, Kimi and OpenRouter each document pointing it at their own
+# Anthropic-compatible API. Those transcripts look like any other, but the
+# provider bills them, so they are not Claude's. A transcript doesn't say
+# where it was sent; each reply says which model answered it.
+
+# The hosts Claude Code is pointed at in place of Anthropic, by the
+# collector that bills them.
+PROVIDER_HOSTS = {
+  "api.z.ai": "zai",
+  "open.bigmodel.cn": "zai",
+  "ollama.com": "ollama",
+  "api.minimax.io": "minimax",
+  "api.minimaxi.com": "minimax",
+  "api.deepseek.com": "deepseek",
+  "api.moonshot.ai": "kimi",
+  "api.moonshot.cn": "kimi",
+  "api.kimi.com": "kimi",
+  "openrouter.ai": "openrouter",
+}
+
+
+def base_url_provider(claude_dir: Path) -> str:
+  """The provider ANTHROPIC_BASE_URL sends Claude Code to now, or "" for
+  Anthropic or a host this can't place (a proxy may well forward to
+  Anthropic). The settings' env wins over the environment, as it does in
+  Claude Code."""
+  env = read_json(claude_dir / "settings.json").get("env")
+  configured = env.get("ANTHROPIC_BASE_URL") if isinstance(env, dict) else None
+  url = str(configured or os.environ.get("ANTHROPIC_BASE_URL") or "")
+  try:
+    host = (urllib.parse.urlsplit(url.strip()).hostname or "").lower()
+  except ValueError:
+    return ""
+  return next((provider for name, provider in PROVIDER_HOSTS.items() if host == name or host.endswith("." + name)), "")
+
+
+def served_by_anthropic(model: Any, elsewhere: str) -> bool:
+  """Whether Anthropic served a reply by `model`. Only Claude models are
+  Anthropic's: glm-*, qwen*, kimi-*, deepseek-*, MiniMax-* and Ollama's
+  :cloud tags are their providers'. A reply with no model was counted as
+  Claude's before and still is. A Claude model reached through another
+  provider's endpoint (`elsewhere`) is that provider's: Claude Code doesn't
+  record where it sent a turn, so while one is configured every Claude
+  model reply is read as sent there."""
+  if model is None:
+    return not elsewhere
+  return "claude" in str(model).lower() and not elsewhere
+
+
+def scan_projects(projects_path: Path, index_file: Path | None = None, elsewhere: str = "") -> Stats:
   previous = load_index(index_file) if index_file else {}
   current: dict[str, Any] = {}
 
@@ -357,6 +423,11 @@ def scan_projects(projects_path: Path, index_file: Path | None = None) -> Stats:
     except Exception as exc:
       warn(f"could not write the Claude scan index {index_file} ({exc})")
 
+  # Only what Anthropic served is Claude's. Claude Code fronts any endpoint
+  # ANTHROPIC_BASE_URL names, and each reply records the model that answered.
+  def anthropic(model: Any) -> bool:
+    return served_by_anthropic(model, elsewhere)
+
   # One API message can show up in several transcripts (a resumed session
   # carries the earlier ones). As within a file, the record with the highest
   # output count wins, the last one visited breaking a tie. Only the tokens
@@ -367,32 +438,33 @@ def scan_projects(projects_path: Path, index_file: Path | None = None) -> Stats:
   active: set[tuple[Any, str]] = set()
   for key in order:
     for record in current[key].get("records") or []:
-      active.add((record[2], record[7]))
+      if anthropic(record[1]):
+        active.add((record[2], record[7]))
       held = seen.get(record[0])
       if held is not None and record[4] < held[4]:
         continue
       seen[record[0]] = record
 
-  # A prompt is what a person typed, not each API request a tool loop makes,
-  # so replies carry no prompts and the typed ones are counted on their own,
-  # once each across transcripts.
   # A sidechain (a /btw side question) replays its parent's messages under
   # new request ids; the parent's own copy is the one that counts.
   parents = {(record[8], record[7]) for record in seen.values() if record[8] and not record[9]}
   stats = Stats()
   for _, model, day, input_tokens, output_tokens, cache_read, cache_write, session_key, message_id, sidechain in seen.values():
-    if sidechain and (message_id, session_key) in parents:
+    if (sidechain and (message_id, session_key) in parents) or not anthropic(model):
       continue
     stats.add(day or stats.today, session_key, model, input_tokens, output_tokens, cache_read, cache_write, prompts=0)
+
+  # A prompt is what a person typed, not each API request a tool loop makes,
+  # so replies carry no prompts and the typed ones are counted on their own,
+  # once each across transcripts, under whoever answered them.
   typed: dict[str, list[Any]] = {}
   for key in order:
     for prompt in current[key].get("prompts") or []:
-      typed.setdefault(prompt[0], prompt)
-  for _, day, session_key in typed.values():
+      if anthropic(prompt[3]):
+        typed.setdefault(prompt[0], prompt)
+        active.add((prompt[1], prompt[2]))
+  for _, day, session_key, _ in typed.values():
     stats.add_prompts(day or stats.today, session_key)
-  for key in order:
-    for _, day, session_key in current[key].get("prompts") or []:
-      active.add((day, session_key))
   for day, session_key in active:
     stats.add_prompts(day or stats.today, session_key, 0)
   return stats
@@ -410,7 +482,7 @@ def index_path(projects_path: Path) -> Path:
 # history.jsonl. Only consulted when the project scan comes back empty.
 
 
-def stats_cache_fallback(claude_dir: Path) -> dict[str, Any] | None:
+def stats_cache_fallback(claude_dir: Path, elsewhere: str = "") -> dict[str, Any] | None:
   try:
     data = json.loads((claude_dir / "stats-cache.json").read_text(encoding="utf-8"))
   except Exception:
@@ -432,7 +504,10 @@ def stats_cache_fallback(claude_dir: Path) -> dict[str, Any] | None:
   for entry in entries("dailyModelTokens"):
     date = entry.get("date")
     if isinstance(date, str) and date not in tokens_by_day:
-      tokens_by_day[date] = {str(model): number(tokens) for model, tokens in obj(entry.get("tokensByModel")).items() if number(tokens) > 0}
+      tokens_by_day[date] = {
+        str(model): number(tokens) for model, tokens in obj(entry.get("tokensByModel")).items()
+        if number(tokens) > 0 and served_by_anthropic(model, elsewhere)
+      }
   today_tokens = tokens_by_day.get(today_string(), {})
   recent_days = [{"date": date, "messageCount": sum(tokens_by_day.get(date, {}).values())} for date in recent_dates()]
 
@@ -441,7 +516,7 @@ def stats_cache_fallback(claude_dir: Path) -> dict[str, Any] | None:
   model_usage = {
     str(model): {field: number(bucket.get(field)) for field in empty_bucket()}
     for model, bucket in obj(data.get("modelUsage")).items()
-    if isinstance(bucket, dict)
+    if isinstance(bucket, dict) and served_by_anthropic(model, elsewhere)
   }
 
   daily_activity = entries("dailyActivity")
@@ -524,7 +599,8 @@ def scan_local(claude_dir: Path, index_file: Path | None) -> tuple[dict[str, Any
   """Local stats from every source, and whether every source was read in full
   (safe to cache). Transcripts come first; only a machine without any falls
   back on Claude Code's own aggregate counters."""
-  stats = scan_projects(claude_dir / "projects", index_file)
+  elsewhere = base_url_provider(claude_dir)
+  stats = scan_projects(claude_dir / "projects", index_file, elsewhere)
   pi_rows, pi_complete = scan_pi_sessions(PI_PATTERN, billed_here)
   # The closing quote makes the database's prefilter match the whole id.
   db_rows, db_complete = scan_opencode(['anthropic"'], billed_here)
@@ -534,7 +610,7 @@ def scan_local(claude_dir: Path, index_file: Path | None) -> tuple[dict[str, Any
     add_shared_rows(stats, pi_rows, db_rows)
     return stats.snapshot(), complete
 
-  local = stats_cache_fallback(claude_dir)
+  local = stats_cache_fallback(claude_dir, elsewhere)
   if local is None:
     local = stats.snapshot()
     # No transcripts and no aggregate cache, but history.jsonl alone can
@@ -560,7 +636,10 @@ def local_stats(claude_dir: Path, max_age: float, use_index: bool = True) -> dic
   # The digest covers every data path the scan reads: the transcripts, the
   # config home's fallbacks, the pi/omp session roots, and the opencode DB.
   sources = [claude_dir / "projects", claude_dir, *pi_session_roots(), opencode_db()]
-  return cached_scan(AGENT_ID, sources, max_age, lambda: scan_local(claude_dir, index_file))
+  # Where Claude Code is sent decides whose its turns are, so a scan only
+  # answers for the endpoint it was made under.
+  match = {"endpointProvider": base_url_provider(claude_dir)}
+  return cached_scan(AGENT_ID, sources, max_age, lambda: scan_local(claude_dir, index_file), match=match)
 
 
 def merge_stats(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:

@@ -294,6 +294,47 @@ expect("Claude counts an advisor iteration under the advisor's model",
        [record["todayTokensByModel"], record["modelUsage"].get("claude-advisor")],
        [{"claude-main": 3, "claude-advisor": 12}, {"inputTokens": 10, "outputTokens": 2, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0}], record)
 
+# Claude Code fronts whatever ANTHROPIC_BASE_URL names, and Z.ai and Ollama
+# document pointing it at their own APIs; their transcripts look like any
+# other, with the model that answered on each reply, as a real Claude Code
+# 2.1 run against them wrote: glm-4.6 through Z.ai, then `--continue` back on
+# Anthropic in the same session, and qwen3-coder and glm-4.6:cloud through
+# Ollama. Only what Anthropic served is Claude's, prompts included. A reply
+# Claude Code made up itself (`<synthetic>`, no tokens) answers nothing.
+sandbox()
+transcript(user("zai-1", "zaihello", session="zai", promptSource="sdk"), {**message("msg_z1", 501234, 51, model="glm-4.6"), "sessionId": "zai"},
+           user("zai-2", "continued", session="zai", promptSource="sdk"), {**message("msg_z2", 1000, 52, model="claude-sonnet-4-5"), "sessionId": "zai"},
+           name="zai.jsonl")
+transcript(user("local-1", "ollamaclaude", session="local", promptSource="sdk"), {**message("msg_o1", 21000, 53, model="qwen3-coder"), "sessionId": "local"},
+           name="local.jsonl")
+transcript(user("cloud-1", "ollamacloud", session="cloud", promptSource="sdk"), {**message("msg_c1", 31000, 54, model="glm-4.6:cloud"), "sessionId": "cloud"},
+           name="cloud.jsonl")
+transcript(user("synthetic-1", "hello", session="synthetic", promptSource="typed"), {**message("msg_s1", model="<synthetic>"), "sessionId": "synthetic"},
+           name="synthetic.jsonl")
+record = claude()
+expect("Claude leaves out the turns Claude Code sent to another provider's model",
+       [record["todayTokensByModel"], record["todayPrompts"], record["todaySessions"]], [{"claude-sonnet-4-5": 1052}, 2, 2], record)
+
+# A transcript doesn't say where it was sent, so while Claude Code is pointed
+# at another provider (its settings' env, else the environment), a Claude
+# model's replies are that provider's too. A host this can't place, such as a
+# proxy that may forward to Anthropic, leaves them Claude's.
+for env, settings, claude_tokens in (
+  ({}, {"ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic", "ANTHROPIC_AUTH_TOKEN": "zai-key"}, 0),
+  ({"ANTHROPIC_BASE_URL": "https://ollama.com"}, {}, 0),
+  ({"ANTHROPIC_BASE_URL": "https://ollama.com"}, {"ANTHROPIC_BASE_URL": "http://127.0.0.1:4000"}, 1052),
+  ({}, {"ANTHROPIC_BASE_URL": "https://llm-proxy.example.com/anthropic"}, 1052),
+):
+  write_json(home() / ".claude" / "settings.json", {"env": settings})
+  os.environ.update(env)
+  try:
+    record = claude()
+  finally:
+    for name in env:
+      os.environ.pop(name)
+  expect(f"Claude reads Claude model replies as {'Claude' if claude_tokens else 'not'} Claude's with the endpoint at {settings or env}",
+         [record["todayTotalTokens"], record["todayPrompts"]], [claude_tokens, 2 if claude_tokens else 0], record)
+
 # Unreadable transcripts are expected when an agent ran as another user, so
 # they make one bounded warning rather than a line each.
 sandbox()
@@ -336,7 +377,8 @@ expect("Claude falls back on history.jsonl without a stats-cache", [record["toda
 # A stats-cache shaped as Claude Code writes it gives the record's own
 # shapes: seven local days of tokens from dailyModelTokens (dailyActivity
 # counts messages), and per model the four token kinds alone, each a trusted
-# count.
+# count. A model another provider served (glm-4.6 through Z.ai) is not
+# Claude's here either.
 sandbox()
 (home() / ".claude").mkdir()
 week = [(datetime.now() - timedelta(days=offset)).date().isoformat() for offset in range(6, -1, -1)]
@@ -345,12 +387,13 @@ write_json(home() / ".claude" / "stats-cache.json", {
   "dailyActivity": [{"date": "2026-01-02", "messageCount": 120, "sessionCount": 3, "toolCallCount": 40}],
   "dailyModelTokens": [
     {"date": "2026-01-02", "tokensByModel": {"claude-opus": 999}},
-    {"date": week[4], "tokensByModel": {"claude-opus": 300, "claude-haiku": 20}},
+    {"date": week[4], "tokensByModel": {"claude-opus": 300, "claude-haiku": 20, "glm-4.6": 4000}},
     {"date": week[6], "tokensByModel": {"claude-opus": 50}},
   ],
   "modelUsage": {
     "claude-opus": {"inputTokens": 10, "outputTokens": -5, "cacheReadInputTokens": 7, "cacheCreationInputTokens": "x", "costUSD": 1.5, "webSearchRequests": 2},
     "claude-odd": [1, 2],
+    "glm-4.6": {"inputTokens": 4000, "outputTokens": 0, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0},
   },
 })
 record = claude()
