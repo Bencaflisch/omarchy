@@ -169,6 +169,43 @@ expect("Qwen leaves out a reply its route sends to a server of the user's own", 
 write_json(home() / ".qwen" / "settings.json", {"modelProviders": {"openai": [{"id": "qwen-env-model", "baseUrl": "https://coding-intl.dashscope.aliyuncs.com/v1"}]}})
 expect("a Qwen scan made before a modelProviders route moved is not reused after it", collect("qwen", "--limits-only")["todayTotalTokens"], 13730)
 
+# A model no modelProviders route names is sent where OPENAI_BASE_URL (or
+# ANTHROPIC_BASE_URL) says, which Qwen Code takes from the first .env file
+# setting it (its home's, then ~/.env), else from settings.json's env, else
+# from the security.auth.baseUrl /auth saved.
+env_run()
+ENV_ROUTES = [
+  ("~/.qwen/.env", lambda: (home() / ".qwen" / ".env").write_text("OPENAI_API_KEY=sk-dummy\nexport OPENAI_BASE_URL=\"http://127.0.0.1:18491/v1\"  # mock\nOPENAI_MODEL=qwen-env-model\n"), "local"),
+  ("~/.env", lambda: (home() / ".env").write_text("OPENAI_BASE_URL=http://127.0.0.1:18491/v1\n"), "local"),
+  ("settings.json env", lambda: write_json(home() / ".qwen" / "settings.json", {"env": {"OPENAI_BASE_URL": "http://192.168.1.20:8000/v1"}}), "local"),
+  ("security.auth.baseUrl", lambda: write_json(home() / ".qwen" / "settings.json", {"security": {"auth": {"selectedType": "openai", "baseUrl": "http://127.0.0.1:18491/v1"}}}), "local"),
+  ("settings.json env, OpenRouter", lambda: write_json(home() / ".qwen" / "settings.json", {"env": {"OPENAI_BASE_URL": "https://openrouter.ai/api/v1"}}), None),
+  ("settings.json env, Model Studio", lambda: write_json(home() / ".qwen" / "settings.json", {"env": {"OPENAI_BASE_URL": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"}}), "qwen"),
+  # The first .env file wins over settings.json's env.
+  ("~/.qwen/.env over settings.json env", lambda: ((home() / ".qwen" / ".env").write_text("OPENAI_BASE_URL=http://127.0.0.1:18491/v1\n"),
+   write_json(home() / ".qwen" / "settings.json", {"env": {"OPENAI_BASE_URL": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"}})), "local"),
+]
+
+
+def clear_routes():
+  for path in (home() / ".qwen" / ".env", home() / ".env", home() / ".qwen" / "settings.json"):
+    path.unlink(missing_ok=True)
+
+
+for where, configure, owner in ENV_ROUTES:
+  clear_routes()
+  configure()
+  records = {cid: collect(cid, "--force") for cid in ("qwen", "local")}
+  expect(f"a Qwen Code reply sent where {where} says counts under {owner or 'nobody'}",
+         {cid: [record["todayTotalTokens"], record["todayPrompts"]] for cid, record in records.items()},
+         {cid: [13730, 1] if cid == owner else [0, 0] for cid in records}, records)
+
+# A .env route set after a scan is reflected at once too.
+clear_routes()
+expect("Qwen counts a reply with no route", collect("qwen")["todayTotalTokens"], 13730)
+(home() / ".qwen" / ".env").write_text("OPENAI_BASE_URL=http://127.0.0.1:18491/v1\n")
+expect("a Qwen scan made before a .env route is not reused after it", collect("qwen", "--limits-only")["todayTotalTokens"], 0)
+
 # --------------------------------------------------------- untrusted fields
 
 sandbox()

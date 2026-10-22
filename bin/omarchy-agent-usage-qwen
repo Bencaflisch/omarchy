@@ -297,6 +297,64 @@ def load_index(path):
 
 # ------------------------------------------------------------------ routes
 
+# The variable Qwen Code takes an auth type's base URL from when no
+# modelProviders route names one (its AUTH_ENV_MAPPINGS). Gemini and Vertex
+# AI take none.
+BASE_URL_ENV = {"openai": "OPENAI_BASE_URL", "openai-responses": "OPENAI_BASE_URL", "anthropic": "ANTHROPIC_BASE_URL"}
+
+
+def dotenv(path):
+  """A .env file's variables, as dotenv reads them: KEY=value lines, an
+  `export ` prefix, quotes and a trailing # comment dropped."""
+  values = {}
+  try:
+    text = path.read_text(encoding="utf-8", errors="replace")
+  except (OSError, ValueError):
+    return values
+  for line in text.splitlines():
+    key, sep, value = line.strip().removeprefix("export ").partition("=")
+    key, value = key.strip(), value.strip()
+    if not sep or not key or key.startswith("#"):
+      continue
+    if value[:1] in ("'", '"', "`") and value[1:].find(value[0]) >= 0:
+      value = value[1:1 + value[1:].find(value[0])]
+    else:
+      value = value.split(" #", 1)[0].strip()
+    values[key] = value
+  return values
+
+
+def env_files(home):
+  """The .env files Qwen Code loads wherever it starts, first one first: its
+  home's, ~/.qwen's when QWEN_HOME moves the home, and ~/.env. A project's
+  own .env applies to the runs started there alone, which nothing here can
+  tell apart."""
+  files = []
+  for path in (home / ".env", Path.home() / ".qwen" / ".env", Path.home() / ".env"):
+    if path not in files:
+      files.append(path)
+  return files
+
+
+def base_urls(home):
+  """auth type -> the base URL Qwen Code sends it to when no modelProviders
+  route names one, resolved as Qwen Code resolves it: the variable from the
+  environment it starts in, else from the first .env file setting it, else
+  from settings.json's env, and without one the security.auth.baseUrl
+  /auth saved for the auth type it selected."""
+  settings = read_json(home / "settings.json")
+  layers = [dict(os.environ), *(dotenv(path) for path in env_files(home)), obj(settings.get("env"))]
+  auth = obj(obj(settings.get("security")).get("auth"))
+  saved = auth.get("baseUrl") if isinstance(auth.get("baseUrl"), str) else ""
+  urls = {}
+  for auth_type, key in BASE_URL_ENV.items():
+    url = next((str(layer[key]).strip() for layer in layers if isinstance(layer.get(key), str) and layer[key].strip()), "")
+    if not url and auth.get("selectedType") in (None, auth_type):
+      url = saved.strip()
+    if url:
+      urls[auth_type] = url
+  return urls
+
 
 def model_routes(home):
   """(auth type, model id) -> base URL, from settings.json's modelProviders:
@@ -315,28 +373,37 @@ def model_routes(home):
   return routes
 
 
+def route_config(home):
+  """What route_owner() decides with: the modelProviders routes and the base
+  URLs outside them."""
+  return model_routes(home), base_urls(home)
+
+
 def harness_match():
   """For a scan's cached_scan(match=...): a digest of where Qwen Code's
-  replies are sent, which its settings can change without a transcript
-  changing."""
-  config = json.dumps(sorted([*key, url] for key, url in model_routes(qwen_home()).items()))
+  replies are sent, which its settings and .env files can change without a
+  transcript changing."""
+  routes, urls = route_config(qwen_home())
+  config = json.dumps([sorted([*key, url] for key, url in routes.items()), sorted(urls.items())])
   return {"qwenRoutes": hashlib.sha1(config.encode("utf-8", "surrogatepass")).hexdigest()}
 
 
-def route_owner(auth_type, model, routes):
+def route_owner(auth_type, model, routes, urls=None):
   """The collector that bills a reply, by the auth type Qwen Code recorded
-  for it and, where settings.json names one, the base URL its model is sent
-  to, read the way every collector reads Claude Code's (claude_code_owner):
-  Alibaba's hosts are Qwen's, a provider's host is that provider's, a
-  server you run local's unless the model is a Claude or an Ollama cloud one
-  it only forwards, and a gateway nobody's. Without a URL, an
-  OpenAI-compatible reply (and one from before Qwen Code kept the type) ran
-  on Qwen Code's default service, as every reply was read before, while
-  Anthropic, Gemini and Vertex AI are their own services, which no collector
-  here bills."""
+  for it and the base URL it was sent to: its model's modelProviders route,
+  else the base URL the auth type takes from Qwen Code's environment (urls,
+  from base_urls()). A URL is read the way every collector reads Claude
+  Code's (claude_code_owner): Alibaba's hosts are Qwen's, a provider's host
+  is that provider's, a server you run local's unless the model is a Claude
+  or an Ollama cloud one it only forwards, and a gateway nobody's. Without a
+  URL, an OpenAI-compatible reply (and one from before Qwen Code kept the
+  type) ran on Qwen Code's default service, as every reply was read before,
+  while Anthropic, Gemini and Vertex AI are their own services, which no
+  collector here bills."""
   if auth_type == "qwen-oauth":
     return AGENT_ID
   url = routes.get((auth_type, model)) or next((value for (_, routed), value in routes.items() if routed == model), "")
+  url = url or (urls or {}).get(auth_type, "")
   if url:
     return claude_code_owner(model, url)
   return AGENT_ID if auth_type in ("", "openai", "openai-responses") else None
@@ -347,7 +414,7 @@ def summarize(rows, owner):
   order. Qwen Code's prompts are its user records, not its replies: a reply
   adds its tokens, and a prompt only its session and day, billed with the
   reply that answered it, else Qwen Code's own."""
-  routes = model_routes(qwen_home())
+  routes, urls = route_config(qwen_home())
   parsed = []
   for row in rows:
     try:
@@ -356,7 +423,7 @@ def summarize(rows, owner):
       if kind == "r":
         model = str(row[4])
         counts = [int(value) for value in row[5:8]]
-        billed = route_owner(str(row[8]), str(row[9]), routes)
+        billed = route_owner(str(row[8]), str(row[9]), routes, urls)
       elif kind == "p":
         model, counts, billed = "", [0, 0, 0], None
       else:
