@@ -37,9 +37,9 @@ def prompt(uuid, session, timestamp, subtype=None):
 
 
 # One billed answer, as Qwen Code logs it: a ui_telemetry api_response event.
-def response(uuid, session, timestamp, model, auth, input, output, cached, thoughts, response_id=""):
+def response(uuid, session, timestamp, model, auth, input, output, cached, thoughts, response_id="", total=0):
   event = {"event.name": "qwen-code.api_response", "event.timestamp": timestamp, "response_id": response_id, "model": model, "auth_type": auth,
-           "input_token_count": input, "output_token_count": output, "cached_content_token_count": cached, "thoughts_token_count": thoughts, "total_token_count": 0}
+           "input_token_count": input, "output_token_count": output, "cached_content_token_count": cached, "thoughts_token_count": thoughts, "total_token_count": total}
   return {"uuid": uuid, "sessionId": session, "timestamp": timestamp, "type": "system", "subtype": "ui_telemetry", "systemPayload": {"uiEvent": event}}
 
 
@@ -93,6 +93,22 @@ expect("Qwen reads tokens the way Qwen Code's own statistics do", record["modelU
   "qwen3-coder-plus": {"inputTokens": 470, "outputTokens": 212, "cacheReadInputTokens": 680, "cacheCreationInputTokens": 0},
   "gemini-2.5-pro": {"inputTokens": 300, "outputTokens": 50, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0},
 }, record)
+
+# Qwen Code 0.26.0's records through the Responses API, whose output_tokens
+# already include reasoning_tokens, with and without a total, and Gemini's
+# with a total: thinking the total already holds in the output counts once.
+sandbox()
+transcript(chats() / "r.jsonl", [
+  prompt("u1", "r", NOW),
+  response("r1", "r", NOW, "qwen-resp-model", "openai-responses", 5234, 55, 75, 5, "resp_mock5", total=5289),
+  response("r2", "r", NOW, "qwen-resp-model", "openai-responses", 6234, 56, 76, 5, "resp_mock6"),
+  response("r3", "r", NOW, "gemini-2.5-pro", "gemini-api-key", 300, 40, 0, 10, "resp-g1", total=350),
+  response("r4", "r", NOW, "gemini-2.5-pro", "gemini-api-key", 300, 40, 0, 10, "resp-g2", total=340),
+])
+record = qwen()
+expect("Qwen counts a Responses API reply's reasoning once, and Gemini's thinking only outside its total", {
+  model: usage["outputTokens"] for model, usage in record["modelUsage"].items()
+}, {"qwen-resp-model": 111, "gemini-2.5-pro": 90}, record)
 
 # --------------------------------------------------------- untrusted fields
 

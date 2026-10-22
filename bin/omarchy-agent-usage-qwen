@@ -59,9 +59,13 @@ AGENT_NAME = "Qwen Code"
 
 API_RESPONSE_EVENT = "qwen-code.api_response"
 
-# Qwen Code's own rule (getEventTotalTokenCount): through an OpenAI-style API
-# the output count already includes thinking, and through Gemini it doesn't.
-THOUGHTS_IN_OUTPUT_AUTH_TYPES = ("openai", "qwen-oauth")
+# Qwen Code's own rule (getEventTotalTokenCount) takes a response's total
+# when it has one, and otherwise counts thinking on top of the output only
+# where the output leaves it out: through Gemini, but not through an
+# OpenAI-style API. Qwen Code's rule leaves out openai-responses, yet it maps
+# the Responses API's output_tokens, which include reasoning_tokens, to the
+# output count.
+THOUGHTS_IN_OUTPUT_AUTH_TYPES = ("openai", "openai-responses", "qwen-oauth")
 
 # User records Qwen Code writes for text someone typed: a prompt, or a message
 # sent while a turn was still running. Goal, mention, and notification records
@@ -71,7 +75,8 @@ PROMPT_SUBTYPES = (None, "mid_turn_user_message")
 # Rows keep each record's time as written, so the index outlives the day and
 # zone it was built in; version 1 kept parsed seconds, and version 2 kept an
 # undated record undated, so it counted as today's on every day after.
-INDEX_VERSION = 3
+# Version 3 counted a reply's thinking twice where its output held it.
+INDEX_VERSION = 4
 INDEX_HEAD_BYTES = 4096
 
 MAX_MODEL_NAME_LEN = 120
@@ -209,7 +214,11 @@ def parse_line(raw, session):
   cached = min(cached, prompt)
   output = token_count(event.get("output_token_count"))
   if str(event.get("auth_type") or "") not in THOUGHTS_IN_OUTPUT_AUTH_TYPES:
-    output += token_count(event.get("thoughts_token_count"))
+    thoughts = token_count(event.get("thoughts_token_count"))
+    total = token_count(event.get("total_token_count"))
+    if total > 0:
+      thoughts = min(thoughts, max(0, total - prompt - output))
+    output += thoughts
   if prompt + output <= 0:
     return None
   key = str(event.get("response_id") or "") or uuid
