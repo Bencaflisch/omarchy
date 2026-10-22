@@ -424,4 +424,38 @@ expect("an unreadable reset date reads as none, live and kept",
 
 for name in ("COPILOT_QUOTA_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"):
   del os.environ[name]
+# ---------------------------------------------------- the current store
+
+# A current CLI's store, its schema as Copilot CLI 1.0.102 writes it: who
+# started each request (initiator "user" for a typed prompt, "agent" for the
+# agent's own follow-up, as a tool loop's next step), and GitHub's usage
+# report on each request it served.
+def current_store(rows):
+  path = copilot_home() / "session-store.db"
+  path.parent.mkdir(parents=True, exist_ok=True)
+  conn = sqlite3.connect(path)
+  conn.execute("CREATE TABLE assistant_usage_events (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, turn_index INTEGER, agent_id TEXT,"
+               " parent_tool_call_id TEXT, model TEXT NOT NULL, copilot_usage_model TEXT, input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER,"
+               " cache_write_tokens INTEGER, reasoning_tokens INTEGER, total_nano_aiu INTEGER, request_multiplier REAL, duration_ms INTEGER,"
+               " time_to_first_token_ms INTEGER, output_ttft_ms REAL, inter_token_latency_ms INTEGER, initiator TEXT, api_endpoint TEXT, reasoning_effort TEXT,"
+               " finish_reason TEXT, content_filter_triggered INTEGER, token_details_json TEXT, created_at TEXT DEFAULT (datetime('now')))")
+  conn.executemany("INSERT INTO assistant_usage_events (session_id, turn_index, model, copilot_usage_model, input_tokens, output_tokens, cache_read_tokens,"
+                   " cache_write_tokens, reasoning_tokens, total_nano_aiu, request_multiplier, initiator, api_endpoint, finish_reason, created_at)"
+                   " VALUES (?, ?, ?, ?, ?, ?, ?, 0, 5, ?, ?, ?, '/chat/completions', ?, ?)", rows)
+  conn.commit()
+  conn.close()
+
+
+sandbox()
+configured(remote=False)
+current_store([
+  ("sess-a", 0, "gpt-5.2", "gpt-5.2", 1000, 100, 100, 1_000_000_000, 1.0, "user", "stop", NOW),
+  ("sess-b", 0, "gpt-5.2", "gpt-5.2", 1000, 100, 100, 1_000_000_000, 1.0, "user", "tool_calls", NOW),
+  ("sess-b", 0, "gpt-5.2", "gpt-5.2", 1000, 100, 100, 0, 1.0, "agent", "stop", NOW),
+  ("sess-a", 1, "gpt-5.2", "gpt-5.2", 1000, 100, 100, 1_000_000_000, 1.0, "user", "stop", NOW),
+])
+record = copilot()
+expect("a current store counts the prompts typed, not the agent's follow-up calls, and shows them",
+       {key: record[key] for key in ("ready", "hasPromptStats", "todayPrompts", "totalPrompts", "todaySessions", "todayTotalTokens")},
+       {"ready": True, "hasPromptStats": True, "todayPrompts": 3, "totalPrompts": 3, "todaySessions": 2, "todayTotalTokens": 4400}, record)
 PY
