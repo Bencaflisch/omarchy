@@ -865,8 +865,8 @@ def scan_pi_sessions(pattern: str, accept: Accept, roots: Iterable[Path] | None 
   root was read in full.
 
   `pattern` is an rg regex every such line matches (the provider field,
-  say); it only keeps other lines out of the parse, and `accept` stays the
-  authority for the ones that reach it. A message a fork repeats is one row,
+  say); it only keeps other lines and files out of the parse, and `accept`
+  stays the authority for the ones that reach it. A message a fork repeats is one row,
   counted toward the oldest session holding it, so a fork is a session of
   its own only for what it added, whichever file rg read first.
 
@@ -886,7 +886,8 @@ def scan_pi_sessions(pattern: str, accept: Accept, roots: Iterable[Path] | None 
 
   # Usage that names no provider of its own, spent on the session's model,
   # and the prompts the replies answer.
-  context = r'"type"\s*:\s*"(compaction|branch_summary)"|"role"\s*:\s*"user"|"role"\s*:\s*"toolResult".*"usage"\s*:\s*\{'
+  summary = r'"type"\s*:\s*"(compaction|branch_summary)"|"role"\s*:\s*"toolResult".*"usage"\s*:\s*\{'
+  context = summary + r'|"role"\s*:\s*"user"'
 
   # (root, path, line) of every counted line, so the rows come back in one
   # order however rg's threads interleave the files.
@@ -900,47 +901,84 @@ def scan_pi_sessions(pattern: str, accept: Accept, roots: Iterable[Path] | None 
     for line_number, key, row in _pi_rows(path, lines, accept):
       found.append((index, path, line_number, key, row))
 
-  for index, root in enumerate(roots):
-    try:
-      proc = subprocess.Popen(
+  def run_rg(args: list[str], targets: list[bytes]) -> Iterator[bytes]:
+    """rg's output lines for `args` over `targets`, a batch of them at a time
+    so a long list of files stays under the argument limit."""
+    nonlocal complete
+    batches: list[list[bytes]] = [[]]
+    size = 0
+    for target in targets:
+      if batches[-1] and size + len(target) > 100_000:
+        batches.append([])
+        size = 0
+      batches[-1].append(target)
+      size += len(target) + 1
+    for batch in batches:
+      if not batch:
+        continue
+      try:
         # --no-ignore: these are data files, not a source tree. When $HOME is
         # itself a git checkout (a common dotfiles setup), its ignore rules
         # would otherwise hide every session file and count zero usage.
-        [rg, "--json", "--no-ignore", "--hidden", "--glob", "*.jsonl", "-e", pattern, "-e", context, str(root)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        errors="replace",
-        env=runtime_env(),
-      )
-    except OSError:
-      return [], False
-    assert proc.stdout is not None
-    with proc.stdout:
-      for raw in proc.stdout:
-        try:
-          event = json.loads(raw)
-          data = event["data"]
-          if event.get("type") == "end":
-            fold(index, os.path.realpath(_rg_text(data.get("path"))))
-            continue
-          if event.get("type") != "match":
-            continue
-          path = os.path.realpath(_rg_text(data.get("path")))
-          entry = json.loads(_rg_text(data.get("lines")))
-          pending.setdefault(path, []).append((number(data.get("line_number")), entry))
-        except Exception:
-          # One odd line costs that line, never the scan.
-          continue
+        proc = subprocess.Popen([rg, "--no-ignore", "--hidden", *args, "--", *batch], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=runtime_env())
+      except OSError:
+        complete = False
+        return
+      assert proc.stdout is not None
+      with proc.stdout:
+        yield from proc.stdout
+      try:
+        # rg exits 1 for no match and 2 when it couldn't read something.
+        if proc.wait(timeout=5) not in (0, 1):
+          complete = False
+      except subprocess.TimeoutExpired:
+        proc.kill()
+        complete = False
+
+  def match_events(targets: list[bytes], patterns: list[str]) -> Iterator[tuple[str, str, int, Any]]:
+    """(event type, path, line number, entry) for each rg match and file end."""
+    args = ["--json"] + [arg for pattern in patterns for arg in ("-e", pattern)]
+    for raw in run_rg(args, targets):
+      try:
+        event = json.loads(raw)
+        data = event["data"]
+        if event.get("type") == "end":
+          yield "end", os.path.realpath(_rg_text(data.get("path"))), 0, None
+        elif event.get("type") == "match":
+          yield "match", os.path.realpath(_rg_text(data.get("path"))), number(data.get("line_number")), json.loads(_rg_text(data.get("lines")))
+      except Exception:
+        # One odd line costs that line, never the scan.
+        continue
+
+  def matching_files(targets: list[bytes], patterns: list[str]) -> list[bytes]:
+    """The *.jsonl files under `targets` with a line matching any of `patterns`,
+    by realpath, as the scan names them."""
+    args = ["--files-with-matches", "--null", "--glob", "*.jsonl"] + [arg for pattern in patterns for arg in ("-e", pattern)]
+    return [os.fsencode(os.path.realpath(os.fsdecode(name))) for name in b"".join(run_rg(args, targets)).split(b"\0") if name]
+
+  for index, root in enumerate(roots):
+    # Only a file holding this collector's lines can hold its rows, so the
+    # files are picked first: those with a line `pattern` matches, and those
+    # with usage naming no provider where a model switch `accept` takes says
+    # whose it was (omp names the switch's provider/model, which `pattern`
+    # doesn't see). Every other file's prompts and summaries belong to
+    # another collector, and are never parsed here.
+    owned = matching_files([os.fsencode(root)], [pattern])
+    summarized = set(matching_files([os.fsencode(root)], [summary])) - set(owned)
+    for _, path, _, entry in match_events(sorted(summarized), [r'"type"\s*:\s*"model_change"']):
+      line = _pi_line(entry)
+      try:
+        if line is not None and line[0] == "model" and accept(*line[1:4]):
+          owned.append(os.fsencode(path))
+      except Exception:
+        continue
+    for kind, path, line_number, entry in match_events(sorted(set(owned)), [pattern, context]):
+      if kind == "end":
+        fold(index, path)
+      else:
+        pending.setdefault(path, []).append((line_number, entry))
     for path in list(pending):
       fold(index, path)
-    try:
-      # rg exits 1 for no match and 2 when it couldn't read something.
-      if proc.wait(timeout=5) not in (0, 1):
-        complete = False
-    except subprocess.TimeoutExpired:
-      proc.kill()
-      complete = False
 
   first: dict[tuple, UsageRow] = {}
   holders: dict[tuple, list[str]] = {}
