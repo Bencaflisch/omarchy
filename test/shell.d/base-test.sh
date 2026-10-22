@@ -198,6 +198,196 @@ run_qml_fixture() {
   pass "$description"
 }
 
+# A second Omarchy shell on a scratch copy of this checkout's shell/, with a
+# scratch HOME, for tests that drive or time the real shell. setup_scratch_shell
+# builds it and sets SCRATCH_ROOT (its OMARCHY_PATH), SCRATCH_HOME, SCRATCH_BIN
+# (stubs, ahead of PATH) and SCRATCH_LOG; start_scratch_shell launches it and
+# sets SCRATCH_PID; scratch_ipc talks to it. It is stopped and removed on exit.
+SCRATCH_DIR=""
+SCRATCH_ROOT=""
+SCRATCH_HOME=""
+SCRATCH_BIN=""
+SCRATCH_LOG=""
+SCRATCH_PID=""
+
+setup_scratch_shell() {
+  SCRATCH_DIR=$(mktemp -d)
+  SCRATCH_ROOT="$SCRATCH_DIR/omarchy"
+  SCRATCH_HOME="$SCRATCH_DIR/home"
+  SCRATCH_BIN="$SCRATCH_DIR/bin"
+  SCRATCH_LOG="$SCRATCH_DIR/quickshell.log"
+  trap scratch_shell_cleanup EXIT
+
+  mkdir -p "$SCRATCH_ROOT" "$SCRATCH_BIN"
+  cp -a "$ROOT/shell" "$SCRATCH_ROOT/shell"
+  ln -s "$ROOT/config" "$SCRATCH_ROOT/config"
+  ln -s "$ROOT/bin" "$SCRATCH_ROOT/bin"
+  ln -s "$ROOT/default" "$SCRATCH_ROOT/default"
+  reset_scratch_home
+
+  # The scratch shell must not reach the real session: the clipboard plugin
+  # cleans up stale watchers at startup with a pkill whose pattern also
+  # matches the session shell's watchers (the idle-spawn test stubs the
+  # same commands for the same reason).
+  local name
+  for name in pkill killall; do
+    printf '#!/bin/bash\nexit 1\n' >"$SCRATCH_BIN/$name"
+    chmod +x "$SCRATCH_BIN/$name"
+  done
+  # Nor may it change system state over D-Bus: the battery service applies a
+  # power profile when UPower reports one.
+  for name in omarchy-powerprofiles-set powerprofilesctl; do
+    printf '#!/bin/bash\nexit 0\n' >"$SCRATCH_BIN/$name"
+    chmod +x "$SCRATCH_BIN/$name"
+  done
+  # The shell runs some commands under `bash -lc`, and a login shell resets
+  # PATH and OMARCHY_PATH from /etc/omarchy.conf, which would put the
+  # session's checkout and its real commands back ahead of these stubs.
+  printf '#!/bin/bash\n[[ ${1:-} == "-lc" ]] && shift && set -- -c "$@"\nexec /bin/bash "$@"\n' >"$SCRATCH_BIN/bash"
+  chmod +x "$SCRATCH_BIN/bash"
+}
+
+# An empty scratch HOME, for a cold start: a launch writes session state (the
+# background-intro marker, caches) that later launches read and skip
+# first-login work for. Nobody touches the seat during a run, so without
+# stay-awake the scratch shell's idle service would eventually screensave or
+# lock the real desktop.
+reset_scratch_home() {
+  rm -rf "$SCRATCH_HOME"
+  mkdir -p "$SCRATCH_HOME/.local/state/omarchy/indicators"
+  touch "$SCRATCH_HOME/.local/state/omarchy/indicators/stay-awake"
+}
+
+# Replaces the current (sub)shell with a command in the scratch shell's
+# environment, so a backgrounded (scratch_exec ...) & leaves $! naming the
+# command itself.
+scratch_exec() {
+  export OMARCHY_PATH="$SCRATCH_ROOT"
+  export HOME="$SCRATCH_HOME"
+  export XDG_CONFIG_HOME="$SCRATCH_HOME/.config"
+  export XDG_CACHE_HOME="$SCRATCH_HOME/.cache"
+  export XDG_STATE_HOME="$SCRATCH_HOME/.local/state"
+  export PATH="$SCRATCH_BIN:$ROOT/bin:$PATH"
+  exec "$@"
+}
+
+start_scratch_shell() {
+  (scratch_exec quickshell -p "$SCRATCH_ROOT/shell" --no-color) >"$SCRATCH_LOG" 2>&1 &
+  SCRATCH_PID=$!
+}
+
+scratch_ipc() {
+  OMARCHY_PATH="$SCRATCH_ROOT" "$ROOT/bin/omarchy-shell" "$@"
+}
+
+scratch_ipc_quiet() {
+  OMARCHY_PATH="$SCRATCH_ROOT" "$ROOT/bin/omarchy-shell" -q "$@"
+}
+
+# Waits until the scratch shell answers IPC, failing with its log when it
+# exits or never answers.
+wait_scratch_shell() {
+  for _ in {1..80}; do
+    # Not the quiet form: -q succeeds even when no shell answers.
+    [[ $(scratch_ipc shell ping 2>/dev/null || true) == "ok" ]] && return 0
+    kill -0 "$SCRATCH_PID" 2>/dev/null || break
+    sleep 0.1
+  done
+  sed -n '1,120p' "$SCRATCH_LOG" >&2
+  fail "scratch shell answers IPC"
+}
+
+# mapped|absent|unknown for the scratch shell's layer surface <namespace>:
+# mapped only at a real size, and a failed compositor query proves nothing, so
+# an absent verdict only comes from a query that answered.
+scratch_layer_state() {
+  local namespace="$1" layers
+
+  layers=$(hyprctl -j layers 2>/dev/null) || { echo unknown; return; }
+  [[ -n $layers ]] || { echo unknown; return; }
+  if jq -e --arg namespace "$namespace" --argjson pid "$SCRATCH_PID" '
+    [.. | objects | select(.namespace? == $namespace and .pid == $pid and .w > 0 and .h > 0)] | length > 0
+  ' <<<"$layers" >/dev/null 2>&1; then
+    echo mapped
+  else
+    echo absent
+  fi
+}
+
+# Polls every 10ms, up to 3s, until <namespace> is <mapped|absent>.
+wait_scratch_layer() {
+  local namespace="$1" want="$2"
+
+  for _ in {1..300}; do
+    [[ $(scratch_layer_state "$namespace") == "$want" ]] && return 0
+    kill -0 "$SCRATCH_PID" 2>/dev/null || return 1
+    sleep 0.01
+  done
+  return 1
+}
+
+# Quickshell leaves some of its children running when it is stopped, among them
+# the inotifywait watching the plugin directory, which then holds whatever it
+# inherited open (a flock around the run, say) indefinitely. Once the shell is
+# stopped, stop whatever still runs with the scratch OMARCHY_PATH: every child
+# inherits it, and it finds the ones a shell that already died left
+# reparented. The environment is read afresh before every signal, so a pid
+# that has since been reused by something else is never sent one.
+scratch_leftover_pids() {
+  local environ pid
+
+  [[ -n $SCRATCH_ROOT ]] || return 0
+  while IFS= read -r environ; do
+    pid=${environ#/proc/}
+    echo "${pid%/environ}"
+  done < <(grep -lzxF -- "OMARCHY_PATH=$SCRATCH_ROOT" /proc/[0-9]*/environ 2>/dev/null || true)
+}
+
+signal_scratch_leftovers() {
+  local leftovers=()
+
+  mapfile -t leftovers < <(scratch_leftover_pids)
+  (( ${#leftovers[@]} > 0 )) || return 1
+  kill "$1" "${leftovers[@]}" 2>/dev/null || true
+}
+
+# TERM, a few seconds' grace, then KILL, so nothing that ignores TERM can hang
+# the run. Bash can reap the shell, and free its pid, before it is waited for,
+# so the shell gets KILL only while it was still seen running.
+stop_scratch_shell() {
+  local alive
+
+  if [[ -n $SCRATCH_PID ]] && kill -0 "$SCRATCH_PID" 2>/dev/null; then
+    kill "$SCRATCH_PID" 2>/dev/null || true
+    alive=1
+    for _ in {1..30}; do
+      if ! kill -0 "$SCRATCH_PID" 2>/dev/null; then
+        alive=0
+        break
+      fi
+      sleep 0.1
+    done
+    (( alive == 0 )) || kill -KILL "$SCRATCH_PID" 2>/dev/null || true
+    wait "$SCRATCH_PID" 2>/dev/null || true
+  fi
+  SCRATCH_PID=""
+  if signal_scratch_leftovers -TERM; then
+    for _ in {1..30}; do
+      [[ -n $(scratch_leftover_pids) ]] || break
+      sleep 0.1
+    done
+    signal_scratch_leftovers -KILL || true
+  fi
+  [[ -n $SCRATCH_ROOT ]] && rm -f "$(shell_ipc_socket "$SCRATCH_ROOT")"
+  return 0
+}
+
+scratch_shell_cleanup() {
+  stop_scratch_shell
+  [[ -n $SCRATCH_DIR && -d $SCRATCH_DIR ]] && rm -rf "$SCRATCH_DIR"
+  return 0
+}
+
 # Finds the pkgbuilds/ directory of the omarchy-pkgs checkout, which some tests
 # hold Omarchy's scripts against, and sets OMARCHY_PKGS_ROOT to it. The checkout
 # lives in its own repository, wherever this machine keeps it.
