@@ -58,10 +58,10 @@ expect("Z.ai collector keeps each key's limits apart", [record["limits"], record
 # ------------------------------------------------------------- the answer
 
 # The mapped session and weekly windows, then the entries that must drop: a
-# window tagged with an unmapped (unit, number), one whose percentage will not
-# parse, and one whose percentage is a boolean. nextResetTime is milliseconds
-# for the first and plain seconds for the second, to prove a seconds epoch is
-# not rendered 1000x in the future.
+# window tagged with an unmapped (unit, number), one tagged with a list, one
+# whose percentage will not parse, and one whose percentage is a boolean.
+# nextResetTime is milliseconds for the first and plain seconds for the
+# second, to prove a seconds epoch is not rendered 1000x in the future.
 sandbox()
 keyed()
 week = int(time.time() + 5 * 86400)
@@ -70,6 +70,7 @@ with contextlib.redirect_stderr(io.StringIO()):
     {"type": "CREDIT_LIMIT", "unit": 3, "number": 5, "percentage": 42.0, "nextResetTime": ms_in(3 * 3600)},
     {"type": "TOKENS_LIMIT", "unit": 6, "number": 1, "percentage": 10, "nextResetTime": week},
     {"type": "CREDIT_LIMIT", "unit": 9, "number": 9, "percentage": 5, "nextResetTime": ms_in(3 * 3600)},
+    {"type": "CREDIT_LIMIT", "unit": [3], "number": 5, "percentage": 7, "nextResetTime": ms_in(3 * 3600)},
     {"type": "CREDIT_LIMIT", "unit": 3, "number": 5, "percentage": None, "nextResetTime": ms_in(3 * 3600)},
     {"type": "CREDIT_LIMIT", "unit": 3, "number": 5, "percentage": True, "nextResetTime": ms_in(3 * 3600)},
   ]}})
@@ -152,6 +153,8 @@ expect("Z.ai collector reads a Zhipu key from pi's .env", list(load_collector("z
 (home() / ".omp" / "agent").mkdir(parents=True)
 (home() / ".omp" / "agent" / ".env").write_text("export ZAI_API_KEY='omp-env'\n")
 expect("Z.ai collector prefers omp's .env to pi's", list(load_collector("zai").credentials()), ["omp-env", "zai"])
+(home() / ".omp" / "agent" / ".env").write_bytes(b"ZAI_API_KEY=\xff\xfe\n")
+expect("Z.ai collector skips a .env that isn't UTF-8", list(load_collector("zai").credentials()), ["pi-env", "zhipu"])
 
 # A Zhipu key asks BigModel's host, with the raw key as its Authorization:
 # the endpoint takes no Bearer prefix.

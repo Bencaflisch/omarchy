@@ -101,7 +101,8 @@ def read_env_file(path: Path) -> dict[str, str]:
         continue
       key, _, val = line.partition("=")
       values[key.strip()] = val.strip().strip("'\"")
-  except OSError:
+  except (OSError, UnicodeError):
+    # Unreadable, or not UTF-8: no keys from it.
     return {}
   return values
 
@@ -232,7 +233,11 @@ def fetch_limits(api_key: str, platform: str) -> dict[str, Any]:
   for item in data["limits"]:
     if not isinstance(item, dict) or item.get("type") not in LIMIT_TYPES:
       continue
-    label = LIMIT_WINDOWS.get((item.get("unit"), item.get("number")))
+    try:
+      label = LIMIT_WINDOWS.get((item.get("unit"), item.get("number")))
+    except TypeError:
+      # A list or an object for a tag can't name a window.
+      label = None
     if not label:
       # A window Z.ai adds later would vanish silently otherwise.
       print(
