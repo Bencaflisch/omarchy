@@ -17,20 +17,13 @@ the JSON this prints.
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import os
-import re
 import sys
 import urllib.request
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
-
-try:
-  from compression import zstd
-except ImportError:
-  zstd = None
 
 # The shared collector plumbing ships with the agents panel.
 sys.dont_write_bytecode = True
@@ -45,9 +38,9 @@ from collectors import (  # noqa: E402
   claude_code_scan_match,
   config_home,
   data_home,
+  dsh_home,
   emit,
   limits_cache_path,
-  local_day,
   now_ms,
   number,
   obj,
@@ -56,6 +49,7 @@ from collectors import (  # noqa: E402
   pi_session_roots,
   read_json,
   scan_claude_code,
+  scan_dsh_sessions,
   scan_max_age,
   scan_opencode,
   scan_pi_sessions,
@@ -71,19 +65,9 @@ OUT_OF_CREDITS_HELP = "DeepSeek says the balance no longer covers API calls. Top
 # DeepSeek Harness bills DeepSeek through these provider routes: an API key
 # and a DeepSeek account sign-in (its DeepSeek adapter), and its pi-ai
 # adapter's route for pi-ai's own `deepseek` provider, the id pi and opencode
-# name too. Its other pi-ai routes (OpenRouter, a hand-declared gateway)
-# belong to whoever bills them, and no collector reads dsh for those yet.
+# name too. Its other pi-ai routes belong to whoever bills them: OpenRouter's
+# to the openrouter collector, a hand-declared gateway's to nobody here.
 DSH_PROVIDERS = ("deepseek-official", "deepseek-account", "deepseek")
-
-# One canonical session log generation: session.jsonl, session.v4.jsonl, and
-# their Zstandard twins.
-DSH_LOG_NAME = re.compile(r"session(?:\.v([1-9][0-9]*))?\.jsonl(\.zstd)?")
-
-# The most one compressed session log may inflate to. A real log, even a
-# long-running agent session's, is a few MiB of JSON lines, so 64 MiB is far
-# past any of them; a log that inflates further is a corrupt or hostile
-# frame, and the scan stops there rather than filling memory.
-DSH_MAX_LOG_BYTES = 64 * 1024 * 1024
 
 
 class DeepSeekError(Exception):
@@ -120,188 +104,15 @@ def add_harness_rows(stats: Stats) -> bool:
 
 
 # -------------------------------------------------------- DeepSeek Harness
-#
-# dsh keeps one append-only event log per session under
-# $DSH_HOME/sessions/<project>/<session>/, Zstandard-compressed by default.
-# Each billed model attempt settles as an assistant/message (or a log-only
-# assistant/attempt) carrying the provider's usage; the request/header before
-# it names the provider route and model.
+
+def dsh_billed_here(provider: str, model: str, request: dict) -> bool:
+  return provider in DSH_PROVIDERS
 
 
-def dsh_home() -> Path:
-  # An empty or blank DSH_HOME reads as unset, as dsh itself treats it.
-  configured = os.environ.get("DSH_HOME", "").strip()
-  return Path(configured).expanduser() if configured else Path.home() / ".dsh"
-
-
-def dsh_session_logs(root: Path) -> tuple[list[Path], bool]:
-  """The current log of each session, and whether every directory could be
-  listed: a walk that couldn't read one has missed its logs."""
-  # The newest generation in each session directory is the current log;
-  # older ones are kept only as migration history.
-  newest: dict[Path, tuple[int, Path]] = {}
-  unlisted: list[OSError] = []
-  for directory, _, names in root.walk(on_error=unlisted.append):
-    for name in names:
-      match = DSH_LOG_NAME.fullmatch(name)
-      path = directory / name
-      if not match or not path.is_file():
-        continue
-      version = int(match.group(1) or 0)
-      current = newest.get(directory)
-      if current is None or version > current[0]:
-        newest[directory] = (version, path)
-  return [path for _, path in sorted(newest.values(), key=lambda item: str(item[1]))], not unlisted
-
-
-def dsh_decompress(data: bytes) -> bytes | None:
-  """Every complete Zstandard frame of a log, or None past DSH_MAX_LOG_BYTES.
-
-  Decompressed a bounded piece at a time, so a corrupt or hostile frame that
-  inflates without end stops at the cap instead of filling memory.
-  """
-  chunks: list[bytes] = []
-  total = 0
-  while data:
-    decompressor = zstd.ZstdDecompressor()
-    pending = data
-    try:
-      while True:
-        chunk = decompressor.decompress(pending, max_length=DSH_MAX_LOG_BYTES - total + 1)
-        pending = b""
-        total += len(chunk)
-        if total > DSH_MAX_LOG_BYTES:
-          return None
-        chunks.append(chunk)
-        if decompressor.eof or decompressor.needs_input:
-          break
-    except zstd.ZstdError:
-      break
-    if not decompressor.eof:
-      break
-    data = decompressor.unused_data
-  return b"".join(chunks)
-
-
-def dsh_log_lines(path: Path) -> tuple[list[bytes], bool]:
-  """The complete records of one log, and whether all of it could be read.
-
-  A torn final line or frame from a crash mid-write is dropped, as dsh's own
-  reader does, without making the scan incomplete.
-  """
-  data = path.read_bytes()
-  if path.name.endswith(".zstd"):
-    if zstd is None:
-      warn("this Python has no Zstandard support; DeepSeek Harness sessions were not scanned")
-      return [], False
-    data = dsh_decompress(data)
-    if data is None:
-      warn(f"a DeepSeek Harness session log inflates past {DSH_MAX_LOG_BYTES >> 20} MiB and was not scanned")
-      return [], False
-  lines = data.split(b"\n")
-  # Whatever follows the last newline is an unfinished record.
-  return lines[:-1], True
-
-
-def dsh_usage_sample(event: dict[str, Any]) -> dict[str, Any] | None:
-  data = obj(event.get("data"))
-  if event.get("type") == "assistant/message" and isinstance(data.get("usage"), dict):
-    return data["usage"]
-  stream = data.get("stream")
-  if not isinstance(stream, list):
-    return None
-  for record in reversed(stream):
-    chunk = obj(obj(record).get("chunk"))
-    if obj(record).get("type") == "chunk" and chunk.get("type") == "usage":
-      return obj(chunk.get("usage"))
-  return None
-
-
-def scan_dsh_log(stats: Stats, path: Path) -> bool:
-  lines, complete = dsh_log_lines(path)
-  if not lines:
-    return complete
-  try:
-    header = obj(json.loads(lines[0]))
-  except Exception:
-    # A line nested too deep to parse is a RecursionError, not a
-    # ValueError; either way only that line (here, its log) is lost.
-    return complete
-  if header.get("type") != "session":
-    return complete
-  events = []
-  for line in lines[1:]:
-    try:
-      event = json.loads(line)
-    except Exception:
-      continue
-    if isinstance(event, dict):
-      events.append(event)
-
-  # A fork's log opens with a copy of its parent's history; the last
-  # `session/end-seed` marked inherited is where its own spending begins.
-  start = 0
-  if header.get("isSeeded") is True:
-    for index, event in enumerate(events):
-      if event.get("type") == "session/end-seed" and obj(event.get("data")).get("inherited") is True:
-        start = index + 1
-
-  session = "dsh:" + str(header.get("id") or path.parent.name)
-  provider, model = "", ""
-  # One slot per billed attempt. A settlement replaces the streaming sample
-  # of the same turn and step, until a retry starts a new attempt, the same
-  # fold dsh's own token meter runs.
-  slots: list[list[Any]] = []
-  last: tuple[Any, Any] | None = None
-  for index, event in enumerate(events):
-    kind = event.get("type")
-    data = obj(event.get("data"))
-    if kind == "request/header":
-      config = obj(obj(data.get("header")).get("config"))
-      provider, model = str(config.get("provider") or ""), str(config.get("model") or "")
-      continue
-    if kind == "llm/retry-started":
-      if last == (data.get("turn"), data.get("step")):
-        last = None
-      continue
-    if kind not in ("assistant/message", "assistant/attempt"):
-      continue
-    usage = dsh_usage_sample(event)
-    if usage is None:
-      continue
-    slot = (data.get("turn"), data.get("step"))
-    sample = [
-      number(usage.get("inputTokens")),
-      number(usage.get("outputTokens")),
-      number(usage.get("cacheReadTokens")),
-      number(usage.get("cacheWriteTokens")),
-    ]
-    entry = [index >= start and provider in DSH_PROVIDERS, local_day(event.get("time")), model, sample]
-    if last == slot and slots:
-      slots[-1] = entry
-    else:
-      slots.append(entry)
-    last = slot
-
-  for counted, day, slot_model, (input_tokens, output_tokens, cache_read, cache_write) in slots:
-    if counted and day is not None and (input_tokens or output_tokens or cache_read or cache_write):
-      stats.add(day, session, model_name(slot_model), input_tokens, output_tokens, cache_read, cache_write)
-  return complete
-
-
-def scan_dsh_sessions(stats: Stats) -> bool:
-  root = dsh_home() / "sessions"
-  if not root.is_dir():
-    return True
-  try:
-    logs, complete = dsh_session_logs(root)
-  except OSError:
-    return False
-  for path in logs:
-    try:
-      complete = scan_dsh_log(stats, path) and complete
-    except OSError:
-      complete = False
+def scan_dsh(stats: Stats) -> bool:
+  rows, complete = scan_dsh_sessions(dsh_billed_here)
+  for row in rows:
+    stats.add_row(row, model_name(row.model))
   return complete
 
 
@@ -310,7 +121,7 @@ def scan_dsh_sessions(stats: Stats) -> bool:
 def run_local_scans() -> tuple[dict[str, Any], bool]:
   stats = Stats()
   complete = add_harness_rows(stats)
-  complete = scan_dsh_sessions(stats) and complete
+  complete = scan_dsh(stats) and complete
   # Claude Code pointed at DeepSeek's Anthropic API, or answered by a
   # DeepSeek model.
   for row in scan_claude_code(AGENT_ID):
