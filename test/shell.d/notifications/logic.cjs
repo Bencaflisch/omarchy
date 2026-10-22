@@ -45,6 +45,10 @@ for (const body of ['<img src="file:///etc/passwd">', '<svg><image href="https:/
   assert.ok(!/<(?:img|svg|script|iframe|object|embed|style|font)\b|<a[^>]+onmouseover=|href="(?:qrc|image|javascript|file|data):/i
     .test(M.render(body)), body)
 
+// A bare URL is a link even beside formatting, but never inside the sender's own anchor.
+assert.equal(M.render('<b>Standup</b> https://example.com/x'), '<b>Standup</b> <a href="https://example.com/x">https://example.com/x</a>')
+assert.equal(M.render('<a href="https://example.com/">https://example.com/</a>'), '<a href="https://example.com/">https://example.com/</a>')
+
 { // Escaped sender markup must not leak into collapsed or restored previews.
   const body = 'Thread in #support: &lt;b&gt;Sam&lt;/b&gt;&lt;br/&gt;the preview is readable &amp; compact'
   const expected = 'Thread in #support: Sam the preview is readable & compact'
@@ -136,15 +140,14 @@ for (const body of ['Your verification code is 938271', 'Your code is 938 271', 
   }
 }
 
-{ // Restore recomputes link/meeting from the text under today's policy,
-  // never trusting fields on the stored entry.
+{ // Restore recomputes the link from the text under today's policy, never
+  // trusting the field on the stored entry.
   const entry = body => ({ key: 'n1', app: 'Chat', summary: 'New message', body, rawBody: body, urgency: 1 })
   const row = Store.restored(entry('Join https://meet.google.com/abc-defg-hij'))
   assert.equal(row.link, 'https://meet.google.com/abc-defg-hij')
-  assert.equal(row.meeting, true)
   assert.equal(row.restored, true)
-  const tampered = Store.restored({ ...entry('Nothing to see here'), link: 'https://evil.example/phish', meeting: true })
-  assert.deepEqual([tampered.link, tampered.meeting], ['', false])
+  const tampered = Store.restored({ ...entry('Nothing to see here'), link: 'https://evil.example/phish' })
+  assert.equal(tampered.link, '')
   assert.equal(Store.restored(entry('See http://127.0.0.1/admin for details')).link, '')
 }
 
@@ -258,6 +261,12 @@ for (const body of ['Your verification code is 938271', 'Your code is 938 271', 
   assert.ok(Delivery.summaryStartsWithGlyph('\u{f009b}  Silenced'))
   assert.ok(!Delivery.summaryStartsWithGlyph('Silenced  notifications'))
   assert.ok(!Delivery.summaryStartsWithGlyph(''))
+  // Omarchy's marks share code points with Nerd Font devicons.
+  assert.ok(Delivery.omarchyGlyph(''))
+  assert.ok(Delivery.omarchyGlyph(''))
+  assert.ok(!Delivery.omarchyGlyph('\u{f048a}'))
+  assert.ok(!Delivery.omarchyGlyph(''))
+  assert.ok(!Delivery.omarchyGlyph(''))
 
   // The deck clears the bar only on the top and right edges it touches.
   const bar = { barHidden: false, barSize: 26, barSizeFor: name => name === 'notched' ? 40 : 26 }
@@ -769,7 +778,7 @@ const eq = (actual, expected, message) => assert.deepEqual(plain(actual), plain(
 { // A stored row keeps only its scalar fields: no codes, links, images or
   // derived text.
   const saved = Store.persistable({ key: 'n1', app: 'Chat', summary: 'Hi', body: 'See https://example.com',
-    code: '1234', codes: '1234', link: 'https://example.com', meeting: true, image: '/tmp/a.png',
+    code: '1234', codes: '1234', link: 'https://example.com', image: '/tmp/a.png',
     bodyRich: '<b>x</b>', transient: true })
   eq(Object.keys(saved).sort(), [...Store.STORED].sort())
   assert.equal(saved.rawBody, '', 'a raw body the same as the body is not stored twice')
@@ -864,7 +873,7 @@ const eq = (actual, expected, message) => assert.deepEqual(plain(actual), plain(
   eq(Store.parseLive(' '.repeat(Store.LIVE_LIMIT * Store.LIVE_ROW_CHARS * 2 + 1) + '[{"key":"a"}]'), [],
                    'an oversized file is not parsed at all')
   const [row] = Store.parseLive(JSON.stringify([{ key: '__proto__', summary: 's', image: '/tmp/a.png', bodyRich: '<img src=x>',
-    link: 'https://evil.example/', meeting: true, urgency: 'high', ts: 'soon', glyph: '\n' }]))
+    link: 'https://evil.example/', urgency: 'high', ts: 'soon', glyph: '\n' }]))
   eq([row.key, row.image, row.link, row.urgency, row.ts, row.glyph, 'bodyRich' in row],
                    ['__proto__', undefined, undefined, 1, 0, '', false])
   assert.equal(Store.parseLive('[{"key":"a","summary":"first"},{"key":"a","summary":"second"}]').length, 1)

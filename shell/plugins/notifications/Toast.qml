@@ -8,7 +8,6 @@ import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
 
-import "Markup.js" as Markup
 import "Security.js" as Security
 import "Delivery.js" as Delivery
 import "Store.js" as Store
@@ -44,12 +43,13 @@ Item {
         && localHoverY >= origin.y && localHoverY <= origin.y + item.height
   }
 
-  // "now", then minutes, then the clock time, then "yesterday", then the day.
+  // Nothing while it is fresh, then minutes, then the clock time, then
+  // "yesterday", then the day.
   function ago() {
     var t = Number(row.ts || 0) * 1000
     if (!t) return ""
     var s = Math.max(0, (now - t) / 1000)
-    if (s < 50) return I18n.t("notifications.now")
+    if (s < 300) return ""
     if (s < 3600) return I18n.t("notifications.minutesAgo").arg(I18n.formatNumber(Math.round(s / 60)))
     var then = new Date(t)
     var locale = Qt.locale(I18n.formatLocale)
@@ -67,7 +67,7 @@ Item {
   signal activated()
   signal dismissed()
   signal snoozeRequested(int seconds)
-  signal offerTaken(string kind, string value)
+  signal codeCopied(string code)
   signal actionInvoked(string identifier)
 
   readonly property bool critical: row.urgency === 2
@@ -107,10 +107,6 @@ Item {
       out.push({ kind: "code", value: foundCodes[c],
                  label: foundCodes.length > 1 ? I18n.t("notifications.copyThisCode").arg(foundCodes[c])
                                               : I18n.t("notifications.copyCode") })
-    if (String(row.link || ""))
-      out.push({ kind: row.meeting ? "meeting" : "link",
-                 label: row.meeting ? I18n.t("notifications.join") : I18n.t("notifications.openLink"),
-                 value: String(row.link) })
     for (var i = 0; i < actions.length; i++)
       out.push({ kind: "action", label: String(actions[i].text || ""), value: String(actions[i].id) })
     return out
@@ -121,7 +117,6 @@ Item {
   readonly property var marks: {
     var out = []
     if (String(row.code || "")) out.push("\u{f0306}")
-    if (String(row.link || "")) out.push(row.meeting ? "\u{f0567}" : "\u{f0339}")
     if (actions.length > 0) out.push("\u{f0cfd}")
     return out
   }
@@ -138,14 +133,14 @@ Item {
     var kind = String(deed.kind || "")
     if (kind === "snooze") { menuOpen = false; snoozeRequested(Number(deed.value)); return }
     if (kind === "action") { actionInvoked(String(deed.value)); return }
-    offerTaken(kind, String(deed.value))
-    takenKind = kind + ":" + String(deed.value)
+    codeCopied(String(deed.value))
+    copiedCode = String(deed.value)
     tick.restart()
   }
 
-  // "kind:value" of the last press, ticked for a moment: copying is silent.
-  property string takenKind: ""
-  Timer { id: tick; interval: 1400; onTriggered: card.takenKind = "" }
+  // The code last copied, ticked for a moment: copying is silent.
+  property string copiedCode: ""
+  Timer { id: tick; interval: 1400; onTriggered: card.copiedCode = "" }
 
   // Pausing holds the remaining time rather than restarting it.
   // An update (replaces_id) rewrites the row in place with a new arrival
@@ -325,7 +320,7 @@ Item {
           visible: thumb.glyphed
           text: String(card.row.glyph || "")
           color: Commons.Color.notifications.text
-          font.family: Style.font.family
+          font.family: Delivery.omarchyGlyph(card.row.glyph) ? "omarchy" : Style.font.family
           font.pixelSize: (thumb.compact ? Style.font.icon : Style.font.displayLarge)
         }
 
@@ -524,146 +519,108 @@ Item {
           font.pixelSize: Style.font.title
         }
 
-        // Rich text cannot elide, so a body over the current line cap is
-        // flattened into the plain rendering, which can end in an ellipsis.
-        Item {
+        // StyledText, not RichText: it covers the tags Markup lets through,
+        // keeps links clickable, and can still end a long body in an ellipsis.
+        Text {
           id: bodyBox
-          clip: true
           width: parent.width
-          // Laid-out height, never lineCount: in RichText mode lineCount counts
-          // paragraphs, not wrapped lines.
-          readonly property real lineH: Math.max(1, metrics.height)
-          readonly property real cap: lineH * card.bodyLines
-          // A body a hair over the cap is worth one more pixel, not flattening.
-          readonly property bool overflow: rich.contentHeight > cap + lineH * 0.4
-          readonly property real shown: overflow ? plain.contentHeight : rich.contentHeight
-          // Not clamped to `cap`: plain.maximumLineCount enforces the limit, and
-          // clamping to the arithmetic slices the last line instead of eliding.
-          height: Math.ceil(shown)
-
           // The closed height, read only by the icon so it does not move.
-          readonly property real restHeight:
-              Math.min(Math.ceil(lineH * 2), Math.ceil(rich.contentHeight))
+          readonly property real restHeight: Math.ceil(Math.max(1, metrics.height) * Math.min(2, lineCount))
           visible: card.hasBody
           opacity: card.showsContent ? 1 : 0
           Behavior on opacity { NumberAnimation { duration: card.fade } }
 
-          Text {
-            id: rich
-            width: parent.width
-            visible: !bodyBox.overflow
-            textFormat: Text.RichText
-            text: card.redacted ? I18n.t("notifications.redactedBody") : Markup.colourLinks(String(card.row.bodyRich || card.row.body || ""),
-                                     String(Commons.Color.notifications.countdown))
-            color: card.bodyColor
-            font.family: "Liberation Sans"
-            font.pixelSize: Style.font.title
-            wrapMode: Text.Wrap
-            // Second gate: Markup already drops anchors it will not vouch for.
-            onLinkActivated: function(url) {
-              Security.openExternalUrl(url)
-            }
-          }
+          textFormat: Text.StyledText
+          text: card.redacted ? I18n.t("notifications.redactedBody") : String(card.row.bodyRich || "")
+          color: card.bodyColor
+          linkColor: Commons.Color.notifications.countdown
+          font.family: "Liberation Sans"
+          font.pixelSize: Style.font.title
+          wrapMode: Text.Wrap
+          maximumLineCount: card.bodyLines
+          elide: Text.ElideRight
+          // Second gate: Markup already drops anchors it will not vouch for.
+          onLinkActivated: function(url) { Security.openExternalUrl(url) }
+        }
+      }
+    }
 
-          Text {
-            textFormat: Text.PlainText
-            id: plain
-            width: parent.width
-            visible: bodyBox.overflow
-            text: card.redacted ? I18n.t("notifications.redactedBody") : String(card.row.bodyLine || card.row.body || "")
-            color: card.bodyColor
-            font.family: "Liberation Sans"
-            font.pixelSize: Style.font.title
-            wrapMode: Text.Wrap
-            maximumLineCount: card.bodyLines
-            elide: Text.ElideRight
+    // The space under the body does one job at a time: the snooze choices or
+    // the button row, drawn in the card because the surface is clipped. The
+    // row shows only under the pointer in an open deck. It spans the content
+    // under the mark too, and keeps the side padding below it.
+    Item {
+      id: deedArea
+      anchors { left: parent.left; right: parent.right; bottom: parent.bottom
+                leftMargin: plate.contentLeftInset + Style.space(12)
+                rightMargin: plate.contentRightInset + Style.space(12)
+                bottomMargin: plate.contentBottomInset + Style.space(12) }
+
+      readonly property string mode: card.menuOpen ? "menu"
+                                   : (card.hovered && card.expanded
+                                      && card.allDeeds.length > 0) ? "row" : ""
+
+      readonly property real contentHeight: mode === "menu" ? menuRow.implicitHeight
+                                          : mode === "row" ? deedRow.implicitHeight : 0
+      // What the state asks for; the drawn height is whatever slack the
+      // scene has given the card so far. The card already pads its text at
+      // the bottom; extraPadding tops that up to the side padding.
+      readonly property real extraPadding: Style.space(12) - card.contentPaddingY
+      readonly property real wanted: mode === "" ? 0 : contentHeight + Style.space(10) + extraPadding
+      height: Math.max(0, card.drawnHeight - card.fixedHeight - extraPadding)
+      visible: height > 0
+      clip: true
+
+      // Right-aligned and wrapping: laid out right to left over the reversed
+      // list, so one line still reads in order.
+      Flow {
+        id: deedRow
+        anchors.bottom: parent.bottom
+        width: parent.width
+        layoutDirection: Qt.RightToLeft
+        spacing: Style.space(6)
+        opacity: deedArea.mode === "row" ? 1 : 0
+        visible: opacity > 0.01
+        Behavior on opacity { NumberAnimation { duration: card.fade } }
+
+        Repeater {
+          model: card.allDeeds.slice().reverse()
+          DeedButton {
+            required property var modelData
+            deed: modelData
+            toast: card
           }
         }
+      }
 
-        // The space under the body does one job at a time: the right-click
-        // menu, the "More" list, or the button row. Lists are drawn in the
-        // card, not as popups, because the surface is clipped. The row shows
-        // only under the pointer in an open deck.
-        Item {
-          id: deedArea
-          // A glyph beside a one-line toast belongs to the headline, so the
-          // buttons under it start at the glyph's edge, not the title's.
-          readonly property real reach: thumb.compact ? thumb.width + layout.spacing : 0
-          x: card.LayoutMirroring.enabled ? 0 : -reach
-          width: parent.width + reach
-          // A one-line toast's padding is too tight under a button; open, the
-          // area makes up the difference to a bodied toast's.
-          readonly property real tail: Style.space(10) - card.contentPaddingY
+      // The snooze choices, on one line: "Snooze" and its buttons.
+      Flow {
+        id: menuRow
+        anchors.bottom: parent.bottom
+        width: parent.width
+        spacing: Style.space(6)
+        opacity: deedArea.mode === "menu" ? 1 : 0
+        visible: opacity > 0.01
+        Behavior on opacity { NumberAnimation { duration: card.fade } }
 
-          readonly property string mode: card.menuOpen ? "menu"
-                                       : (card.hovered && card.expanded
-                                          && card.allDeeds.length > 0) ? "row" : ""
+        Text {
+          textFormat: Text.PlainText
+          // As tall as the buttons beside it, so the word sits centred.
+          height: snoozeChoices.count ? snoozeChoices.itemAt(0).height : implicitHeight
+          verticalAlignment: Text.AlignVCenter
+          text: I18n.t("notifications.snooze")
+          color: card.bodyColor
+          font.family: Style.font.family
+          font.pixelSize: Style.font.body
+        }
 
-          readonly property real contentHeight: mode === "menu" ? menuRow.implicitHeight
-                                              : mode === "row" ? deedRow.implicitHeight : 0
-          // What the state asks for; the drawn height is whatever slack the
-          // scene has given the card so far.
-          // The column's gap above this area is not in fixedHeight, so it is
-          // counted here rather than taken out of the bottom padding.
-          readonly property real wanted: mode === "" ? 0 : column.spacing + contentHeight + Style.space(7) + tail
-          height: Math.max(0, card.drawnHeight - card.fixedHeight - column.spacing)
-          visible: height > 0
-          clip: true
-
-          // Right-aligned and wrapping: laid out right to left over the
-          // reversed list, so one line still reads in order.
-          Flow {
-            id: deedRow
-            anchors.bottom: parent.bottom
-            anchors.bottomMargin: deedArea.tail
-            width: parent.width
-            layoutDirection: Qt.RightToLeft
-            spacing: Style.space(6)
-            opacity: deedArea.mode === "row" ? 1 : 0
-            visible: opacity > 0.01
-            Behavior on opacity { NumberAnimation { duration: card.fade } }
-
-            Repeater {
-              model: card.allDeeds.slice().reverse()
-              DeedButton {
-                required property var modelData
-                deed: modelData
-                toast: card
-              }
-            }
-          }
-
-          // The right-click menu, on one line: "Snooze" and its choices.
-          Flow {
-            id: menuRow
-            anchors.bottom: parent.bottom
-            anchors.bottomMargin: deedArea.tail
-            width: parent.width
-            spacing: Style.space(6)
-            opacity: deedArea.mode === "menu" ? 1 : 0
-            visible: opacity > 0.01
-            Behavior on opacity { NumberAnimation { duration: card.fade } }
-
-            Text {
-              textFormat: Text.PlainText
-              // As tall as the buttons beside it, so the word sits centred.
-              height: snoozeChoices.count ? snoozeChoices.itemAt(0).height : implicitHeight
-              verticalAlignment: Text.AlignVCenter
-              text: I18n.t("notifications.snooze")
-              color: card.bodyColor
-              font.family: Style.font.family
-              font.pixelSize: Style.font.body
-            }
-
-            Repeater {
-              id: snoozeChoices
-              model: card.menuOpen ? card.menuDeeds : []
-              DeedButton {
-                required property var modelData
-                deed: modelData
-                toast: card
-              }
-            }
+        Repeater {
+          id: snoozeChoices
+          model: card.menuOpen ? card.menuDeeds : []
+          DeedButton {
+            required property var modelData
+            deed: modelData
+            toast: card
           }
         }
       }

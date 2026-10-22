@@ -55,7 +55,6 @@ function snapshot(n, key, urgencyEnum) {
     code: found.code,
     codes: found.codes,
     link: found.link,
-    meeting: found.meeting,
     image: img,
     urgency: typeof n.urgency === "number" ? n.urgency : urgencyEnum.Normal,
     expireTimeout: expire,
@@ -67,7 +66,7 @@ function snapshot(n, key, urgencyEnum) {
 var ROLES = ["originalId", "senderPid", "execArgv", "glyph", "transient", "app", "appIcon", "summary", "body", "rawBody", "bodyRich",
              "bodyLine", "source", "groupKey", "image", "urgency",
              "expireTimeout", "duration", "ts",
-             "code", "codes", "link", "meeting"]
+             "code", "codes", "link"]
 
 function applyTo(model, index, row) {
   var current = model.get(index)
@@ -87,7 +86,7 @@ var RESTORE_GRACE = 20000
 var SHAPE = {
   key: "", originalId: 0, senderPid: 0, execArgv: "", glyph: "", transient: false, app: "", appIcon: "", summary: "", body: "",
   bodyRich: "", bodyLine: "", rawBody: "", source: "", groupKey: "", image: "",
-  code: "", codes: "", link: "", meeting: false,
+  code: "", codes: "", link: "",
   urgency: 1, expireTimeout: 0, duration: 0, ts: 0,
   restored: false
 }
@@ -123,12 +122,11 @@ function normalise(row) {
 function restored(entry) {
   if (!entry || !entry.key) return null
   var row = normalise(entry)
-  // persistable() drops link/meeting so a stored entry cannot
+  // persistable() drops the link so a stored entry cannot
   // assert capabilities. Recompute them from the text and re-validate. Codes
   // are not recomputed: a redacted entry has nothing left to find.
   var found = Detect.scan(row.summary, row.body)
   row.link = found.link
-  row.meeting = found.meeting
   row = normalise(row)
   row.duration = row.urgency === 2 ? 0 : RESTORE_GRACE
   row.restored = true

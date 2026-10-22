@@ -1,4 +1,4 @@
-// What a notification offers: verification codes, links and meetings. Every detector guesses at someone else's prose, so a false positive
+// What a notification offers: verification codes and links. Every detector guesses at someone else's prose, so a false positive
 // (offering "412" from "412 passed") is worse than a miss.
 .pragma library
 .import "Security.js" as Security
@@ -88,8 +88,6 @@ function links(text) {
   return out.slice(0, Security.MAX_CODES)
 }
 
-var MEETING = /(zoom\.us|meet\.google\.com|teams\.microsoft\.com|teams\.live\.com|whereby\.com|meet\.jit\.si)/i
-
 // Everything a card might offer. The body must already have the browser's
 // origin anchor lifted off, or every Chrome card offers to open its own site.
 function scan(summary, body) {
@@ -99,7 +97,6 @@ function scan(summary, body) {
   return {
     code: code.length ? code[0] : "",
     codes: code.join(" "),
-    link: link.length ? link[0] : "",
-    meeting: link.length ? MEETING.test(link[0]) : false
+    link: link.length ? link[0] : ""
   }
 }

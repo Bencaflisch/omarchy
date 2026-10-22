@@ -11,7 +11,7 @@ The shell is the notification daemon: `shell/plugins/notifications/Service.qml` 
 | `NotificationPanel.qml`, `Picker.qml` | The panel and its preferences page, opened from the bar's Dnd indicator (`shell/plugins/bar/indicators/Dnd.qml`) |
 | `Store.js` | Notification snapshots, normalisation, what a stored row keeps, the stored file formats, restore |
 | `Markup.js` | Safe body markup, source lifting (`web:app.slack.com`), one-line previews |
-| `Detect.js` | Verification codes, links and meeting links |
+| `Detect.js` | Verification codes and links |
 | `Security.js` | URL policy, bounds, the sender image path policy, the `omarchy-exec-argv` and glyph checks |
 | `Icons.js` | The names a card's icon may go by: site names, symbolic icons |
 | `Layout.js` | Pure deck layout: rows in, placements out |
@@ -48,7 +48,7 @@ The shell keeps its state in `~/.local/state/omarchy/notifications/` (0700), thr
 
 Writes go through one short timer, started (not restarted) by a change, so a burst of arrivals writes each file once and a flood writes at most four times a second; no file is written before it has been read. `FileView` writes atomically, which keeps the mode of the file it replaces, so the files are created at 0600 before anything writes them.
 
-At startup one process makes the directory and those files; a symlink in place of a state file is replaced. Persistence starts no other process. Older layouts' leftovers, which hold old message content, are removed once by migration `1792648436`: 4.0's `<ms>-<id>.json` popups, `history/` and `images/`, the pre-release layouts' `live/`, `policy.json`, fetched site icons and demo fixture, and `~/.cache/omarchy/notification-icons/`. It carries 4.0's Do Not Disturb from `~/.local/state/omarchy/notifications.json` into `quiet.json` and removes that file.
+At startup one process makes the directory and those files; a symlink in place of a state file is replaced. Persistence starts no other process. Older layouts' leftovers, which hold old message content, are removed once by migration `1792648436`: 4.0's `<ms>-<id>.json` popups and its `history/` and `images/` directories. It carries 4.0's Do Not Disturb from `~/.local/state/omarchy/notifications.json` into `quiet.json` and removes that file.
 
 ## Icons
 

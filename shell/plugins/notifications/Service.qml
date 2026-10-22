@@ -529,10 +529,13 @@ Item {
   }
 
   // One clock the cards' relative times hang off, rather than a timer per card.
+  // It stops with no cards on screen, so it catches up as soon as one shows:
+  // replayed history would otherwise read against the hour it last ticked.
   property double nowTick: Date.now()
   Timer {
     interval: 20000
     repeat: true
+    triggeredOnStart: true
     running: toasts.count > 0
     onTriggered: service.nowTick = Date.now()
   }
@@ -1124,7 +1127,7 @@ Item {
     var handled = invokeSenderAction(key, "default")
     if (!handled && row) {
       // Source first, link last: a Slack message quoting a link is still a
-      // Slack notification, and that link has its own button.
+      // Slack notification, and that link is clickable in its text.
       var win = windowForPid(row.senderPid) || windowForSource(row.source)
       if (win) focusWindow(win)
       else if (Markup.hostname(row.source))
@@ -1135,9 +1138,9 @@ Item {
     closeToast(key, "activated")
   }
 
-  // ------------------------------------------------------------- offers
+  // -------------------------------------------------------------- codes
   //
-  // Acting on what Detect.js found in a card: copy the code, open the link.
+  // Copying the code Detect.js found in a card.
   Process { id: clipProc; running: false }
 
   function runClip(args) {
@@ -1150,7 +1153,7 @@ Item {
   // while, but only if it is still what is on the clipboard.
   property string secretHeld: ""
 
-  function copyCode(text) {
+  function copySecret(text) {
     var value = String(text || "")
     if (!value || value.length > 64) return
     runClip(["wl-copy", "--sensitive", "--", value])
@@ -1178,17 +1181,14 @@ Item {
     }
   }
 
-  function takeOffer(kind, value, key) {
-    if (kind === "code") {
-      var at = rowIndexFor(String(key || ""))
-      var codes = at >= 0 ? String(toasts.get(at).codes) : ""
-      if (at < 0 || codes.split(" ").indexOf(String(value)) < 0) return
-      copyCode(value)
-      // A copied code finishes its card unless it carried several, a moment
-      // after the press so the button's tick is seen.
-      if (codes.indexOf(" ") <= 0) codeTaken.keys = codeTaken.keys.concat([String(key)])
-    }
-    else Security.openExternalUrl(value)
+  function copyCode(value, key) {
+    var at = rowIndexFor(String(key || ""))
+    var codes = at >= 0 ? String(toasts.get(at).codes) : ""
+    if (at < 0 || codes.split(" ").indexOf(String(value)) < 0) return
+    copySecret(value)
+    // A copied code finishes its card unless it carried several, a moment
+    // after the press so the button's tick is seen.
+    if (codes.indexOf(" ") <= 0) codeTaken.keys = codeTaken.keys.concat([String(key)])
   }
 
   Timer {
@@ -1685,7 +1685,7 @@ Item {
               hoverX: service.hoverX
               hoverY: service.hoverY
               onActionInvoked: function(identifier) { service.invokeAction(model.key, identifier) }
-              onOfferTaken: function(kind, value) { service.takeOffer(kind, value, model.key) }
+              onCodeCopied: function(code) { service.copyCode(code, model.key) }
               now: service.nowTick
               expanded: service.expanded
                         && service.openDeck === Layout.groupKeyFor(model)

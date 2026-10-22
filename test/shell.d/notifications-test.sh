@@ -43,14 +43,13 @@ left=$(cd "$state" && find . | sort | tr '\n' ' ')
   fail "the state directory and its files are private"
 pass "the state directory is prepared"
 
-# Older layouts' leftovers go by migration: everything they kept, never through
-# a symlink, and 4.0's Do Not Disturb carried into quiet.json.
-migration=$(grep -l "earlier notification engines left behind" "$ROOT"/migrations/*.sh)
+# 4.0's leftovers go by migration: everything it kept, never through a
+# symlink, and its Do Not Disturb carried into quiet.json.
+migration=$(grep -l "the 4.0 notification engine left behind" "$ROOT"/migrations/*.sh)
 old="$tmp/old"
 state="$old/.local/state/omarchy/notifications"
-mkdir -p "$state/live" "$state/history" "$state/images" "$state/icons" "$state/reply-demo" "$old/.cache/omarchy/notification-icons" "$old/outside"
-touch "$state/live/n1.json" "$state/history/1-n1.json" "$state/1776000000000-7.json" "$state/policy.json" \
-  "$state/.omarchy-notification-x1" "$state/reply-demo/notification.json" "$old/outside/keep.json" "$old/outside/1-2.json"
+mkdir -p "$state/history" "$state/images" "$old/outside"
+touch "$state/history/1-n1.json" "$state/1776000000000-7.json" "$old/outside/keep.json" "$old/outside/1-2.json"
 echo '[{"key":"n2"}]' >"$state/history.json"
 : >"$state/quiet.json"
 echo '{"version":3,"dnd":true}' >"$old/.local/state/omarchy/notifications.json"
@@ -61,12 +60,12 @@ for run in first again; do
 done
 left=$(cd "$state" && find . | sort | tr '\n' ' ')
 [[ $left == ". ./1-linked.json ./history.json ./quiet.json " ]] ||
-  fail "older layouts' leftovers are cleared and nothing else" "$left"
-[[ -f $old/outside/keep.json && -f $old/outside/1-2.json && ! -e $old/.cache/omarchy/notification-icons ]] ||
+  fail "4.0's leftovers are cleared and nothing else" "$left"
+[[ -f $old/outside/keep.json && -f $old/outside/1-2.json ]] ||
   fail "leftover cleanup never reaches through a symlink"
 [[ $(jq -c '[.dnd, .codesBypassQuiet]' "$state/quiet.json") == "[true,true]" && ! -e $old/.local/state/omarchy/notifications.json ]] ||
   fail "4.0's Do Not Disturb carries over" "$(cat "$state/quiet.json")"
-pass "a migration clears older layouts and carries 4.0's Do Not Disturb"
+pass "a migration clears 4.0's leftovers and carries its Do Not Disturb"
 
 # Keybindings and commands call the notifications IPC target by method name.
 # Every name they use must be one the service declares, or the key fires into
