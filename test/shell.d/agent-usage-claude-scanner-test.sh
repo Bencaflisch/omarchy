@@ -229,6 +229,32 @@ sandbox()
 record = claude()
 expect("Claude falls back on history.jsonl without a stats-cache", [record["todayPrompts"], record["todaySessions"]], [2, 2], record)
 
+# A stats-cache shaped as Claude Code writes it gives the record's own
+# shapes: seven local days of tokens from dailyModelTokens (dailyActivity
+# counts messages), and per model the four token kinds alone, each a trusted
+# count.
+sandbox()
+(home() / ".claude").mkdir()
+week = [(datetime.now() - timedelta(days=offset)).date().isoformat() for offset in range(6, -1, -1)]
+write_json(home() / ".claude" / "stats-cache.json", {
+  "totalMessages": 120, "totalSessions": 3,
+  "dailyActivity": [{"date": "2026-01-02", "messageCount": 120, "sessionCount": 3, "toolCallCount": 40}],
+  "dailyModelTokens": [
+    {"date": "2026-01-02", "tokensByModel": {"claude-opus": 999}},
+    {"date": week[4], "tokensByModel": {"claude-opus": 300, "claude-haiku": 20}},
+    {"date": week[6], "tokensByModel": {"claude-opus": 50}},
+  ],
+  "modelUsage": {
+    "claude-opus": {"inputTokens": 10, "outputTokens": -5, "cacheReadInputTokens": 7, "cacheCreationInputTokens": "x", "costUSD": 1.5, "webSearchRequests": 2},
+    "claude-odd": [1, 2],
+  },
+})
+record = claude()
+expect("Claude's stats-cache fallback gives seven days of tokens and trusted model buckets", [record["recentDays"], record["modelUsage"]], [
+  [{"date": day, "messageCount": {4: 320, 6: 50}.get(n, 0)} for n, day in enumerate(week)],
+  {"claude-opus": {"inputTokens": 10, "outputTokens": 0, "cacheReadInputTokens": 7, "cacheCreationInputTokens": 0}},
+], record)
+
 # A stats-cache or history line of the wrong shape costs that field or line,
 # never the record.
 sandbox()

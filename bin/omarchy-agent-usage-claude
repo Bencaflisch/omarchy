@@ -48,6 +48,7 @@ from collectors import (  # noqa: E402
   opencode_db,
   pi_session_roots,
   read_json,
+  recent_dates,
   registered_accounts,
   scan_opencode,
   scan_pi_sessions,
@@ -319,12 +320,23 @@ def stats_cache_fallback(claude_dir: Path) -> dict[str, Any] | None:
     value = data.get(key)
     return [entry for entry in value if isinstance(entry, dict)] if isinstance(value, list) else []
 
-  today = today_string()
-  today_tokens: dict[str, int] = {}
+  # Tokens by model per day, the first entry for a day standing, as the
+  # record's recentDays and today's tokens read them.
+  tokens_by_day: dict[str, dict[str, int]] = {}
   for entry in entries("dailyModelTokens"):
-    if entry.get("date") == today:
-      today_tokens = {str(model): number(tokens) for model, tokens in obj(entry.get("tokensByModel")).items() if number(tokens) > 0}
-      break
+    date = entry.get("date")
+    if isinstance(date, str) and date not in tokens_by_day:
+      tokens_by_day[date] = {str(model): number(tokens) for model, tokens in obj(entry.get("tokensByModel")).items() if number(tokens) > 0}
+  today_tokens = tokens_by_day.get(today_string(), {})
+  recent_days = [{"date": date, "messageCount": sum(tokens_by_day.get(date, {}).values())} for date in recent_dates()]
+
+  # The four token kinds of each model, each a count number() trusts; the
+  # file's other fields (costUSD, webSearchRequests) aren't the record's.
+  model_usage = {
+    str(model): {field: number(bucket.get(field)) for field in empty_bucket()}
+    for model, bucket in obj(data.get("modelUsage")).items()
+    if isinstance(bucket, dict)
+  }
 
   daily_activity = entries("dailyActivity")
   active_dates = sorted({str(day.get("date")) for day in daily_activity if number(day.get("messageCount")) > 0 and day.get("date")})
@@ -335,8 +347,8 @@ def stats_cache_fallback(claude_dir: Path) -> dict[str, Any] | None:
     "todaySessions": today_sessions,
     "todayTotalTokens": sum(today_tokens.values()),
     "todayTokensByModel": today_tokens,
-    "recentDays": daily_activity[-7:],
-    "modelUsage": obj(data.get("modelUsage")),
+    "recentDays": recent_days,
+    "modelUsage": model_usage,
     "totalPrompts": number(data.get("totalMessages")),
     "totalSessions": number(data.get("totalSessions")),
     "activeDays": len(active_dates),
