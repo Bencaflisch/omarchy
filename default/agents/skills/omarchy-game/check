@@ -13,7 +13,7 @@ happened. Screenshots land beside the game as check-title.png, check-play.png
 and check-over.png: look at all three before calling the game done.
 """
 
-import base64, json, os, queue, shutil, subprocess, sys, tempfile, threading, time
+import base64, json, os, pathlib, queue, shutil, subprocess, sys, tempfile, threading, time
 
 KEYS = {
   "Space": (" ", 32), "Enter": ("Enter", 13), "Escape": ("Escape", 27), "Tab": ("Tab", 9), "Backspace": ("Backspace", 8),
@@ -303,7 +303,7 @@ def main():
   profile = tempfile.mkdtemp(prefix="omarchy-game-check-")
   browser = Browser(profile)
   try:
-    page = Page(browser, "file://" + path)
+    page = Page(browser, pathlib.Path(path).as_uri() + "#seed=1")
     run(page, folder, problems, notes)
   except Stop:
     pass

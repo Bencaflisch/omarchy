@@ -90,4 +90,5 @@ The template pins three.js 0.180. Much of what you remember is for older version
 - Make geometries and materials once in `build()` and share them. Removing a mesh from the scene is enough at the end of a round; never create a material every frame.
 - Hundreds of the same thing (bullets, stars, particles) go in one `THREE.InstancedMesh` or `THREE.Points`.
 - The game camera is placed and aimed by your code. Not `OrbitControls`.
+- Use the template's `random()` for anything random, never `Math.random()`: `check` seeds it, so its round plays the same every time and a pass or failure means something.
 - `requestAnimationFrame` and `setAnimationLoop` are already running in the template. Don't start another loop, and don't add event listeners in `reset()`.
