@@ -55,10 +55,19 @@ LOCK_WAIT_SECONDS = 15
 LOCK_STALE_SECONDS = 10
 
 
+# The legacy kimi-cli's share directory: KIMI_SHARE_DIR, else ~/.kimi
+# (kimi_cli/share.py), a relative one read from here as Kimi Code's own
+# migration reads it.
+def legacy_home() -> Path:
+  if share := os.environ.get("KIMI_SHARE_DIR", "").strip():
+    return Path(os.path.abspath(share))
+  return Path.home() / ".kimi"
+
+
 def credentials_dir() -> Path:
   if home := os.environ.get("KIMI_CODE_HOME"):
     return Path(home).expanduser() / "credentials"
-  candidates = [Path.home() / ".kimi-code" / "credentials", Path.home() / ".kimi" / "credentials"]
+  candidates = [Path.home() / ".kimi-code" / "credentials", legacy_home() / "credentials"]
   for candidate in candidates:
     if (candidate / "kimi-code.json").is_file():
       return candidate
@@ -180,7 +189,7 @@ def request_refresh(refresh_token: str) -> dict[str, Any]:
 @contextmanager
 def refresh_lock():
   deadline = time.monotonic() + LOCK_WAIT_SECONDS
-  legacy = CREDENTIALS_DIR == Path.home() / ".kimi" / "credentials" and not os.environ.get("KIMI_CODE_HOME")
+  legacy = CREDENTIALS_DIR == legacy_home() / "credentials" and not os.environ.get("KIMI_CODE_HOME")
   if legacy:
     with (CREDENTIALS_DIR / "kimi-code.lock").open("a") as handle:
       while True:
@@ -460,7 +469,7 @@ def in_use() -> bool:
     return True
   if home := os.environ.get("KIMI_CODE_HOME"):
     return Path(home).expanduser().is_dir()
-  return (Path.home() / ".kimi-code").is_dir() or (Path.home() / ".kimi").is_dir()
+  return (Path.home() / ".kimi-code").is_dir() or legacy_home().is_dir()
 
 
 def failure_record(error: Exception, cache: LimitsCache | None) -> dict[str, Any]:

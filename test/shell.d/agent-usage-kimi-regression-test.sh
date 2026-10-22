@@ -110,6 +110,23 @@ def stores(root):
   expect("the kimi-code store wins over the legacy one", load_collector("kimi").credentials_dir(), home() / ".kimi-code" / "credentials")
 
 
+# kimi-cli keeps its sign-in under KIMI_SHARE_DIR when that is set
+# (kimi_cli/share.py), refreshed under the file lock beside it.
+def share_dir(root):
+  del os.environ["KIMI_CODE_HOME"]
+  share = root / "share dir"
+  os.environ["KIMI_SHARE_DIR"] = str(share)
+  try:
+    write_json(share / "credentials" / "kimi-code.json", {"access_token": "AT_old", "refresh_token": "RT_old", "expires_at": time.time() - 10})
+    expect("the legacy kimi-cli store follows KIMI_SHARE_DIR", load_collector("kimi").credentials_dir(), share / "credentials")
+    scanner = load_collector("kimi")
+    token = scanner.api_key()
+    expect("a KIMI_SHARE_DIR sign-in is refreshed under its own file lock",
+           [token, (share / "credentials" / "kimi-code.lock").is_file(), (share / "oauth").exists()], ["AT_new", True, False])
+  finally:
+    del os.environ["KIMI_SHARE_DIR"]
+
+
 def home_isolation(root):
   default = home() / ".kimi-code" / "credentials"
   default.mkdir(parents=True)
@@ -418,7 +435,7 @@ def switched_cache(root):
   expect("an answer is never kept under a token it wasn't asked with", record()["limits"], [])
 
 
-cases = {"contract": contract, "env_key": env_key, "stores": stores, "home": home_isolation, "static": static_token,
+cases = {"contract": contract, "env_key": env_key, "stores": stores, "share_dir": share_dir, "home": home_isolation, "static": static_token,
          "refresh": refresh, "cli_lock": cli_lock, "stale_lock": stale_lock,"lock_failure": lock_failure, "heartbeat": heartbeat,
          "private_write": private_write, "concurrent_signin": concurrent_signin, "concurrent_logout": concurrent_logout,
          "invalid_grant": invalid_grant, "refused_refresh": refused_refresh, "key_help": key_help, "refused": refused,
