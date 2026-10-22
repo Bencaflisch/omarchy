@@ -56,6 +56,7 @@ from typing import Any
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.join(os.environ["OMARCHY_PATH"], "shell", "plugins", "agents"))
 from collectors import (  # noqa: E402
+  NUMBER_CEILING,
   HttpError,
   LimitsCache,
   Stats,
@@ -118,11 +119,14 @@ def next_month_start(now: dt.datetime) -> dt.datetime:
 
 
 def positive_float(value: Any) -> float:
+  """A cost from disk, 0.0 when it can't be trusted: like number(), an
+  infinite or huge figure is a damaged field, not spend that fills the
+  allowance on its own."""
   try:
     n = float(value or 0)
-  except (TypeError, ValueError):
+  except (TypeError, ValueError, OverflowError):
     return 0.0
-  return n if n > 0 else 0.0
+  return n if math.isfinite(n) and 0 < n < NUMBER_CEILING else 0.0
 
 
 def credits_from_nano(nano: Any) -> float:
@@ -157,29 +161,35 @@ def parse_event_time(value: Any) -> dt.datetime | None:
   """Parse a store or transcript timestamp into timezone-aware local time.
 
   Accepts ISO-8601 (with or without Z) and epoch seconds or milliseconds.
-  Everything else collapses to None; the caller falls back to the local date.
+  As in local_day(), zero, a huge or negative number, NaN, a boolean, a date
+  outside 2000-2100, and anything else collapse to None; the caller falls
+  back to the file's time or the local date.
   """
-  if value is None:
+  if isinstance(value, str):
+    value = value.strip()
+    if value.isdigit():
+      # ASCII digits only, and few enough to be a time: isdigit() also passes
+      # other scripts' digits and int() refuses strings past 4300 digits.
+      value = int(value) if value.isascii() and len(value) <= 20 else None
+  if value is None or value == "" or isinstance(value, bool):
     return None
   if isinstance(value, (int, float)):
+    if number(value) <= 0:
+      return None
+    seconds = value / 1000 if value > 10_000_000_000 else value
     try:
-      seconds = (
-        float(value) / 1000.0 if float(value) > 10_000_000_000 else float(value)
-      )
-      return dt.datetime.fromtimestamp(seconds, dt.timezone.utc).astimezone()
+      parsed = dt.datetime.fromtimestamp(seconds, dt.timezone.utc)
     except (OverflowError, OSError, ValueError):
       return None
-  raw = str(value).strip()
-  if not raw:
+  else:
+    try:
+      parsed = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+      return None
+    if parsed.tzinfo is None:
+      parsed = parsed.replace(tzinfo=dt.timezone.utc)
+  if not 2000 <= parsed.year <= 2100:
     return None
-  if raw.isdigit():
-    return parse_event_time(int(raw))
-  try:
-    parsed = dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
-  except ValueError:
-    return None
-  if parsed.tzinfo is None:
-    parsed = parsed.replace(tzinfo=dt.timezone.utc)
   return parsed.astimezone()
 
 

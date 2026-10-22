@@ -115,6 +115,14 @@ configured(monthlyCredits=3000, remote=False)
 record = copilot()
 expect("the estimate follows the monthlyCredits budget", [record["tierLabel"], record["limits"][0]["percent"]], ["", 0.0005], record)
 
+# An infinite or huge cost on one damaged row is no spend at all, not an
+# allowance filled on its own; the row's request still counts.
+sandbox()
+configured(monthlyCredits=1500, remote=False)
+store([("sess-inf", NOW, "gpt-5.2", "1e400", 10, 1, 0, 0, 0), ("sess-huge", NOW, "gpt-5.2", "1e300", 10, 1, 0, 0, 0)])
+record = copilot()
+expect("a non-finite or huge cost is skipped", [record["todayPrompts"], record["limits"][0]["percent"]], [2, 0.0], record)
+
 # The store is opened by its URI, so a home whose path holds URI syntax
 # (? # %) still reads.
 sandbox()
@@ -218,6 +226,16 @@ expect("a midnight-spanning segment is booked on both days",
        [record["recentDays"][-2]["messageCount"], record["recentDays"][-1]["messageCount"], record["todayTotalTokens"]], [906, 494, 494], record)
 expect("a split segment's totals stay whole", record["modelUsage"]["claude-sonnet-4.6"],
        {"inputTokens": 600, "outputTokens": 100, "cacheReadInputTokens": 600, "cacheCreationInputTokens": 100}, record)
+
+# A transcript time that can't be trusted (digits int() refuses, zero,
+# negative, boolean, or outside 2000-2100) falls back to the file's time,
+# never failing the record or counting on a day that never happened.
+sandbox()
+configured(remote=False)
+damaged = ["9" * 5000, "\u00b2", 0, -1, True, "1970-01-01T00:00:00Z", "2200-01-01T00:00:00Z"]
+transcript("sess-damaged", [("user.message", {"content": "prompt"}, at) for at in damaged])
+record = copilot()
+expect("an untrusted transcript time counts on the file's day", [record["totalPrompts"], record["activeDates"]], [len(damaged), [TODAY]], record)
 
 # --------------------------------------------------------------- contract
 
@@ -375,6 +393,14 @@ expect("an incomplete allowance keeps the last one, stale",
 record = copilot(routes=snapshot_without("entitlement", "credits_used", unlimited=True))
 expect("an unlimited allowance needs no amounts", meter(record),
        {"limits": [], "stale": False, "status": "", "retry": False, "tier": "Pro"}, record)
+
+# A reset date that can't be read is no reset date, both live and once kept.
+damaged_reset = quota("individual", 300, 30)
+damaged_reset["quota_reset_date_utc"] = "\u00b2"
+live = meter(copilot(routes={QUOTA_URL: damaged_reset}))
+kept = meter(copilot(routes={QUOTA_URL: damaged_reset}, mode=500))
+expect("an unreadable reset date reads as none, live and kept",
+       [live["limits"], kept["limits"], kept["stale"]], [[["Monthly allowance", 0.1, False]], [["Monthly allowance", 0.1, False]], True], [live, kept])
 
 for name in ("COPILOT_QUOTA_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"):
   del os.environ[name]
