@@ -198,6 +198,12 @@ def harness_sources():
   return [path.resolve() for path in state_paths()]
 
 
+# What harness_rows() decided owners under, for cached_scan(match=...):
+# nothing beyond the databases, which record every route themselves.
+def harness_match():
+  return {}
+
+
 def scan_all(paths, owner):
   """Every state.db's rows that `owner` bills, and the paths that couldn't
   be read."""

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import math
 import os
@@ -591,6 +592,14 @@ def harness_sources() -> list[Path]:
   return [code_home()]
 
 
+def harness_match() -> dict[str, str]:
+  """What harness_rows() decided owners under, for cached_scan(match=...):
+  config.toml's routes, so a scan made before a route changed never stands in
+  for one after it, in this collector or in local."""
+  routes = json.dumps(sorted(code_routes().items()))
+  return {"kimiCodeRoutes": hashlib.sha256(routes.encode("utf-8", "surrogatepass")).hexdigest()[:16]}
+
+
 def harness_rows(owner: str) -> tuple[list[UsageRow], bool]:
   """Kimi Code's usage that `owner` bills, each request counted once though
   forks copy them, with each typed prompt as a row of its own billed with the
@@ -709,9 +718,9 @@ def main() -> int:
   # The digest covers Kimi Code's home, so another home never reuses this
   # one's numbers, pi's and omp's session roots and opencode's database, and
   # Claude Code's and MiniMax Code's sessions, whose owner depends on where
-  # they are sent.
+  # they are sent, as Kimi Code's does on its routes.
   sources = [code_home(), *pi_session_roots(), opencode_db(), *routed_sources()]
-  stats = cached_scan(AGENT_ID, sources, scan_max_age(args.force, args.limits_only), scan, match=routed_match())
+  stats = cached_scan(AGENT_ID, sources, scan_max_age(args.force, args.limits_only), scan, match={**routed_match(), **harness_match()})
   if not in_use() and not stats.get("modelUsage") and not stats.get("totalPrompts"):
     emit(base_record())
     return 0

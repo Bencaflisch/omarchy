@@ -218,6 +218,20 @@ with contextlib.redirect_stderr(io.StringIO()):
 expect("Vibe skips a Unified Harness session it cannot read without caching the scan",
        [record["todayTotalTokens"], bool(scan_cache_files("vibe"))], [15, False], record)
 
+# A Unified Harness session goes where config.toml routes its alias now, so a
+# route change reaches the cached scan at once, even on the panel's
+# --limits-only refresh that otherwise reuses a scan for minutes.
+sandbox()
+MISTRAL_TOML = '[[providers]]\nname = "mistral"\napi_base = "{}"\napi_key_env_var = "MISTRAL_API_KEY"\nbackend = "mistral"\n\n[[models]]\nname = "devstral-2"\nprovider = "mistral"\nalias = "devstral-mock"\n'
+(home() / ".vibe").mkdir(parents=True, exist_ok=True)
+(home() / ".vibe" / "config.toml").write_text(MISTRAL_TOML.format("https://api.mistral.ai/v1"))
+write_unified("ses_routed", usage(67000, 896), entries=[message("u1", "user", "turn_start")], alias="devstral-mock")
+before = vibe("--limits-only")
+(home() / ".vibe" / "config.toml").write_text(MISTRAL_TOML.format("http://127.0.0.1:18083/v1"))
+after = vibe("--limits-only")
+expect("a Vibe route change reaches Vibe's cached scan at once",
+       [before["todayTokensByModel"], after["todayTokensByModel"], after["todayPrompts"]], [{"devstral-mock": 67896}, {}, 0], after)
+
 # ------------------------------------------------------- model resolution
 
 sandbox()

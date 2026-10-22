@@ -18,6 +18,7 @@ the JSON this prints.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -464,6 +465,16 @@ def harness_sources():
   return scan_sources()
 
 
+def harness_match():
+  """What harness_rows() decided owners under, for cached_scan(match=...):
+  the models and providers in config.toml, which say where a Unified Harness
+  session went, so a scan made before a route changed never stands in for
+  one after it, in this collector or in local."""
+  config = vibe_config()
+  routes = json.dumps([config.get(key) for key in ("active_model", "models", "providers")], sort_keys=True, default=str)
+  return {"vibeRoutes": hashlib.sha256(routes.encode("utf-8", "surrogatepass")).hexdigest()[:16]}
+
+
 def harness_rows(owner, index_file=False):
   """Vibe sessions that `owner` bills, from the Unified Harness store and the
   session folders older releases wrote, and whether every session was read,
@@ -652,7 +663,7 @@ def cached_local_stats(max_age):
   except Exception as exc:
     warn(f"session index unavailable ({exc})")
     index_file = None
-  return cached_scan(AGENT_ID, sources, max_age, lambda: run_scans(index_file))
+  return cached_scan(AGENT_ID, sources, max_age, lambda: run_scans(index_file), match=harness_match())
 
 
 def main():

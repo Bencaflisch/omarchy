@@ -289,6 +289,27 @@ expect("Kimi counts pi and opencode on the Kimi Code plan ids and Moonshot's pay
        [record["todayTokensByModel"], record["ready"], record["usageStatusText"]],
        [{"k3": 300, "kimi-k2.6": 1998, "kimi-for-coding": 200, "kimi-for-coding-highspeed": 20}, True, "Waiting for auth"], record)
 
+# A route change reaches the cached scan at once, even on the panel's
+# --limits-only refresh that otherwise reuses a scan for minutes: the request
+# config.toml didn't name was Kimi's, and once it names a server you run, it
+# is not. Shaped as Kimi Code 2.3.0 wrote a tool loop on that alias.
+sandbox()
+(home() / ".kimi-code").mkdir()
+(home() / ".kimi-code" / "config.toml").write_text('default_model = "x"\n')
+wire("session_tool", [prompt("TOOLLOOP read note.txt", "msg_t1", NOW_MS), usage(NOW_MS + 10, 24702, 120, 0, model="mock2/kimi-tool")])
+before = kimi("--limits-only")
+(home() / ".kimi-code" / "config.toml").write_text("""[providers.mock2]
+type = "kimi"
+base_url = "http://127.0.0.1:18491/v1"
+
+[models."mock2/kimi-tool"]
+provider = "mock2"
+model = "kimi-tool"
+""")
+after = kimi("--limits-only")
+expect("a Kimi Code route change reaches Kimi's cached scan at once",
+       [before["todayTokensByModel"], after["todayTokensByModel"], after["todayPrompts"]], [{"mock2/kimi-tool": 24822}, {}, 0], after)
+
 # ---------------------------------------------------------------- contract
 
 sandbox()
