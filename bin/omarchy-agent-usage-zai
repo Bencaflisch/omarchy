@@ -63,6 +63,9 @@ PLATFORMS = {
   "zhipu": "https://open.bigmodel.cn",
 }
 QUOTA_PATH = "/api/monitor/usage/quota/limit"
+# Authentication failed (1000), no credential sent (1001), token expired
+# (1003), two-factor authentication needed (1005).
+AUTH_ERROR_CODES = {"1000", "1001", "1003", "1005"}
 
 # A key with no Coding Plan behind it (a pay-as-you-go account) gets the same
 # answer every time, so it is asked again hourly rather than on every run;
@@ -225,6 +228,11 @@ def fetch_limits(api_key: str, platform: str) -> dict[str, Any]:
   data = body.get("data") if isinstance(body, dict) else None
   if not isinstance(data, dict) or not isinstance(data.get("limits"), list):
     msg = str(body.get("msg") or "").strip()[:200] if isinstance(body, dict) else ""
+    code = str(body.get("code") or "").strip() if isinstance(body, dict) else ""
+    # Z.ai names a refused credential in the body under HTTP 200, with the
+    # authentication codes of docs.z.ai/api-reference/api-code.
+    if code in AUTH_ERROR_CODES:
+      return {"ok": False, "keyRejected": True, "detail": AUTH_HELP_BAD_KEY}
     if "coding plan" in msg.lower():
       return {"ok": False, "noPlan": True, "detail": ""}
     return {"ok": False, "detail": (msg or "Z.ai's monitor endpoint returned no limits") + ". Local stats are still shown."}

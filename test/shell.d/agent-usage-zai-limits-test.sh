@@ -50,6 +50,14 @@ record, _ = zai(mode=401)
 check("Z.ai collector blames the key only when the key is rejected",
       record["usageStatusText"] == "Sign-in expired" and "rejected the saved API key" in record["authHelpText"] and len(record["limits"]) == 2, record)
 
+# Z.ai names a refused credential in the body under HTTP 200, by its
+# documented authentication codes; this is its live answer to no key at all.
+for code in (1001, "1000"):
+  record, _ = zai({"code": code, "msg": "Authentication parameter not received in Header, unable to authenticate", "success": False})
+  expect(f"Z.ai collector reads a body-level authentication failure ({code}) as a refused key",
+         [record["usageStatusText"], "rejected the saved API key" in record["authHelpText"], len(record["limits"])],
+         ["Sign-in expired", True, 2], record)
+
 # Another key never shows this one's numbers.
 keyed("other-key")
 record, _ = zai(mode="down")
