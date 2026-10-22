@@ -144,7 +144,8 @@ def chat_files():
   for base in runtime_dirs():
     try:
       found = sorted((base / "projects").glob("*/chats/*.jsonl"))
-    except OSError:
+    except (OSError, ValueError):
+      # ValueError: a configured directory no path can name (a NUL in it).
       continue
     # A ledger sits beside its transcript and repeats nothing billable.
     files.extend(path for path in found if not path.name.endswith(".ledger.jsonl") and path not in files)
@@ -176,7 +177,8 @@ def parse_line(raw, session):
     return None
   try:
     record = json.loads(raw)
-  except ValueError:
+  except (ValueError, RecursionError):
+    # RecursionError: a line nested deeper than the parser will go.
     return None
   if not isinstance(record, dict):
     return None

@@ -103,11 +103,15 @@ transcript(chats() / "s.jsonl", [
   response("bad3", "s", NOW, "m", "openai", "100", True, float("nan"), -5, "a"),
   response("bad4", "s", NOW, "m", "openai", 1e30, 0, 0, 0, "b"),
   response("ok1", "s", NOW, "m", "openai", 10, 2, 0, 0, "c"),
+  prompt("bad5", "s", "\u00b2"),
+  # A line nested deeper than the parser will go.
+  "[" * 100000 + '"user"',
 ])
 with (chats() / "s.jsonl").open("a") as torn:
   torn.write('{"uuid":"z","type":"user","timestamp":')
 record = qwen()
-expect("Qwen skips bad times, bad token fields, and a torn last line", [record["todayPrompts"], record["todayTotalTokens"]], [0, 12], record)
+expect("Qwen skips bad times, bad token fields, a line nested too deep, and a torn last line",
+       [record["todayPrompts"], record["todayTotalTokens"]], [0, 12], record)
 
 # A record with no time is dated once, by the transcript's time as it is
 # read, so it isn't today's again on every day after.
@@ -135,6 +139,11 @@ write_json(home() / ".qwen" / "settings.json", {"advanced": {"runtimeOutputDir":
 transcript(home() / "out" / "projects" / "p" / "chats" / "s.jsonl", [response("d", "s", NOW, "m", "openai", 1000, 0, 0, 0, "rd")])
 record = qwen()
 expect("Qwen reads the runtimeOutputDir from settings.json", record["todayTotalTokens"], 1100, record)
+
+# A runtimeOutputDir no path can name is no place to look.
+write_json(home() / ".qwen" / "settings.json", {"advanced": {"runtimeOutputDir": "/\u0000x"}})
+record = qwen()
+expect("Qwen ignores a runtimeOutputDir holding a NUL", record["todayTotalTokens"], 100, record)
 
 # ------------------------------------------------- Qwen plans in pi and opencode
 
