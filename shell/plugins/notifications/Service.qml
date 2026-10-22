@@ -1217,7 +1217,6 @@ Item {
   property bool liveLoaded: false
   property bool historyLoaded: false
   property bool quietLoaded: false
-  property bool legacyQuietWanted: false
   // Persisted rows: on screen oldest first, history newest first.
   property var liveEntries: []
   property var historyEntries: []
@@ -1307,12 +1306,9 @@ Item {
     if (unsaved.history || Store.serialise(historyEntries) !== String(text)) saveSoon("history")
   }
 
-  // An empty quiet.json has never been written: the previous engine's Do Not
-  // Disturb holds until it is.
   function loadQuiet(text) {
-    if (quietLoaded || legacyQuietWanted) return
-    if (String(text || "").trim()) applyQuiet(Store.parseQuiet(text))
-    else legacyQuietWanted = true
+    if (quietLoaded) return
+    applyQuiet(Store.parseQuiet(text))
   }
 
   function applyQuiet(read) {
@@ -1357,33 +1353,20 @@ Item {
     onLoadFailed: service.loadQuiet("")
   }
 
-  FileView {
-    id: legacyQuietFile
-    path: service.legacyQuietWanted ? Quickshell.env("HOME") + "/.local/state/omarchy/notifications.json" : ""
-    printErrors: false
-    onLoaded: service.applyQuiet({ snoozes: {}, dnd: Store.legacyDnd(text()), silencedSince: 0, codesBypassQuiet: null })
-    onLoadFailed: service.applyQuiet(null)
-  }
-
-  // Once at startup: the private directory and its files, and the leftovers
-  // of older layouts, which hold old message content (per-file rows, the
-  // previous engine's popups and images, fetched site icons and their
-  // published copies, the reply demo's fixture). rm and find never follow a
-  // symlink they are given.
+  // Once at startup: the private directory and its files. Older layouts'
+  // leftovers are removed by a migration.
   Process {
     id: storePrepare
     command: ["bash", "-c",
       "umask 077\n" +
       "dir=$1\n" +
       "mkdir -p -- \"$dir\" && chmod 700 -- \"$dir\" || exit 1\n" +
-      "rm -rf -- \"$dir/live\" \"$dir/history\" \"$dir/images\" \"$dir/icons\" \"$dir/reply-demo\" \"$dir/policy.json\" \"$2\"\n" +
-      "find \"$dir/\" -maxdepth 1 -type f \\( -regex '.*/[0-9]+-[^/]+\\.json' -o -name '.omarchy-notification-*' \\) -delete\n" +
       "for name in live.json history.json quiet.json; do\n" +
       "  file=$dir/$name\n" +
       "  if [[ -L $file ]]; then rm -f -- \"$file\"; fi\n" +
       "  if [[ -f $file ]]; then chmod 600 -- \"$file\"; elif [[ ! -e $file ]]; then : >\"$file\"; fi\n" +
       "done\n",
-      "omarchy-notifications-state", service.stateDir, Quickshell.env("HOME") + "/.cache/omarchy/notification-icons"]
+      "omarchy-notifications-state", service.stateDir]
     onExited: function(code) { service.storeReady = code === 0 }
   }
 

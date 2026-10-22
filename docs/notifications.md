@@ -42,13 +42,13 @@ The shell keeps its state in `~/.local/state/omarchy/notifications/` (0700), thr
 
 - `live.json`: the rows on screen, oldest first, put back after a shell restart with a 20s grace (critical ones still wait). At most 100.
 - `history.json`: closed rows, newest first, each with `closed_ts` and `closed_reason`. Capped at 100 entries and `historyHours` (default 24; `0` keeps none). Rows whose reason is `snoozed` or `silenced` were held back by quiet and are what the panel lists under each source.
-- `quiet.json`: `{ snoozes, dnd, silencedSince, codesBypassQuiet }`. While it is still empty, Do Not Disturb is read from the previous engine's `~/.local/state/omarchy/notifications.json`.
+- `quiet.json`: `{ snoozes, dnd, silencedSince, codesBypassQuiet }`.
 
 `Store.persistable` decides what a row keeps: its scalar fields, never images, detected links, or derived text. Text with a verification code is stored only as the redacted placeholder, the click command and glyph included. A live row is cut to 16K characters and a history row, shown as a one-line preview, to 4K. Rows keep `execArgv` and `glyph`, so a card restored after a shell restart clicks through like the live one. Rows are re-checked the same way when read back; a file that is not an array of keyed objects, or is oversized, reads as empty, and a file that does not read back exactly as it would be written is rewritten.
 
 Writes go through one short timer, started (not restarted) by a change, so a burst of arrivals writes each file once and a flood writes at most four times a second; no file is written before it has been read. `FileView` writes atomically, which keeps the mode of the file it replaces, so the files are created at 0600 before anything writes them.
 
-At startup one process makes the directory and those files, and removes older layouts' leftovers, which hold old message content: the per-file `live/` and `history/` directories and `policy.json` of the Python store, the previous engine's `<ms>-<id>.json` popups and `images/`, fetched site icons in `icons/`, `~/.cache/omarchy/notification-icons/`, and the `reply-demo/` fixture of an earlier demo. A symlink in place of a state file is replaced, and nothing is followed through a symlink. Persistence starts no other process.
+At startup one process makes the directory and those files; a symlink in place of a state file is replaced. Persistence starts no other process. Older layouts' leftovers, which hold old message content, are removed once by migration `1792648436`: 4.0's `<ms>-<id>.json` popups, `history/` and `images/`, the pre-release layouts' `live/`, `policy.json`, fetched site icons and demo fixture, and `~/.cache/omarchy/notification-icons/`. It carries 4.0's Do Not Disturb from `~/.local/state/omarchy/notifications.json` into `quiet.json` and removes that file.
 
 ## Icons
 

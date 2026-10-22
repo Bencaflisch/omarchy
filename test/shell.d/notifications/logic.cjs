@@ -910,8 +910,6 @@ const eq = (actual, expected, message) => assert.deepEqual(plain(actual), plain(
                                '"dnd":"yes","silencedSince":"later","codesBypassQuiet":"no"}')
   eq(odd, { snoozes: { c: { until: 5, label: '7', since: 0 } }, dnd: false, silencedSince: 0, codesBypassQuiet: null })
   assert.ok(!('until' in odd.snoozes), 'a __proto__ key cannot replace the prototype')
-  assert.equal(Store.legacyDnd('{"version":3,"dnd":true}'), true)
-  for (const text of ['', '{"dnd":"true"}', '[true]', 'garbage']) assert.equal(Store.legacyDnd(text), false, text)
 }
 
 { // The service: shown rows are saved live, closed ones move to history, quiet
