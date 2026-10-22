@@ -717,7 +717,7 @@ write_session(harness / "h.jsonl", [reply("demo", 300, "h1"), reply("demo", 100,
 own_rows, own_complete = collectors.scan_pi_sessions(r'"provider"\s*:\s*"demo"', lambda provider, model, entry: True, roots=[harness])
 check("a collector can read a pi-format tree of its own instead", own_complete and sorted(row.input_tokens for row in own_rows) == [100, 300])
 (work / "alias").symlink_to(harness)
-both_rows, _ = collectors.scan_pi_sessions(r'"provider"\s*:\s*"demo"', lambda provider, model, entry: True, roots=[*collectors.pi_session_roots(), harness, work / "alias", work / "missing"])
+both_rows, _ = collectors.scan_pi_sessions(r'"provider"\s*:\s*"demo"', lambda provider, model, entry: provider == "demo", roots=[*collectors.pi_session_roots(), harness, work / "alias", work / "missing"])
 check(
   "roots read beside pi's count a message copied between them once, an alias once, and a missing one as nothing",
   sorted(row.input_tokens + row.output_tokens + row.cache_read + row.cache_write for row in both_rows) == [1, 1, 10, 16, 40, 100, 300, 1000],
@@ -913,6 +913,40 @@ check(
   "an opencode prompt books on its first step, never on a later one, a compaction, or a subagent's",
   complete and sorted((row.input_tokens, row.prompts) for row in rows) == [(11, 1), (12, 0), (13, 0), (14, 1), (300, 0), (21401, 1), (21501, 0), (23153, 0)],
   json.dumps([row._asdict() for row in rows]),
+)
+
+# One prompt answered by steps from two providers, as a tool loop that
+# switches models writes it, books once: on the first step, under the
+# collector that takes it, in both stores.
+switch_db = work / "switch.db"
+conn = sqlite3.connect(switch_db)
+conn.execute("CREATE TABLE session (id text PRIMARY KEY, parent_id text, time_created integer NOT NULL)")
+conn.execute("CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)")
+conn.execute("CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL,"
+             " seq integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)")
+conn.execute("INSERT INTO session VALUES ('ses_switch', NULL, ?)", (fork_ms,))
+conn.executemany("INSERT INTO message VALUES (?, ?, ?, ?, ?)", [
+  ("msg_su", "ses_switch", now_ms, now_ms, json.dumps({"role": "user", "time": {"created": now_ms}, "agent": "build", "model": {"providerID": "anthropic", "modelID": "claude-sonnet-4-5"}})),
+  ("msg_sb", "ses_switch", now_ms + 2, now_ms + 2, json.dumps(json.loads(step("msg_su", 600, now_ms + 2, finish="stop")) | {"providerID": "openrouter", "modelID": "z-ai/glm-4.6"})),
+  ("msg_sa", "ses_switch", now_ms + 1, now_ms + 1, json.dumps(json.loads(step("msg_su", 500, now_ms + 1, finish="tool-calls")) | {"providerID": "anthropic", "modelID": "claude-sonnet-4-5"})),
+])
+conn.executemany("INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?, ?)", [
+  ("v2_su", "ses_switch_v2", "user", 1, now_ms, now_ms, json.dumps({"text": "hi", "time": {"created": now_ms}})),
+  ("v2_sa", "ses_switch_v2", "assistant", 2, now_ms, now_ms, v2("anthropic", {"input": 700})),
+  ("v2_sb", "ses_switch_v2", "assistant", 3, now_ms, now_ms, v2("openrouter", {"input": 800})),
+])
+conn.commit()
+conn.close()
+os.environ["OPENCODE_DB"] = str(switch_db)
+by_provider = {
+  provider: sorted((row.input_tokens, row.prompts) for row in collectors.scan_opencode([provider], lambda p, m, e, provider=provider: p == provider)[0])
+  for provider in ("anthropic", "openrouter")
+}
+os.environ.pop("OPENCODE_DB")
+check(
+  "a prompt answered by two providers' steps books once, on the first step's collector",
+  by_provider == {"anthropic": [(500, 1), (700, 1)], "openrouter": [(600, 0), (800, 0)]},
+  json.dumps(by_provider),
 )
 
 # ------------------------------------------------------------- endpoints
