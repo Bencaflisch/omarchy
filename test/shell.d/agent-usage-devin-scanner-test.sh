@@ -160,7 +160,14 @@ with contextlib.redirect_stderr(io.StringIO()):
   record = devin()
 expect("Devin survives an unreadable session database and doesn't cache that scan",
        [record["id"], record["todayTotalTokens"], scan_cache_files("devin")], ["devin", 0, []], record)
+expect("an unreadable session database says Devin is unavailable rather than hiding it",
+       [record["ready"], record["usageStatusText"], str(cli_dir() / "sessions.db") in record["authHelpText"]], [True, "Devin unavailable", True], record)
 (cli_dir() / "sessions.db").write_bytes(good)
+(cli_dir() / "sessions.db").chmod(0)
+with contextlib.redirect_stderr(io.StringIO()):
+  record = devin()
+(cli_dir() / "sessions.db").chmod(0o644)
+expect("a session database it may not open says Devin is unavailable", [record["ready"], record["usageStatusText"]], [True, "Devin unavailable"], record)
 
 # ------------------------------------------------------- the older layout
 
