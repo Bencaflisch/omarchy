@@ -162,6 +162,20 @@ expect("Hermes reads a custom root's default profile beside its active profile",
        [record["modelUsage"].get("gpt-6-astra", {}).get("inputTokens"), record["modelUsage"].get("gpt-6-sol", {}).get("inputTokens"), record["totalSessions"]],
        [100, 1000, 2], record)
 
+# A custom root beside a used ~/.hermes: ~/.hermes is read whole, its own
+# state.db (its default profile) with its named profiles, not the profiles
+# alone.
+sandbox()
+state_db(home() / "custom-hermes" / "profiles" / "work" / "state.db", ("gpt-6-astra", 100))
+state_db(home() / ".hermes" / "state.db", ("gpt-6-sol", 1000))
+state_db(home() / ".hermes" / "profiles" / "side" / "state.db", ("gpt-6-luna", 10000))
+os.environ["HERMES_HOME"] = str(home() / "custom-hermes")
+record = hermes()
+del os.environ["HERMES_HOME"]
+expect("Hermes reads ~/.hermes whole beside a custom root",
+       [record["modelUsage"].get(model, {}).get("inputTokens") for model in ("gpt-6-astra", "gpt-6-sol", "gpt-6-luna")] + [record["totalSessions"]],
+       [100, 1000, 10000, 3], record)
+
 # HERMES_DATA_DIR_SUFFIX names the default home.
 sandbox()
 state_db(home() / ".hermes-beta" / "state.db", ("gpt-6-astra", 100))
