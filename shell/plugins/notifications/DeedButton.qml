@@ -29,7 +29,7 @@ Button {
   hasCursor: hot                      // paints the theme's hover state
   foreground: Commons.Color.notifications.text
   fontFamily: Style.font.family
-  fontSize: Style.font.body * (toast ? toast.fontScale : 1)
+  fontSize: Style.font.body
 
   // Full width in the "More" list, its own width in the row.
   leftAlign: wide

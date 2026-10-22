@@ -17,8 +17,6 @@ import "Icons.js" as Icons
 Item {
   id: card
 
-  property real fontScale: 1
-  property bool showCountdown: false
   property var row: ({})
   property var iconOverrides: ({})          // slug -> file URL, from the service
   property var place: ({ y: 0, scale: 1, opacity: 1, z: 1, front: true, hidden: false })
@@ -29,8 +27,7 @@ Item {
   property bool hovered: false
   property double now: Date.now()
   property real cardWidth: Style.space(380)
-  property string actionsAlign: "right"      // right | left
-  property var snoozeOptions: []             // the daemon's, from settings
+  property var snoozeOptions: []             // the daemon's
   property var actions: []                   // what the sender put on the wire
   property bool deedsOpen: false
   property bool menuOpen: false
@@ -96,7 +93,6 @@ Item {
   // one's height, so a tall one would hang out of it.
   readonly property bool bodyOpen: expanded || (hovered && sole)
   readonly property int bodyLines: bodyOpen ? 8 : 2
-  readonly property int stands: place.count || 1     // how many this card speaks for
 
   // Every code the body carried; two or more have to say which they copy.
   readonly property var foundCodes: {
@@ -200,8 +196,7 @@ Item {
   property string takenKind: ""
   Timer { id: tick; interval: 1400; onTriggered: card.takenKind = "" }
 
-  // One ticker drives both the countdown and the expiry, so they cannot drift;
-  // pausing holds the remaining time rather than restarting it.
+  // Pausing holds the remaining time rather than restarting it.
   // An update (replaces_id) rewrites the row in place with a new arrival
   // time, and gets a fresh display period of its own duration. Its picture
   // may be new at the same path, so the image is read again too.
@@ -216,8 +211,9 @@ Item {
     Qt.callLater(function() { card.reloading = false })
   }
 
+  // Coarse: nothing draws the time left, only the expiry needs it.
   Timer {
-    interval: 100
+    interval: 500
     repeat: true
     running: card.ticking && card.remaining > 0
     onTriggered: {
@@ -285,7 +281,6 @@ Item {
                                    Math.max(1, Style.space(2)))
   }
 
-  // No offscreen layer, so the ticking countdown does not force a repaint.
   Item {
     id: body
     width: parent.width
@@ -369,7 +364,7 @@ Item {
             text: String(card.row.source || card.row.app || "?").substring(0, 1).toUpperCase()
             color: card.dimColor
             font.family: Style.font.family
-            font.pixelSize: Style.font.body * card.fontScale
+            font.pixelSize: Style.font.body
             font.weight: Font.DemiBold
           }
         }
@@ -382,7 +377,7 @@ Item {
           text: String(card.row.glyph || "")
           color: Commons.Color.notifications.text
           font.family: Style.font.family
-          font.pixelSize: (thumb.compact ? Style.font.icon : Style.font.displayLarge) * card.fontScale
+          font.pixelSize: (thumb.compact ? Style.font.icon : Style.font.displayLarge)
         }
 
         Image {
@@ -430,12 +425,11 @@ Item {
         width: layout.width - (thumb.visible ? thumb.width + layout.spacing : 0)
         spacing: Style.space(3)
 
-        // Title, marks, how many this one stands for, and when it arrived.
+        // Title, marks, and when it arrived.
         Item {
           id: headline
           width: parent.width
-          height: Math.max(title.implicitHeight, rightSide.height,
-                           badge.visible ? badge.height : 0)
+          height: Math.max(title.implicitHeight, rightSide.height)
           opacity: card.showsContent ? 1 : 0
           Behavior on opacity { NumberAnimation { duration: card.fade } }
 
@@ -445,13 +439,12 @@ Item {
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
             width: Math.max(1, parent.width - rightSide.width
-                   - (badge.visible ? badge.width + Style.space(6) : 0)
                    - (titleMarks.visible ? titleMarks.width + Style.space(7) : 0)
                    - Style.space(8))
             text: card.redacted ? I18n.t("notifications.redactedSummary") : String(card.row.summary || "")
             color: card.critical ? Commons.Color.urgent : Commons.Color.notifications.text
             font.family: "Liberation Sans"
-            font.pixelSize: Style.font.title * card.fontScale
+            font.pixelSize: Style.font.title
             font.bold: true
             wrapMode: Text.Wrap
             maximumLineCount: card.bodyOpen ? 8 : 3
@@ -571,7 +564,7 @@ Item {
         FontMetrics {
           id: metrics
           font.family: "Liberation Sans"
-          font.pixelSize: Style.font.title * card.fontScale
+          font.pixelSize: Style.font.title
         }
 
         // Rich text cannot elide, so a body over the current line cap is
@@ -607,7 +600,7 @@ Item {
                                      String(Commons.Color.notifications.countdown))
             color: card.bodyColor
             font.family: "Liberation Sans"
-            font.pixelSize: Style.font.title * card.fontScale
+            font.pixelSize: Style.font.title
             wrapMode: Text.Wrap
             // Second gate: Markup already drops anchors it will not vouch for.
             onLinkActivated: function(url) {
@@ -623,7 +616,7 @@ Item {
             text: card.redacted ? I18n.t("notifications.redactedBody") : String(card.row.bodyLine || card.row.body || "")
             color: card.bodyColor
             font.family: "Liberation Sans"
-            font.pixelSize: Style.font.title * card.fontScale
+            font.pixelSize: Style.font.title
             wrapMode: Text.Wrap
             maximumLineCount: card.bodyLines
             elide: Text.ElideRight
@@ -666,8 +659,7 @@ Item {
             id: deedRow
             anchors.bottom: parent.bottom
             anchors.bottomMargin: deedArea.tail
-            anchors.right: card.actionsAlign === "right" ? parent.right : undefined
-            anchors.left: card.actionsAlign === "right" ? undefined : parent.left
+            anchors.right: parent.right
             spacing: Style.space(6)
             opacity: deedArea.mode === "row" ? 1 : 0
             visible: opacity > 0.01
@@ -714,7 +706,7 @@ Item {
               text: I18n.t("notifications.snooze")
               color: card.bodyColor
               font.family: Style.font.family
-              font.pixelSize: Style.font.body * card.fontScale
+              font.pixelSize: Style.font.body
             }
 
             Repeater {
@@ -728,22 +720,6 @@ Item {
           }
         }
       }
-    }
-
-    // Optional visual countdown. The expiry clock runs either way.
-    BorderSurface {
-      visible: card.showCountdown && card.row.duration > 0 && card.place.front
-               && card.remaining > 0 && !card.expanded
-      anchors { left: parent.left; bottom: parent.bottom
-                leftMargin: plate.contentLeftInset + Style.space(7)
-                bottomMargin: plate.contentBottomInset }
-      height: Style.spacing.hairline
-      radius: Style.cornerRadius
-      color: card.accentColor
-      borderSpec: Border.none()
-      width: visible ? Math.max(0, (body.width - plate.contentLeftInset
-                                    - plate.contentRightInset - Style.space(14))
-                                   * (card.remaining / Math.max(1, card.row.duration))) : 0
     }
 
     // Under the content (z: -1) so buttons get their clicks first; anything

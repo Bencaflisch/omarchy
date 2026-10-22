@@ -50,33 +50,16 @@ Item {
     })
   }
 
-  readonly property string stacking: preferences.stacking
-  readonly property real fontScale: preferences.fontScale / 100
-  readonly property string actionsAlign: preferences.actionsAlign
-  readonly property bool hideSettingsAction: preferences.hideSettingsAction
-  readonly property bool showCountdown: preferences.showCountdown
-  readonly property bool smartRaise: preferences.smartRaise
-  readonly property bool allowDefaultActionOnCardClick: preferences.allowDefaultActionOnCardClick
-  readonly property int clipboardTimeout: preferences.clipboardTimeout
-  readonly property int edgeSpacing: preferences.edgeSpacing === null ? Style.gapsOut : preferences.edgeSpacing
-  readonly property int sourceLimit: preferences.sourceLimit
-  readonly property int heldPerSource: preferences.heldPerSource
-  readonly property int recentCount: preferences.recentCount
   readonly property string displayMode: preferences.displayMode
   readonly property string displayName: preferences.displayName
-  readonly property string fullscreenOverlay: preferences.fullscreenOverlay
+  readonly property bool stepsAside: preferences.fullscreenOverlay === "all"
   readonly property bool offerSnoozeWhenSharing: preferences.offerSnoozeWhenSharing
+  onStepsAsideChanged: hyprRefresh.restart()
 
-  // Deferred: the layout binding reads stacking, and retargeting from inside
-  // that evaluation would be a binding loop.
-  onStackingChanged: Qt.callLater(retarget)
-  onFullscreenOverlayChanged: hyprRefresh.restart()
-
-  // An explicit codesBypassQuiet in shell.json wins over the panel's persisted toggle.
-  readonly property var configuredCodesBypassQuiet: preferences.codesBypassQuiet
-  onConfiguredCodesBypassQuietChanged: {
-    if (configuredCodesBypassQuiet !== null) setCodesBypassQuiet(configuredCodesBypassQuiet)
-  }
+  // How many sources, held notifications per source, and recent ones the panel lists.
+  readonly property int sourceLimit: 8
+  readonly property int heldPerSource: 10
+  readonly property int recentCount: 5
 
   // A shorter retention applies at once to what is already kept.
   readonly property int historyHours: preferences.historyHours
@@ -98,7 +81,7 @@ Item {
     var wanted = focusedDisplayName
     if (displayMode === "specific" && displayNames.indexOf(displayName) >= 0) wanted = configuredDisplayName
     else if (displayNames.indexOf(deckDisplayName) >= 0) wanted = deckDisplayName
-    return routeAround(wanted)
+    return wanted
   }
   onDisplayNamesChanged: {
     if (deckDisplayName && displayNames.indexOf(deckDisplayName) < 0)
@@ -107,11 +90,11 @@ Item {
   onDisplayModeChanged: { if (toasts.count > 0) deckDisplayName = configuredDisplayName }
   onDisplayNameChanged: { if (displayMode === "specific" && toasts.count > 0) deckDisplayName = configuredDisplayName }
   function pinDeckDisplay() {
-    if (toasts.count === 0) deckDisplayName = routeAround(configuredDisplayName)
+    if (toasts.count === 0) deckDisplayName = configuredDisplayName
   }
 
   function showsOn(name) {
-    return (displayMode === "all" && !awayFrom(name)) || name === targetDisplayName
+    return displayMode === "all" || name === targetDisplayName
   }
 
   // ------------------------------------------------------------- quiet
@@ -194,7 +177,7 @@ Item {
   readonly property bool barVertical: barPosition === "left" || barPosition === "right"
   readonly property int defaultBarSize: barVertical ? Style.bar.sizeVertical : Style.bar.sizeHorizontal
   function marginsFor(screenName) {
-    return Delivery.deckMargins(barPosition, Delivery.barThickness(barRef, screenName, defaultBarSize), edgeSpacing)
+    return Delivery.deckMargins(barPosition, Delivery.barThickness(barRef, screenName, defaultBarSize), Style.gapsOut)
   }
   readonly property int notificationWidth: Style.space(380)
 
@@ -202,11 +185,7 @@ Item {
   //
   // Hyprland refuses direct scanout while any overlay-layer surface exists on
   // a monitor, so an idle canvas makes fullscreen games composite each frame.
-  // "all"/"steam" step aside under fullscreen (Steam) windows until a card
-  // arrives; the "-away" variants send cards to another display instead.
-  readonly property string fullscreenScope: fullscreenOverlay.indexOf("steam") === 0 ? "steam"
-    : fullscreenOverlay.indexOf("all") === 0 ? "all" : ""
-  readonly property bool fullscreenAway: fullscreenScope !== "" && /-away$/.test(fullscreenOverlay)
+  // It steps aside under a fullscreen window until a card arrives.
   // Bumped after Hyprland's window snapshot refreshes, so fullscreenOn() re-evaluates.
   property int hyprRevision: 0
 
@@ -225,7 +204,7 @@ Item {
 
   function fullscreenOn(name) {
     var revision = hyprRevision
-    if (fullscreenScope === "" || !name) return false
+    if (!stepsAside || !name) return false
     var screen = null
     for (var s = 0; s < Quickshell.screens.length; s++)
       if (String(Quickshell.screens[s].name) === name) screen = Quickshell.screens[s]
@@ -237,28 +216,15 @@ Item {
       var ipc = windows[i].lastIpcObject || {}
       // A workspace also reports maximized windows as fullscreen. Only a real
       // fullscreen (mode bit 2) can be scanned out.
-      if ((Number(ipc.fullscreen) & 2) === 0) continue
-      if (fullscreenScope === "all") return true
-      var appClass = String(ipc["class"] || "")
-      if (appClass === "" && windows[i].wayland) appClass = String(windows[i].wayland.appId || "")
-      if (/^steam_app_\d+$/.test(appClass)) return true
+      if ((Number(ipc.fullscreen) & 2) !== 0) return true
     }
     return false
-  }
-
-  function awayFrom(name) { return fullscreenAway && fullscreenOn(name) }
-  function routeAround(name) {
-    if (!awayFrom(name)) return name
-    if (focusedDisplayName !== name && !awayFrom(focusedDisplayName)) return focusedDisplayName
-    for (var i = 0; i < displayNames.length; i++)
-      if (!awayFrom(displayNames[i])) return displayNames[i]
-    return ""
   }
 
   Connections {
     target: Hyprland
     function onRawEvent(event) {
-      if (service.fullscreenOverlay === "off") return
+      if (!service.stepsAside) return
       switch (event.name) {
       case "fullscreen": case "openwindow": case "closewindow": case "movewindowv2":
       case "activewindowv2": case "workspacev2": case "focusedmonv2": case "changefloatingmode":
@@ -312,7 +278,7 @@ Item {
   // different number of seconds at every hour of the day.
   function snoozeOption(choice) {
     var value = String(choice || "")
-    var seconds = Settings.snoozeSeconds(value, preferences.wakeHour, Date.now())
+    var seconds = Settings.snoozeSeconds(value, Date.now())
     if (!(seconds > 0)) return null
     if (value === "tomorrow")
       return { short: I18n.t("notifications.tomorrow"), seconds: seconds }
@@ -320,7 +286,7 @@ Item {
   }
 
   readonly property var snoozeOptions: {
-    var choices = preferences.snoozeDurations, out = []
+    var choices = Settings.SNOOZE_CHOICES, out = []
     for (var i = 0; i < choices.length; i++) {
       var option = snoozeOption(choices[i])
       if (option) out.push(option)
@@ -741,7 +707,7 @@ Item {
     // front: true keeps its text on the way out instead of blanking a frame.
     return { y: prev ? prev.y : 0, scale: prev ? prev.scale : 1, opacity: 0,
              height: prev ? prev.height : 0, z: 2000, front: true,
-             hidden: false, count: 1 }
+             hidden: false }
   }
 
   // Leaving rows stay in the model until the gap has closed.
@@ -762,9 +728,8 @@ Item {
       if (!leaving[row.key]) rows.push(row)   // a card on its way out takes no space
     }
     return Layout.compute(rows, {
-      stacking: stacking,
       expanded: expanded,
-      openDeck: stacking === "source" ? openDeck : undefined,
+      openDeck: openDeck,
       gap: gap,
       deckGap: Style.space(11),
       heightOf: function(key) { return service.heights[key] || Style.space(58) }
@@ -1037,12 +1002,11 @@ Item {
       var identifier = String(a.identifier || "")
       if (identifier.length > Security.MAX_ACTION_ID || !identifier) continue
       if (identifier === "default") {
-        // The card click already runs it while card clicks may invoke actions.
-        if (!allowDefaultActionOnCardClick) out.push({ id: identifier, text: I18n.t("notifications.openInApp") })
+        // The card click already runs it.
         continue
       }
       var label = Security.bounded(String(a.text || identifier), Security.MAX_ACTION_LABEL)
-      if (hideSettingsAction && (/^settings$/i.test(label) || /^settings$/i.test(identifier)))
+      if (/^settings$/i.test(label) || /^settings$/i.test(identifier))
         continue
       out.push({ id: identifier, text: label })
     }
@@ -1159,7 +1123,6 @@ Item {
       if (found.length) return mostRecent(found)
 
       // A browser tab, then. Browsers only: "slack" in an editor's title is a filename.
-      if (!smartRaise) return null
       var brands = brandsOf(name)
       for (var b = 0; b < brands.length; b++) {
         found = []
@@ -1210,7 +1173,7 @@ Item {
       return
     }
 
-    var handled = allowDefaultActionOnCardClick && invokeSenderAction(key, "default")
+    var handled = invokeSenderAction(key, "default")
     if (!handled && row) {
       // Source first, link last: a Slack message quoting a link is still a
       // Slack notification, and that link has its own button.
@@ -1248,7 +1211,7 @@ Item {
 
   Timer {
     id: secretLife
-    interval: service.clipboardTimeout * 1000
+    interval: 60000
     onTriggered: clipReader.running = true
   }
 
@@ -1410,7 +1373,6 @@ Item {
       silencedSince = read.silencedSince
       if (read.codesBypassQuiet !== null) codesBypassQuiet = read.codesBypassQuiet
     }
-    if (configuredCodesBypassQuiet !== null) codesBypassQuiet = configuredCodesBypassQuiet
     quietLoaded = true
     snoozeRevision += 1
     if (unsaved.quiet) saveSoon("quiet")
@@ -1642,7 +1604,7 @@ Item {
         })
       } else if (toasts.count > 0) {
         var front = toasts.get(0)
-        service.pointerEntered(Layout.deckKeyFor(front, service.stacking))
+        service.pointerEntered(Layout.groupKeyFor(front))
         service.hoverKey = String(front.key)
       } else {
         service.pointerEntered(undefined)
@@ -1720,10 +1682,8 @@ Item {
 
     // What the daemon thinks is true, for scripts to check.
     function probe(): string {
-      return JSON.stringify({ toasts: toasts.count, fontScale: service.fontScale,
+      return JSON.stringify({ toasts: toasts.count,
         doNotDisturb: service.doNotDisturb, expanded: service.expanded,
-        allowDefaultActionOnCardClick: service.allowDefaultActionOnCardClick,
-        stacking: service.stacking,
         sharingActive: service.sharingActive, sharingStreams: service.sharingStreams,
         sharingOfferPending: service.sharingOfferPending, offerSnoozeWhenSharing: service.offerSnoozeWhenSharing,
         globalSnoozeUntil: service.globalSnoozeUntil,
@@ -1731,8 +1691,7 @@ Item {
         displays: service.displayNames, focusedDisplay: service.focusedDisplayName,
         targetDisplay: service.targetDisplayName,
         notificationDisplays: service.displayNames.filter(function(name) { return service.showsOn(name) }),
-        fullscreenOverlay: service.fullscreenOverlay, surfaces: service.surfaceStates(),
-        avoidedDisplays: service.displayNames.filter(function(n) { return service.awayFrom(n) }) })
+        stepsAside: service.stepsAside, surfaces: service.surfaceStates() })
     }
   }
 
@@ -1741,7 +1700,7 @@ Item {
   // One fixed-size layer per output, so the compositor never scales a stale
   // buffer; the mask makes everything outside the deck click-through. It stays
   // mapped while idle (remapping re-evaluates focus and drags a scrolling
-  // layout's viewport), except where `fullscreenOverlay` steps aside.
+  // layout's viewport), except where it steps aside for a fullscreen window.
   Variants {
     id: surfaceVariants
     model: Quickshell.screens
@@ -1843,8 +1802,7 @@ Item {
             onPositionChanged: function(mouse) {
               hoverAt(mouse.x, mouse.y)
 
-              // In source mode, which deck you are over decides which opens.
-              if (service.stacking !== "source") return
+              // Which deck you are over decides which opens.
               var decks = service.layout.decks
               for (var i = 0; i < decks.length; i++) {
                 var first = decks[i].rows[0]
@@ -1872,9 +1830,6 @@ Item {
                      || ({ y: 0, scale: 1, opacity: 0, z: 1, front: false, hidden: true })
               hovered: service.hoverKey === model.key
               actions: service.actionsOf(model.key, service.refsRevision)
-              fontScale: service.fontScale
-              showCountdown: service.showCountdown
-              actionsAlign: service.actionsAlign
               hoverX: service.hoverX
               hoverY: service.hoverY
               onActionInvoked: function(identifier) { service.invokeAction(model.key, identifier) }
@@ -1882,7 +1837,7 @@ Item {
               iconOverrides: service.iconOverrides
               now: service.nowTick
               expanded: service.expanded
-                        && (service.stacking !== "source" || service.openDeck === Layout.deckKeyFor(model, service.stacking))
+                        && service.openDeck === Layout.groupKeyFor(model)
               // Hover opens the body only when there is nothing else to open.
               sole: toasts.count === 1
               paused: service.expanded

@@ -22,19 +22,19 @@ The JS modules also load in Node: `test/shell.d/notifications-test.sh` covers th
 
 ## Decks and the scene clock
 
-Each notification gets its own key (`n…`); the sender's id names a slot that `replaces_id` reuses, not an event. Cards group by source: per site for browser notifications (the leading `<a href>` Chromium adds is lifted off and becomes the source, but only from a browser and only for an http(s) href that passes the URL policy), per app name otherwise. `stacking: "all"` puts everything in one deck.
+Each notification gets its own key (`n…`); the sender's id names a slot that `replaces_id` reuses, not an event. Cards group by source: per site for browser notifications (the leading `<a href>` Chromium adds is lifted off and becomes the source, but only from a browser and only for an http(s) href that passes the URL policy), per app name otherwise.
 
 A collapsed deck draws its cards at the front card's height; hovering opens it. While the pointer is on an open deck, new cards are held back for at most 30 seconds. All positions, scales, opacities and heights come from one clock (`Service.at()`): a change snapshots the current state, recomputes the layout, and starts one move for every card. A leaving card keeps its model row until that move finishes.
 
 Live `Notification` objects are kept in a plain JS map (`refs`), never a ListModel role, which would dangle once the server destroys the object. At most 100 are live.
 
-The surface is one fixed-width `WlrLayer.Overlay` window per output (namespace `omarchy-notifications`), input-masked to the deck. It stays mapped while idle, because a layer surface coming and going makes Hyprland re-evaluate focus and drags a scrolling layout's viewport. The exception is `fullscreenOverlay` (default `all`), which unmaps it over a fullscreen window when nothing is showing so the window can be scanned out directly; the `-away` variants never cover a fullscreen window and send cards to another output or to Recent.
+The surface is one fixed-width `WlrLayer.Overlay` window per output (namespace `omarchy-notifications`), input-masked to the deck. It stays mapped while idle, because a layer surface coming and going makes Hyprland re-evaluate focus and drags a scrolling layout's viewport. The exception is a fullscreen window: unless `fullscreenOverlay` is `off`, the surface unmaps over it when nothing is showing so the window can be scanned out directly.
 
 ## Toast lifecycle
 
 A card stays at least 5s (low), 8s (normal), or until dismissed (critical), stretched up to 30s by a longer `expire_timeout`. The countdown pauses while the deck is open; a content update restarts it. Left-click activates, middle-click dismisses, right-click opens the source menu (snooze, Do Not Disturb).
 
-A click tries, in order: the card's `omarchy-exec-argv` command; the sender's `default` action (`allowDefaultActionOnCardClick`); the sender's window by pid; a window showing the source (exact class, then for a site a browser window whose title names it); the site itself; the first link in the text; `omarchy-hyprland-focus-app` by app name.
+A click tries, in order: the card's `omarchy-exec-argv` command; the sender's `default` action; the sender's window by pid; a window showing the source (exact class, then for a site a browser window whose title names it); the site itself; the first link in the text; `omarchy-hyprland-focus-app` by app name.
 
 ## Persistence
 
@@ -82,7 +82,7 @@ When the Hyprland portal starts a screen-share stream, the bell offers a timed s
 
 ## Preferences
 
-Preferences live in the `notifications` object of `~/.config/omarchy/shell.json`; every key is optional, and `Settings.js` holds defaults and valid values. The preferences page writes `displayMode`/`displayName`, `fullscreenOverlay`, `stacking`, `showCountdown` and `offerSnoozeWhenSharing`. Hand-edited keys: `edgeSpacing` (unset follows the theme's outer gap), `fontScale`, `actionsAlign`, `hideSettingsAction`, `snoozeDurations`, `wakeHour`, `smartRaise`, `codesBypassQuiet`, `timeFormat`, `sourceLimit`, `heldPerSource`, `recentCount`, `allowDefaultActionOnCardClick`, `historyHours`, `clipboardTimeout`. Colours come from the theme: `[notifications]` in `shell.toml` for cards, `[popups]` for the panel, Hyprland's `decoration:rounding` for corners.
+Preferences live in the `notifications` object of `~/.config/omarchy/shell.json`; every key is optional, and `Settings.js` holds defaults and valid values. The preferences page writes `displayMode`/`displayName`, `fullscreenOverlay` (`all` or `off`) and `offerSnoozeWhenSharing`; `historyHours` is hand-edited. Everything else follows the desktop: text size, the theme's outer gap, the locale's time format. Colours come from the theme: `[notifications]` in `shell.toml` for cards, `[popups]` for the panel, Hyprland's `decoration:rounding` for corners.
 
 ## The sender contract
 
