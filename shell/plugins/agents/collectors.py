@@ -1375,8 +1375,10 @@ def claude_code_owner(model: Any, base_url: str = "") -> str | None:
 # and keeps its bare message id and whether a sidechain wrote it. Version 9
 # reads the advisor iterations a reply carries. Version 10 keeps the model
 # that answered each prompt. Version 11 stops counting a built-in local
-# command (/model, /clear, /compact) as a prompt.
-CLAUDE_CODE_INDEX_VERSION = 11
+# command (/model, /clear, /compact) as a prompt. Version 12 keeps each
+# reply's time and the cost-state totals, which count the requests no reply
+# records.
+CLAUDE_CODE_INDEX_VERSION = 12
 
 # How much of each end of what was read the index remembers a hash of, so a
 # file replaced or rewritten with more than it had is not mistaken for an
@@ -1394,6 +1396,18 @@ CLAUDE_CODE_LOCAL_OUTPUT = ("<local-command-stdout>", "<local-command-stderr>")
 # promptSource, a queued one's origin.kind): the system (a task notification)
 # and another agent are not a person asking.
 CLAUDE_CODE_MACHINE_SOURCES = ("system", "task-notification", "peer")
+
+# A line's own time, the last `timestamp` it holds (Claude Code writes it
+# after the message), read without parsing the line.
+CLAUDE_CODE_STAMP = re.compile(rb'"timestamp":\s*"([^"\\]{1,64})"')
+
+# Claude Code 2.1.308 and later write a `cost-state` line when a process
+# saves its running cost: `startTime` names the process's cost lineage,
+# which a resume or `--fork-session` carries on, and `modelUsage` holds what
+# each model has used in it so far, the requests no reply line records
+# (a compaction, the session title, a side query) included. Its model names
+# carry the context window as a suffix the replies don't.
+CLAUDE_CODE_COST_MODEL_SUFFIX = re.compile(r"\[1m\]$", re.IGNORECASE)
 
 
 def claude_code_index_path(projects: Path) -> Path:
@@ -1491,12 +1505,55 @@ def _claude_code_line_day(parsed: dict[str, Any], message: dict[str, Any]) -> tu
   return day is not None, day
 
 
+def _claude_code_moment(value: Any) -> float | None:
+  """When a trusted transcript time was, as epoch seconds, to put a reply
+  before or after a cost-state line (None for no time)."""
+  if value is None or isinstance(value, bool):
+    return None
+  if isinstance(value, str) and re.fullmatch(r"[0-9]{1,20}", value.strip()):
+    value = int(value.strip())
+  if isinstance(value, (int, float)):
+    seconds = math.floor(number(value))
+    return seconds / 1000 if seconds > 10_000_000_000 else float(seconds)
+  try:
+    return datetime.fromisoformat(str(value).strip().replace("Z", "+00:00")).timestamp()
+  except (OverflowError, OSError, ValueError):
+    return None
+
+
+def _claude_code_cost_state(parsed: dict[str, Any]) -> tuple[str, dict[str, list[int]]] | None:
+  """The cost lineage and per-model [input, output, cacheRead, cacheWrite]
+  totals of a cost-state line, None for one of another shape."""
+  usage = parsed.get("modelUsage")
+  start = parsed.get("startTime")
+  if not isinstance(usage, dict) or start is None or isinstance(start, (bool, dict, list)) or str(start) == "":
+    return None
+  models: dict[str, list[int]] = {}
+  for name, counts in usage.items():
+    if not isinstance(counts, dict):
+      continue
+    tokens = [
+      usage_tokens(counts, "inputTokens", "input_tokens"),
+      usage_tokens(counts, "outputTokens", "output_tokens"),
+      usage_tokens(counts, "cacheReadInputTokens", "cache_read_input_tokens"),
+      usage_tokens(counts, "cacheCreationInputTokens", "cache_creation_input_tokens"),
+    ]
+    # One model under both names is two counters of the same model.
+    held = models.setdefault(CLAUDE_CODE_COST_MODEL_SUFFIX.sub("", str(name)), [0, 0, 0, 0])
+    for kind, count in enumerate(tokens):
+      held[kind] += count
+  return str(start), models
+
+
 def read_claude_code_transcript(path: Path, entry: dict[str, Any] | None) -> dict[str, Any]:
   """Return the index entry for one transcript, reusing `entry` where the file
   only grew. Records are [key, model, day, input, output, cacheRead,
-  cacheWrite, session, messageId, sidechain]; prompts are [key, day,
+  cacheWrite, session, messageId, sidechain, moment]; prompts are [key, day,
   session, model], the model of the first reply after it (None until one
-  is read). A `day` is None when the line carries no timestamp."""
+  is read); costs are [lineage, session, day, moment, {model: [input,
+  output, cacheRead, cacheWrite]}], each cost-state line's totals at the
+  time of the last line before it. A `day` is None, and a `moment` (epoch
+  seconds) too, when the line carries no timestamp."""
   info = path.stat()
   size = info.st_size
   mtime = info.st_mtime_ns
@@ -1515,11 +1572,15 @@ def read_claude_code_transcript(path: Path, entry: dict[str, Any] | None) -> dic
   ):
     records = list(entry.get("records") or [])
     prompts = [list(prompt) for prompt in entry.get("prompts") or []]
+    costs = list(entry.get("costs") or [])
+    stamp = entry.get("stamp")
     offset = number(entry.get("offset"))
     line_number = number(entry.get("lines"))
   else:
     records = []
     prompts = []
+    costs = []
+    stamp = None
     offset = 0
     line_number = 0
 
@@ -1533,6 +1594,12 @@ def read_claude_code_transcript(path: Path, entry: dict[str, Any] | None) -> dic
   prompted = {prompt[0] for prompt in prompts}
   # Prompts still waiting for their reply, which says who answered them.
   unanswered = [prompt for prompt in prompts if prompt[3] is None]
+  stamped: tuple[bytes, int] | None = None
+
+  def last_stamp() -> Any:
+    found = CLAUDE_CODE_STAMP.match(stamped[0], stamped[1]) if stamped else None
+    return found.group(1).decode("utf-8", errors="replace") if found else stamp
+
   with path.open("rb") as handle:
     handle.seek(offset)
     for raw in handle:
@@ -1542,9 +1609,15 @@ def read_claude_code_transcript(path: Path, entry: dict[str, Any] | None) -> dic
       offset += len(raw)
       line_number += 1
 
+      # A cost-state line carries no time of its own: it was written when
+      # the line before it was, read only when one turns up.
+      at = raw.rfind(b'"timestamp":')
+      if at >= 0:
+        stamped = (raw, at)
+
       # Cheap pre-filter before JSON parsing keeps files with unrelated
       # lines inexpensive.
-      if b'"usage":' not in raw and b'"user"' not in raw and b'"queued_command"' not in raw and b"<local-command-std" not in raw:
+      if b'"usage":' not in raw and b'"user"' not in raw and b'"queued_command"' not in raw and b"<local-command-std" not in raw and b'"cost-state"' not in raw:
         continue
 
       try:
@@ -1556,6 +1629,15 @@ def read_claude_code_transcript(path: Path, entry: dict[str, Any] | None) -> dic
         continue
 
       message = parsed.get("message") if isinstance(parsed.get("message"), dict) else {}
+
+      if parsed.get("type") == "cost-state":
+        stamp = last_stamp()
+        stamped = None
+        cost = _claude_code_cost_state(parsed)
+        day = local_day(stamp) if stamp is not None else None
+        if cost is not None and (stamp is None or day is not None):
+          costs.append([cost[0], str(parsed.get("sessionId") or path), day, _claude_code_moment(stamp), cost[1]])
+        continue
 
       # A prompt copied into a resumed or forked transcript keeps its uuid,
       # so the uuid counts it once.
@@ -1600,6 +1682,7 @@ def read_claude_code_transcript(path: Path, entry: dict[str, Any] | None) -> dic
       trusted, day = _claude_code_line_day(parsed, message)
       if not trusted:
         continue
+      moment = _claude_code_moment(parsed["timestamp"] if parsed.get("timestamp") is not None else message.get("timestamp")) if day is not None else None
 
       # An advisor the model consulted is billed apart, under its own model:
       # Claude Code prices each `advisor_message` iteration on its own, and the
@@ -1632,7 +1715,7 @@ def read_claude_code_transcript(path: Path, entry: dict[str, Any] | None) -> dic
         if held is not None and output_tokens < records[held][4]:
           continue
 
-        record = [record_key, model, day, input_tokens, output_tokens, cache_read, cache_write, session_key, record_id, sidechain]
+        record = [record_key, model, day, input_tokens, output_tokens, cache_read, cache_write, session_key, record_id, sidechain, moment]
         if held is None:
           positions[record_key] = len(records)
           records.append(record)
@@ -1648,6 +1731,8 @@ def read_claude_code_transcript(path: Path, entry: dict[str, Any] | None) -> dic
     "lines": line_number,
     "records": records,
     "prompts": prompts,
+    "costs": costs,
+    "stamp": last_stamp(),
   }
 
 
@@ -1789,11 +1874,15 @@ def scan_claude_code(
   # in use that day, so a fork that copied a session's replies never takes
   # that session out of the count.
   seen: dict[str, list[Any]] = {}
+  # When a reply was first written, whichever copy of it counts.
+  earliest: dict[str, float] = {}
   active: set[tuple[Any, str, str]] = set()
   for key in order:
     for record in current[key].get("records") or []:
       if ours(record[1]):
         active.add((record[2], record[7], record[1]))
+      if record[10] is not None and record[10] < earliest.get(record[0], math.inf):
+        earliest[record[0]] = record[10]
       held = seen.get(record[0])
       if held is not None and record[4] < held[4]:
         continue
@@ -1806,10 +1895,17 @@ def scan_claude_code(
   parents = {(record[8], record[7], *record[3:7]) for record in seen.values() if record[8] and not record[9]}
   scan_day = today()
   rows: list[UsageRow] = []
-  for _, model, day, input_tokens, output_tokens, cache_read, cache_write, session_key, message_id, sidechain in seen.values():
-    if (sidechain and (message_id, session_key, input_tokens, output_tokens, cache_read, cache_write) in parents) or not ours(model):
+  replies: list[list[Any]] = []
+  for record in seen.values():
+    _, model, day, input_tokens, output_tokens, cache_read, cache_write, session_key, message_id, sidechain, _ = record
+    if sidechain and (message_id, session_key, input_tokens, output_tokens, cache_read, cache_write) in parents:
       continue
-    rows.append(UsageRow(day or scan_day, session_key, owner, model, input_tokens, output_tokens, cache_read, cache_write, prompts=0))
+    replies.append(record)
+    if ours(model):
+      rows.append(UsageRow(day or scan_day, session_key, owner, model, input_tokens, output_tokens, cache_read, cache_write, prompts=0))
+  for day, session_key, model, counts in _claude_code_unrecorded(current, order, replies, earliest):
+    if ours(model):
+      rows.append(UsageRow(day or scan_day, session_key, owner, model, *counts, prompts=0))
 
   # A prompt is what a person typed, not each API request a tool loop makes,
   # so replies carry no prompts and the typed ones are counted on their own,
@@ -1826,6 +1922,75 @@ def scan_claude_code(
   for day, session_key, model in sorted(active, key=lambda item: (str(item[0]), item[1], item[2])):
     rows.append(UsageRow(day or scan_day, session_key, owner, model, 0, 0, 0, 0, prompts=0))
   return rows
+
+
+def _claude_code_unrecorded(
+  current: dict[str, Any], order: list[str], replies: list[list[Any]], earliest: dict[str, float]
+) -> list[tuple[str | None, str, str, list[int]]]:
+  """What the cost-state lines say was used beyond the replies, as (day,
+  session, model, [input, output, cacheRead, cacheWrite]): the requests no
+  reply line records, a compaction's, the session title's, a side query's.
+
+  A cost lineage (one `startTime`) holds every session that carried it on,
+  forks included, so each is counted once: its cost-states are taken in
+  time order, each against every reply of its sessions written by then
+  (subagents' included, which run under their parent's session), and only
+  what one says beyond the most already counted is new, on that cost-state's
+  day. A fork's total includes its parent's, and the parent's own replies
+  are among those it is held against, so the parent is never counted twice;
+  two branches that both went on are held against each other's replies too,
+  which can only count too little. Nor can a model name the replies don't
+  use add anything: no more counts, kind by kind, than the whole cost-state
+  says beyond all the replies.
+  """
+  lineages: dict[str, list[list[Any]]] = {}
+  for key in order:
+    for cost in current[key].get("costs") or []:
+      lineages.setdefault(cost[0], []).append(cost)
+  if not lineages:
+    return []
+
+  by_session: dict[str, list[tuple[float, str, list[int]]]] = {}
+  for record in replies:
+    # A reply with no time is held against every cost-state.
+    moment = earliest.get(record[0], -math.inf)
+    by_session.setdefault(record[7], []).append((moment, record[1], record[3:7]))
+
+  unrecorded: dict[tuple[str | None, str, str], list[int]] = {}
+  for events in lineages.values():
+    sessions = {event[1] for event in events}
+    lineage_replies = sorted((reply for session in sessions for reply in by_session.get(session, ())), key=lambda reply: reply[0])
+    # A cost-state with no time is the last, held against every reply.
+    events.sort(key=lambda event: math.inf if event[3] is None else event[3])
+    replied: dict[str, list[int]] = {}
+    replied_total = [0, 0, 0, 0]
+    counted: dict[str, list[int]] = {}
+    position = 0
+    for _, session, day, moment, models in events:
+      until = math.inf if moment is None else moment
+      while position < len(lineage_replies) and lineage_replies[position][0] <= until:
+        _, model, counts = lineage_replies[position]
+        held = replied.setdefault(model, [0, 0, 0, 0])
+        for kind in range(4):
+          held[kind] += counts[kind]
+          replied_total[kind] += counts[kind]
+        position += 1
+      beyond = {model: [max(0, totals[kind] - replied.get(model, (0, 0, 0, 0))[kind]) for kind in range(4)] for model, totals in models.items()}
+      for kind in range(4):
+        room = max(0, sum(totals[kind] for totals in models.values()) - replied_total[kind])
+        claimed = sum(extra[kind] for extra in beyond.values())
+        if claimed > room:
+          for extra in beyond.values():
+            extra[kind] = extra[kind] * room // claimed
+      for model, extra in beyond.items():
+        done = counted.setdefault(model, [0, 0, 0, 0])
+        new = [max(0, extra[kind] - done[kind]) for kind in range(4)]
+        if any(new):
+          counted[model] = [max(done[kind], extra[kind]) for kind in range(4)]
+          held = unrecorded.setdefault((day, session, model), [0, 0, 0, 0])
+          for kind in range(4):
+            held[kind] += new[kind]
+  return [(day, session, model, counts) for (day, session, model), counts in unrecorded.items()]
 
 
 def claude_code_scan_match(claude_dir: Path | None = None) -> dict[str, str]:

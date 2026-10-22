@@ -599,6 +599,100 @@ sandbox()
 record = claude()
 expect("Claude asks a signed-out Claude Code home to sign in", [record["ready"], record["usageStatusText"]], [False, "Waiting for auth"], record)
 
+# ------------------------------------------------------------- cost-state
+
+# Claude Code 2.1.308 writes a cost-state line when a process saves its
+# cost: the lineage's startTime, carried through a resume and a
+# --fork-session, and what each model has used in it so far, the requests no
+# reply line records (a /compact, the session title, a side query)
+# included. Shapes as Claude Code wrote them against a mock API that served
+# each request once.
+sandbox()
+YESTERDAY = (fixture_now().astimezone() - timedelta(days=1)).replace(hour=12, minute=0, second=0, microsecond=0).isoformat()
+
+
+def reply(session, message_id, counts, timestamp, model="claude-sonnet-4-5", sidechain=False):
+  return {"parentUuid": None, "isSidechain": sidechain, "type": "assistant", "sessionId": session, "timestamp": timestamp,
+          "requestId": f"req_{message_id}", "uuid": f"uuid-{session}-{message_id}",
+          "message": {"model": model, "id": message_id, "type": "message", "role": "assistant", "content": [{"type": "text", "text": "Hello"}],
+                      "usage": dict(zip(("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"), counts))}}
+
+
+def typed(session, uuid, timestamp, text="Say hello"):
+  return {"parentUuid": None, "isSidechain": False, "type": "user", "promptSource": "sdk", "sessionId": session, "timestamp": timestamp,
+          "uuid": uuid, "message": {"role": "user", "content": text}}
+
+
+def cost_state(session, start, usage):
+  return {"type": "cost-state", "sessionId": session, "totalCostUSD": 0.0046, "totalAPIDuration": 9, "startTime": start,
+          "modelUsage": {model: {"inputTokens": counts[0], "outputTokens": counts[1], "thinkingTokens": 0, "cacheReadInputTokens": counts[2],
+                                 "cacheCreationInputTokens": counts[3], "webSearchRequests": 0, "costUSD": 0.0046}
+                         for model, counts in usage.items()},
+          "hasUnknownModelCost": False}
+
+
+def claude_code_days(owner="claude"):
+  import collectors
+  days = {}
+  for row in collectors.scan_claude_code(owner, projects().parent, base_url=""):
+    by_model = days.setdefault(row.day, {})
+    by_model[row.model] = by_model.get(row.model, 0) + row.input_tokens + row.output_tokens + row.cache_read + row.cache_write
+  return days
+
+
+yesterday, today_day = YESTERDAY[:10], fixture_now().astimezone().date().isoformat()
+# A one-shot run asks for a title too, and is resumed the next day for a
+# /compact, whose request no reply line records.
+compacted = [
+  typed("compact", "u-compact-1", YESTERDAY),
+  reply("compact", "msg_c1", (1234, 51, 71, 31), YESTERDAY),
+  {"type": "last-prompt", "lastPrompt": "Say hello", "sessionId": "compact"},
+  cost_state("compact", 1792669864166, {"claude-sonnet-4-5[1m]": (1234, 51, 71, 31), "claude-haiku-4-5-20251001": (893, 24, 0, 0)}),
+  {"type": "queue-operation", "operation": "enqueue", "timestamp": STAMP, "sessionId": "compact", "content": "/compact"},
+  {"type": "system", "subtype": "compact_boundary", "content": "Conversation compacted", "timestamp": STAMP, "sessionId": "compact",
+   "compactMetadata": {"trigger": "manual", "preTokens": 1387}},
+  {"type": "user", "isCompactSummary": True, "sessionId": "compact", "timestamp": STAMP, "uuid": "u-summary", "message": {"role": "user", "content": "Summary"}},
+  cost_state("compact", 1792669864166, {"claude-sonnet-4-5[1m]": (3002468, 102, 142, 62), "claude-haiku-4-5-20251001": (893, 24, 0, 0)}),
+]
+transcript(*compacted[:4], name="compact.jsonl")
+expect("Claude counts the title query a cost-state holds beyond the replies", claude_code_days(),
+       {yesterday: {"claude-sonnet-4-5": 1387, "claude-haiku-4-5-20251001": 917}})
+transcript(*compacted[4:], name="compact.jsonl", mode="a")
+expect("Claude counts a /compact's request, read from the cost-state appended after it, on the day it ran", claude_code_days(),
+       {yesterday: {"claude-sonnet-4-5": 1387, "claude-haiku-4-5-20251001": 917}, today_day: {"claude-sonnet-4-5": 3001387}})
+index = json.loads(next(cache_root().glob("claude-index-*.json")).read_text())
+(projects() / "compact.jsonl").touch()
+expect("Claude reads a cost-state appended to a transcript as it reads the whole transcript again",
+       [claude_code_days(), [entry["costs"] for entry in json.loads(next(cache_root().glob("claude-index-*.json")).read_text())["files"].values()]],
+       [{yesterday: {"claude-sonnet-4-5": 1387, "claude-haiku-4-5-20251001": 917}, today_day: {"claude-sonnet-4-5": 3001387}},
+        [entry["costs"] for entry in index["files"].values()]])
+
+# A --fork-session carries the lineage on: its cost-state includes the
+# parent's, compaction and all, and its transcript copies the parent's
+# replies under its own session. A subagent runs under its parent's session
+# in a file of its own, and its replies are in the cost-state too. A
+# process still running has replies past its last cost-state.
+sandbox()
+parent = [typed("parent", "u-p1", STAMP), reply("parent", "msg_p1", (101234, 51, 71, 31), STAMP)]
+transcript(*parent, cost_state("parent", 1792669919352, {"claude-sonnet-4-5": (203468, 103, 143, 63)}), name="parent.jsonl")
+transcript(*[{**line, "sessionId": "fork"} for line in parent], typed("fork", "u-f1", STAMP), reply("fork", "msg_f1", (701234, 51, 71, 31), STAMP),
+           cost_state("fork", 1792669919352, {"claude-sonnet-4-5": (904702, 154, 214, 94)}), name="fork.jsonl")
+transcript(typed("main", "u-m1", STAMP), reply("main", "msg_m1", (100, 1, 0, 0), STAMP),
+           cost_state("main", 1792681739702, {"claude-sonnet-4-5": (5600, 6, 0, 0), "claude-haiku-4-5-20251001": (300, 3, 0, 0)}),
+           reply("main", "msg_m2", (90000, 9, 0, 0), today_stamp(13)), name="main.jsonl")
+transcript(reply("main", "msg_s1", (5000, 5, 0, 0), STAMP, sidechain=True), name="main/subagents/agent-a1.jsonl")
+expect("Claude counts a fork's lineage once, a subagent's replies once, and keeps what a running process's cost-state held beyond its replies",
+       claude_code_days(),
+       {today_day: {"claude-sonnet-4-5": 905164 + 101 + 5005 + 500 + 90009, "claude-haiku-4-5-20251001": 303}})
+
+# A gateway can name a model one way in the request and another in the
+# reply: no more counts than the cost-state says beyond every reply.
+sandbox()
+transcript(typed("gw", "u-g1", STAMP), reply("gw", "msg_g1", (500, 5, 0, 0), STAMP, model="claude-sonnet-4-5-20250929"),
+           cost_state("gw", 1792681376828, {"anthropic/claude-sonnet-4.5": (500, 5, 0, 0)}), name="gw.jsonl")
+expect("Claude counts nothing more for a cost-state that names the replies' model another way", claude_code_days(),
+       {today_day: {"claude-sonnet-4-5-20250929": 505}})
+
 # ---------------------------------------------------------------- contract
 
 sandbox()

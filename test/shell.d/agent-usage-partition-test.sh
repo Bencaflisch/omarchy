@@ -1276,3 +1276,73 @@ if [[ -z $claimed_ids_report ]]; then
 else
   fail "a local.json naming a plan's harness ids leaves each row to the collector that meters it, counted once" "$claimed_ids_report"
 fi
+
+# ------------------------------------------------- Claude Code cost-state
+
+# A cost-state line's totals hold the requests no reply line records (a
+# /compact, the session title): what it holds beyond the replies counts once,
+# under the collector that bills that model behind the endpoint, as the
+# replies do.
+COST_HOME="$WORK/claude-cost"
+mkdir -p "$COST_HOME"
+python3 - "$COST_HOME" "$WORK/cost-cells.json" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+home = Path(sys.argv[1])
+stamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+# (model, reply tokens, beyond them, owner with no endpoint, owner behind Z.ai)
+MODELS = [("claude-sonnet-zq920", 1387, 3001387, "claude", "zai"), ("glm-zq921", 2390, 24387, "zai", "zai"), ("claude-haiku-zq922", 0, 917, "claude", "zai")]
+lines, usage = [], {}
+for n, (model, replied, beyond, *_) in enumerate(MODELS):
+  lines.append({"type": "user", "uuid": f"cost-prompt-{n}", "sessionId": "cost", "timestamp": stamp, "message": {"role": "user", "content": "go"}})
+  if replied:
+    lines.append({"type": "assistant", "sessionId": "cost", "timestamp": stamp, "requestId": f"req-cost-{n}",
+                  "message": {"id": f"msg-cost-{n}", "role": "assistant", "model": model, "usage": {"input_tokens": replied, "output_tokens": 0}}})
+  usage[model + "[1m]"] = {"inputTokens": replied + beyond, "outputTokens": 0, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0, "costUSD": 0}
+lines.append({"type": "cost-state", "sessionId": "cost", "startTime": 1792669864166, "modelUsage": usage})
+projects = home / ".claude/projects/project"
+projects.mkdir(parents=True)
+(projects / "cost.jsonl").write_text("".join(json.dumps(line) + "\n" for line in lines))
+Path(sys.argv[2]).write_text(json.dumps([{"tag": model.split("-")[-1], "tokens": replied + beyond, "owners": owners} for model, replied, beyond, *owners in MODELS]))
+PY
+run_all "$COST_HOME" "$WORK/cost-results-0"
+run_all "$COST_HOME" "$WORK/cost-results-1" ANTHROPIC_BASE_URL="https://api.z.ai/api/anthropic"
+
+cost_report=$(python3 - "$WORK" "${collectors[@]}" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+work = Path(sys.argv[1])
+cells = json.load(open(work / "cost-cells.json"))
+for endpoint in (0, 1):
+  seen = {cell["tag"]: {} for cell in cells}
+  for cid in sys.argv[2:]:
+    try:
+      record = json.loads((work / f"cost-results-{endpoint}" / f"{cid}.json").read_text())
+    except ValueError:
+      print(f"endpoint {endpoint}: {cid} printed no JSON record")
+      continue
+    for model, bucket in (record.get("modelUsage") or {}).items():
+      total = sum(bucket.get(key) or 0 for key in ("inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"))
+      for tag in re.findall(r"zq\d{3}", model):
+        if tag in seen and total:
+          seen[tag][cid] = seen[tag].get(cid, 0) + total
+  for cell in cells:
+    owner = cell["owners"][endpoint]
+    wrong = [f"{cid} counted {total} of {cell['tokens']}" for cid, total in sorted(seen[cell["tag"]].items()) if cid != owner or total != cell["tokens"]]
+    if owner not in seen[cell["tag"]]:
+      wrong.insert(0, f"{owner} missed it")
+    if wrong:
+      print(f"{cell['tag']} at endpoint {endpoint}, expected {owner}: {'; '.join(wrong)}")
+PY
+)
+if [[ -z $cost_report ]]; then
+  pass "what a Claude Code cost-state holds beyond the replies is counted once, by the collector that bills its model"
+else
+  fail "what a Claude Code cost-state holds beyond the replies is counted once, by the collector that bills its model" "$cost_report"
+fi
