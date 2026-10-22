@@ -612,6 +612,37 @@ check(
   sorted((row.output_tokens, row.input_tokens + row.output_tokens + row.cache_read) for row in thinking_rows) == [(54, 1529), (84, 4589)],
   json.dumps([row._asdict() for row in thinking_rows]),
 )
+# pi 1.4.0 counts a compaction's and a branch summary's usage, a usage entry
+# (cache warming), and a tool's nested model work in the session's totals.
+# Only the usage entry names its provider; the rest ran on the session's
+# model, the last switch or reply before them, as pi wrote this compaction.
+summaries = work / "summaries" / "sessions"
+pi_switch = {"type": "model_change", "id": "mc1", "timestamp": stamp, "provider": "demo", "modelId": "demo-model"}
+compaction = {"type": "compaction", "id": "c1", "parentId": "x", "timestamp": stamp, "summary": "Mock reply 210.", "firstKeptEntryId": "x", "tokensBefore": 44000,
+              "usage": {"input": 44102, "output": 521, "cacheRead": 561, "cacheWrite": 0, "reasoning": 427, "totalTokens": 45184}, "fromHook": False}
+write_session(summaries / "pi.jsonl", [
+  pi_switch,
+  compaction,
+  {"type": "usage", "id": "u1", "timestamp": stamp, "kind": "cache_warm", "provider": "demo", "model": "warm-model", "usage": {"input": 0, "output": 0, "cacheRead": 500, "cacheWrite": 0, "totalTokens": 500}},
+  {"type": "usage", "id": "u2", "timestamp": stamp, "kind": "cache_warm", "provider": "other", "model": "warm-model", "usage": {"input": 9000}},
+  {"type": "message", "id": "t1", "timestamp": stamp, "message": {"role": "toolResult", "toolCallId": "call_1", "toolName": "agent", "content": [], "usage": {"input": 30, "output": 3}, "isError": False}},
+  {"type": "message", "id": "o1", "timestamp": stamp, "message": {"role": "assistant", "provider": "other", "model": "o", "usage": {"input": 9000}}},
+  {**compaction, "id": "c2", "usage": {"input": 9000}},
+])
+# omp names the model as provider/model; a branch summary after it bills it,
+# one before any switch or reply bills nobody this reader can name.
+write_session(summaries / "omp.jsonl", [
+  {"type": "branch_summary", "id": "b0", "timestamp": stamp, "fromId": "x", "summary": "s", "usage": {"input": 9000}},
+  {"type": "model_change", "id": "mc2", "timestamp": stamp, "model": "demo/omp-model"},
+  {"type": "branch_summary", "id": "b1", "timestamp": stamp, "fromId": "x", "summary": "s", "usage": {"input": 70, "output": 7}},
+])
+summary_rows, _ = collectors.scan_pi_sessions(r'"provider"\s*:\s*"(demo|other)"', lambda provider, model, entry: provider == "demo", roots=[summaries])
+check(
+  "summaries, usage entries, and nested tool usage count under the model the session was on, answering no prompt",
+  sorted((row.model, row.input_tokens + row.output_tokens + row.cache_read, row.prompts) for row in summary_rows)
+  == [("demo-model", 33, 0), ("demo-model", 45184, 0), ("omp-model", 77, 0), ("warm-model", 500, 0)],
+  json.dumps([row._asdict() for row in summary_rows]),
+)
 check("a forked message counts toward the session it was forked from", next(row for row in rows if row.input_tokens == 100).session == os.path.realpath(parent))
 check("a fork that only copied its parent is no session of its own", os.path.realpath(sessions / "a" / "copy-only.jsonl") not in {row.session for row in rows})
 check("the provider filter is the caller's", all(row.provider == "demo" for row in rows))

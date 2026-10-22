@@ -102,6 +102,8 @@ run_all() {
 #   keeps them from counting twice.
 # - Usage kept only as totalTokens, which still counts, and a line dated at
 #   the epoch's zero, which counts nowhere.
+# - A compaction's usage, which names no provider and bills the model of the
+#   reply before it.
 # - opencode's database with rows only in the original `message` store, rows
 #   only in the V2 `session_message` store, rows migrated into both under one
 #   id (counted once), compactions (counted like replies), thinking tokens
@@ -185,6 +187,7 @@ PI_SOURCES = [
   ("pi-nested", home / ".pi/agent/sessions/nest-profile/agent/sessions/project"),
   ("omp-total", home / ".omp/agent/sessions/total"),
   ("omp-zero-stamp", home / ".omp/agent/sessions/zero"),
+  ("pi-compaction", home / ".pi/agent/sessions/compacted"),
 ]
 OC_SOURCES = ["opencode-message", "opencode-session_message", "opencode-migrated", "opencode-compaction",
               "opencode-reasoning", "opencode-fork-copy", "opencode-fork-reply", "opencode-zero-stamp",
@@ -224,6 +227,11 @@ for p, (provider, stem, api, pi_owner, oc_owner) in enumerate(PROVIDERS, 1):
     line = {"type": "message", "id": f"{source}-{tag}", "timestamp": 0 if source == "omp-zero-stamp" else stamp, "message": message}
     if source == "pi-nested":
       del line["id"]
+    if source == "pi-compaction":
+      # A compaction names no provider: it ran on the model of the reply
+      # before it, here one that spent nothing itself.
+      lines[source].append({**line, "id": f"{source}-{tag}-reply", "message": {**message, "usage": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}}})
+      line = {"type": "compaction", "id": f"{source}-{tag}", "timestamp": stamp, "summary": "s", "firstKeptEntryId": "x", "tokensBefore": tokens, "usage": usage}
     lines[source].append(line)
     owner = None if source == "omp-zero-stamp" else pi_owner
     cells.append({"tag": tag, "provider": provider, "api": api, "source": source, "tokens": tokens, "owner": owner})

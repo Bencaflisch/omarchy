@@ -481,7 +481,7 @@ class Stats:
   def add_row(self, row: UsageRow, model: str) -> None:
     """A row from scan_pi_sessions or scan_opencode, under the model name the
     collector shows for it."""
-    self.add(row.day, row.session, model, row.input_tokens, row.output_tokens, row.cache_read, row.cache_write)
+    self.add(row.day, row.session, model, row.input_tokens, row.output_tokens, row.cache_read, row.cache_write, row.prompts)
 
   def snapshot(self) -> dict[str, Any]:
     return {
@@ -600,7 +600,8 @@ class UsageRow(NamedTuple):
 
   `session` is the session it counts toward: the realpath of a pi/omp
   session file, or "opencode:<session id>". `model` is the model id as the
-  store wrote it, for the collector to name.
+  store wrote it, for the collector to name. `prompts` is how many prompts
+  it answered: tokens spent on a summary answered none.
   """
 
   day: str
@@ -611,6 +612,7 @@ class UsageRow(NamedTuple):
   output_tokens: int
   cache_read: int
   cache_write: int
+  prompts: int = 1
 
 
 # accept(provider, model, entry) decides whether a reply bills this collector.
@@ -684,18 +686,50 @@ def _rg_text(field: Any) -> str:
   return os.fsdecode(base64.b64decode(field.get("bytes") or ""))
 
 
-def _pi_row(entry: Any, path: str, accept: Accept) -> tuple[tuple, UsageRow] | None:
-  """(dedup key, row) for one session line this collector counts, or None."""
-  if not isinstance(entry, dict) or entry.get("type") != "message":
+# Spent tokens with no provider of their own: pi writes a compaction's and a
+# branch summary's on the entry, and a tool's nested model work on its
+# result, all as the session's model ran them, and counts them in the
+# session's totals.
+_PI_SUMMARIES = ("compaction", "branch_summary")
+
+
+def _pi_line(entry: Any) -> tuple | None:
+  """What one session line says, for the reader to fold in file order:
+  ("model", provider, model, reference) for a model switch, ("reply", ...)
+  for an assistant message, which also names the model the session is on,
+  ("spent", provider, model, entry, usage) for usage with its own provider,
+  ("summary", usage) for usage spent on the session's model, or None."""
+  if not isinstance(entry, dict):
     return None
-  message = obj(entry.get("message"))
-  if message.get("role") != "assistant":
+  kind = entry.get("type")
+  if kind == "message":
+    message = obj(entry.get("message"))
+    role = message.get("role")
+    if role == "assistant":
+      provider = str(message.get("provider") or "")
+      model = str(message.get("model") or "")
+      # Only what a collector's filter reads is kept, not the reply's text.
+      reference = {key: value for key, value in message.items() if key != "content"}
+      return "reply", provider, model, reference, obj(message.get("usage"))
+    if role == "toolResult" and isinstance(message.get("usage"), dict):
+      return "summary", message["usage"]
     return None
-  provider = str(message.get("provider") or "")
-  model = str(message.get("model") or "")
-  if not accept(provider, model, message):
-    return None
-  usage = obj(message.get("usage"))
+  if kind == "model_change":
+    # pi names the provider and model apart; omp joins them as provider/model.
+    provider = str(entry.get("provider") or "")
+    model = str(entry.get("modelId") or "")
+    if not provider and isinstance(entry.get("model"), str):
+      provider, _, model = entry["model"].partition("/")
+    return ("model", provider, model, {"provider": provider, "model": model}) if provider else None
+  if kind == "usage":
+    return "spent", str(entry.get("provider") or ""), str(entry.get("model") or ""), entry, obj(entry.get("usage"))
+  if kind in _PI_SUMMARIES and isinstance(entry.get("usage"), dict):
+    return "summary", entry["usage"]
+  return None
+
+
+def _pi_row(entry: dict, timestamp: Any, path: str, provider: str, model: str, usage: dict, prompts: int) -> tuple[tuple, UsageRow] | None:
+  """(dedup key, row) for usage one session line spent, or None."""
   input_tokens = usage_tokens(usage, "input", "inputTokens", "input_tokens")
   # pi's `reasoning` and omp's `reasoningTokens` are the part of output that
   # was thinking, already in it, so they are never added again.
@@ -709,9 +743,6 @@ def _pi_row(entry: Any, path: str, accept: Accept) -> tuple[tuple, UsageRow] | N
       return None
   # The first time present decides: none at all is today's, and an untrusted
   # one, zero included, skips only this line.
-  timestamp = entry.get("timestamp")
-  if timestamp is None:
-    timestamp = message.get("timestamp")
   day = local_day(timestamp)
   if day is None:
     return None
@@ -726,7 +757,77 @@ def _pi_row(entry: Any, path: str, accept: Accept) -> tuple[tuple, UsageRow] | N
     key = ("path", path, message_id)
   else:
     key = ("line", path, object())
-  return key, UsageRow(day, path, provider, model, input_tokens, output_tokens, cache_read, cache_write)
+  return key, UsageRow(day, path, provider, model, input_tokens, output_tokens, cache_read, cache_write, prompts)
+
+
+def _pi_contexts(path: str, lines: list[tuple[int, Any]]) -> list[tuple[int, tuple[str, str, dict]]]:
+  """(line number, (provider, model, reference)) for every model switch and
+  reply in a session file, in order.
+
+  rg handed over only the lines on the collector's providers, and a switch
+  to another one would go unseen, so the file itself is read again; it is
+  only needed where a summary is, and those are rare. When it can't be read,
+  the lines rg handed over stand in.
+  """
+  contexts = []
+  try:
+    if not stat.S_ISREG(os.stat(path).st_mode):
+      raise OSError(path)
+    with open(path, encoding="utf-8", errors="replace", newline="\n") as handle:
+      for line_number, raw in enumerate(handle, 1):
+        if '"model_change"' not in raw and '"assistant"' not in raw:
+          continue
+        try:
+          line = _pi_line(json.loads(raw))
+        except ValueError:
+          continue
+        if line is not None and line[0] in ("model", "reply"):
+          contexts.append((line_number, tuple(line[1:4])))
+    return contexts
+  except OSError:
+    pass
+  for line_number, entry in lines:
+    line = _pi_line(entry)
+    if line is not None and line[0] in ("model", "reply"):
+      contexts.append((line_number, tuple(line[1:4])))
+  return contexts
+
+
+def _pi_rows(path: str, lines: list[tuple[int, Any]], accept: Accept) -> Iterator[tuple[int, tuple, UsageRow]]:
+  """(line number, dedup key, row) for each (line number, entry) of one
+  session file, in order, that `accept` takes.
+
+  Usage with no provider of its own bills the model the session was on: the
+  last model switch or reply before it. With neither, nothing says who
+  billed it, and it is skipped.
+  """
+  parsed = [(line_number, entry, _pi_line(entry)) for line_number, entry in lines]
+  contexts = _pi_contexts(path, lines) if any(line and line[0] == "summary" for _, _, line in parsed) else []
+  for line_number, entry, line in parsed:
+    try:
+      if line is None or line[0] == "model":
+        continue
+      kind = line[0]
+      if kind == "summary":
+        before = [context for number_at, context in contexts if number_at < line_number]
+        if not before:
+          continue
+        provider, model, reference = before[-1]
+        usage = line[1]
+      else:
+        provider, model, reference, usage = line[1:]
+      if not accept(provider, model, reference):
+        continue
+      # The entry's own time, else the message's.
+      timestamp = entry.get("timestamp")
+      if timestamp is None:
+        timestamp = obj(entry.get("message")).get("timestamp")
+      counted = _pi_row(entry, timestamp, path, provider, model, obj(usage), 1 if kind == "reply" else 0)
+    except Exception:
+      # One odd line costs that line, never the scan.
+      continue
+    if counted is not None:
+      yield line_number, *counted
 
 
 def scan_pi_sessions(pattern: str, accept: Accept, roots: Iterable[Path] | None = None) -> tuple[list[UsageRow], bool]:
@@ -753,17 +854,28 @@ def scan_pi_sessions(pattern: str, accept: Accept, roots: Iterable[Path] | None 
     warn("rg is missing; pi and omp sessions were not scanned")
     return [], False
 
+  # Usage that names no provider of its own, spent on the session's model.
+  context = r'"type"\s*:\s*"(compaction|branch_summary)"|"role"\s*:\s*"toolResult".*"usage"\s*:\s*\{'
+
   # (root, path, line) of every counted line, so the rows come back in one
   # order however rg's threads interleave the files.
   found: list[tuple[int, str, int, tuple, UsageRow]] = []
   complete = True
+  # Each file's lines, folded in order when rg finishes the file.
+  pending: dict[str, list[tuple[int, Any]]] = {}
+
+  def fold(index: int, path: str) -> None:
+    lines = sorted(pending.pop(path, []), key=lambda line: line[0])
+    for line_number, key, row in _pi_rows(path, lines, accept):
+      found.append((index, path, line_number, key, row))
+
   for index, root in enumerate(roots):
     try:
       proc = subprocess.Popen(
         # --no-ignore: these are data files, not a source tree. When $HOME is
         # itself a git checkout (a common dotfiles setup), its ignore rules
         # would otherwise hide every session file and count zero usage.
-        [rg, "--json", "--no-ignore", "--hidden", "--glob", "*.jsonl", "-e", pattern, str(root)],
+        [rg, "--json", "--no-ignore", "--hidden", "--glob", "*.jsonl", "-e", pattern, "-e", context, str(root)],
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         text=True,
@@ -777,17 +889,20 @@ def scan_pi_sessions(pattern: str, accept: Accept, roots: Iterable[Path] | None 
       for raw in proc.stdout:
         try:
           event = json.loads(raw)
+          data = event["data"]
+          if event.get("type") == "end":
+            fold(index, os.path.realpath(_rg_text(data.get("path"))))
+            continue
           if event.get("type") != "match":
             continue
-          data = event["data"]
           path = os.path.realpath(_rg_text(data.get("path")))
-          counted = _pi_row(json.loads(_rg_text(data.get("lines"))), path, accept)
-          line_number = number(data.get("line_number"))
+          entry = json.loads(_rg_text(data.get("lines")))
+          pending.setdefault(path, []).append((number(data.get("line_number")), entry))
         except Exception:
           # One odd line costs that line, never the scan.
           continue
-        if counted is not None:
-          found.append((index, path, line_number, *counted))
+    for path in list(pending):
+      fold(index, path)
     try:
       # rg exits 1 for no match and 2 when it couldn't read something.
       if proc.wait(timeout=5) not in (0, 1):
