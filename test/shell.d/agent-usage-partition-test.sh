@@ -187,7 +187,8 @@ PI_SOURCES = [
   ("omp-zero-stamp", home / ".omp/agent/sessions/zero"),
 ]
 OC_SOURCES = ["opencode-message", "opencode-session_message", "opencode-migrated", "opencode-compaction",
-              "opencode-reasoning", "opencode-fork-copy", "opencode-fork-reply", "opencode-zero-stamp"]
+              "opencode-reasoning", "opencode-fork-copy", "opencode-fork-reply", "opencode-zero-stamp",
+              "opencode-message-fork-copy", "opencode-message-fork-reply"]
 
 now = datetime.now(timezone.utc)
 stamp = now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
@@ -249,7 +250,13 @@ for p, (provider, stem, api, pi_owner, oc_owner) in enumerate(PROVIDERS, 1):
       session_rows.append((message_id, "ses_fork", "assistant", fork_ms - 5_000, v2))
     if source == "opencode-fork-reply":
       session_rows.append((message_id, "ses_fork", "assistant", now_ms, v2))
-    owner = None if source in ("opencode-fork-copy", "opencode-zero-stamp") else oc_owner
+    if source == "opencode-message-fork-copy":
+      # As opencode 1.19.3's `run --fork` writes one into the original store:
+      # a plain new session, the copy under a new id, its time the source's.
+      message_rows.append((message_id, "ses_message_fork", now_ms, now_ms, json.dumps({**json.loads(v1), "time": {"created": fork_ms - 5_000}})))
+    if source == "opencode-message-fork-reply":
+      message_rows.append((message_id, "ses_message_fork", now_ms, now_ms, v1))
+    owner = None if source in ("opencode-fork-copy", "opencode-zero-stamp", "opencode-message-fork-copy") else oc_owner
     cells.append({"tag": tag, "provider": provider, "api": "", "source": source, "tokens": tokens, "owner": owner})
 
 for source, directory in PI_SOURCES:
@@ -278,6 +285,8 @@ conn.execute("CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NUL
 conn.execute("CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, time_created integer NOT NULL, data text NOT NULL)")
 conn.execute("CREATE TABLE session_v2 (id text PRIMARY KEY, fork_session_id text, time_created integer NOT NULL)")
 conn.execute("INSERT INTO session_v2 VALUES ('ses_fork', 'ses_opencode-session_message', ?)", (fork_ms,))
+conn.execute("CREATE TABLE session (id text PRIMARY KEY, parent_id text, title text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL)")
+conn.execute("INSERT INTO session VALUES ('ses_message_fork', NULL, 'Mock reply (fork #1)', ?, ?)", (fork_ms, fork_ms))
 conn.executemany("INSERT INTO message VALUES (?, ?, ?, ?, ?)", message_rows)
 conn.executemany("INSERT INTO session_message VALUES (?, ?, ?, ?, ?)", session_rows)
 conn.commit()

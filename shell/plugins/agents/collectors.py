@@ -910,10 +910,15 @@ def scan_opencode(providers: Iterable[str], accept: Accept) -> tuple[list[UsageR
   rows: list[UsageRow] = []
   seen: set[str] = set()
 
-  def take(message_id: Any, session_id: Any, raw: Any, row_type: str, created: Any) -> None:
+  def take(message_id: Any, session_id: Any, raw: Any, row_type: str, created: Any, since: Any = None) -> None:
     # One row that still fails must not take the scan down with it.
     try:
-      row = _opencode_row(session_id, json.loads(raw), row_type, created, accept)
+      entry = json.loads(raw)
+      # A copy a fork made predates the session holding it.
+      spent_at = number(obj(obj(entry).get("time")).get("created"))
+      if spent_at and spent_at < number(since):
+        return
+      row = _opencode_row(session_id, entry, row_type, created, accept)
     except Exception:
       return
     # A migrated message can sit in both stores under the same id.
@@ -944,14 +949,22 @@ def scan_opencode(providers: Iterable[str], accept: Accept) -> tuple[list[UsageR
         take(message_id, session_id, raw, str(row_type or ""), time_created)
     columns = _table_columns(conn, "message") if "message" in tables else set()
     if {"session_id", "data"} <= columns and patterns:
-      row_id = "id" if "id" in columns else "rowid"
-      gate = " OR ".join("data LIKE ?" for _ in patterns)
-      for message_id, session_id, raw in conn.execute(
-        f"SELECT {row_id}, session_id, data FROM message"
-        f" WHERE data LIKE '%\"role\"%:%\"assistant\"%' AND ({gate})",
+      row_id = "m.id" if "id" in columns else "m.rowid"
+      source = "message m"
+      session_created = "NULL"
+      if "session" in tables and {"id", "time_created"} <= _table_columns(conn, "session"):
+        # A fork here is a plain new session holding copies of its source's
+        # messages under new ids, each keeping its original time.created, so
+        # a message older than its session was spent in the source.
+        source += " LEFT JOIN session s ON s.id = m.session_id"
+        session_created = "s.time_created"
+      gate = " OR ".join("m.data LIKE ?" for _ in patterns)
+      for message_id, session_id, raw, since in conn.execute(
+        f"SELECT {row_id}, m.session_id, m.data, {session_created} FROM {source}"
+        f" WHERE m.data LIKE '%\"role\"%:%\"assistant\"%' AND ({gate})",
         patterns,
       ):
-        take(message_id, session_id, raw, "", None)
+        take(message_id, session_id, raw, "", None, since)
   except sqlite3.Error:
     # Transient lock, schema migration, corruption: the numbers stop here,
     # incomplete.
