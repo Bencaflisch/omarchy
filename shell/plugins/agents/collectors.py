@@ -38,6 +38,7 @@ import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, NamedTuple
@@ -819,21 +820,28 @@ def _pi_rows(path: str, lines: list[tuple[int, Any]], accept: Accept) -> Iterato
   last model switch or reply before it. With neither, nothing says who
   billed it, and it is skipped. A typed prompt is booked on the first reply
   that spent tokens answering it, so tool steps and summaries answer none,
-  and a prompt another provider answered stays with that one. A file with
-  no user messages at all, as only a writer copying pi's format leaves,
-  keeps a prompt per reply.
+  and a prompt another provider answered stays with that one. It counts on
+  its own day, not the reply's, and one whose time can't be trusted doesn't
+  count. A file with no user messages at all, as only a writer copying pi's
+  format leaves, keeps a prompt per reply.
   """
   parsed = [(line_number, entry, _pi_line(entry)) for line_number, entry in lines]
   typed = any(line == ("prompt",) for _, _, line in parsed)
-  asked = False
+  # The day of each typed prompt no reply has answered yet, None for one
+  # whose time can't be trusted.
+  asked: list[str | None] = []
   contexts = _pi_contexts(path, lines) if any(line and line[0] == "summary" for _, _, line in parsed) else []
   for line_number, entry, line in parsed:
     try:
       if line is None or line[0] == "model":
         continue
       kind = line[0]
+      # The entry's own time, else the message's.
+      timestamp = entry.get("timestamp")
+      if timestamp is None:
+        timestamp = obj(entry.get("message")).get("timestamp")
       if kind == "prompt":
-        asked = True
+        asked.append(local_day(timestamp))
         continue
       if kind == "summary":
         before = [context for number_at, context in contexts if number_at < line_number]
@@ -843,22 +851,25 @@ def _pi_rows(path: str, lines: list[tuple[int, Any]], accept: Accept) -> Iterato
         usage = line[1]
       else:
         provider, model, reference, usage = line[1:]
+      counted = _pi_row(entry, timestamp, path, provider, model, obj(usage), int(kind == "reply" and not typed))
+      answered: list[str | None] = []
+      if kind == "reply" and counted is not None:
+        answered, asked = asked, []
       if not accept(provider, model, reference):
-        if kind == "reply":
-          asked = False
         continue
-      # The entry's own time, else the message's.
-      timestamp = entry.get("timestamp")
-      if timestamp is None:
-        timestamp = obj(entry.get("message")).get("timestamp")
-      counted = _pi_row(entry, timestamp, path, provider, model, obj(usage), int(kind == "reply" and (asked or not typed)))
     except Exception:
       # One odd line costs that line, never the scan.
       continue
-    if counted is not None:
-      if kind == "reply":
-        asked = False
-      yield line_number, *counted
+    if counted is None:
+      continue
+    key, row = counted
+    # Prompts typed on the reply's day ride on its row; one typed on another
+    # day is a row of its own there, keyed by the reply that answered it.
+    days = Counter(day for day in answered if day is not None)
+    row = row._replace(prompts=row.prompts + days.pop(row.day, 0))
+    yield line_number, key, row
+    for day, prompts in sorted(days.items()):
+      yield line_number, ("prompt", day, *key), UsageRow(day, path, provider, model, 0, 0, 0, 0, prompts)
 
 
 def scan_pi_sessions(pattern: str, accept: Accept, roots: Iterable[Path] | None = None) -> tuple[list[UsageRow], bool]:
@@ -886,9 +897,10 @@ def scan_pi_sessions(pattern: str, accept: Accept, roots: Iterable[Path] | None 
     return [], False
 
   # Usage that names no provider of its own, spent on the session's model,
-  # and the prompts the replies answer.
+  # the prompts the replies answer, and every reply, since one another
+  # provider gave still answers the prompt before it.
   summary = r'"type"\s*:\s*"(compaction|branch_summary)"|"role"\s*:\s*"toolResult".*"usage"\s*:\s*\{'
-  context = summary + r'|"role"\s*:\s*"user"'
+  context = summary + r'|"role"\s*:\s*"(user|assistant)"'
 
   # (root, path, line) of every counted line, so the rows come back in one
   # order however rg's threads interleave the files.
