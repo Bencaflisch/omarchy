@@ -2,7 +2,7 @@
 
 # The Ollama Cloud collector's own parts: the ollama-cloud filter over pi and
 # omp sessions with model tags merged, the configured model prefix, Ollama's
-# usage and plan answers, and its key. Roots, forks, cloud-tagged models
+# balance and plan answers, and its key. Roots, forks, cloud-tagged models
 # through the local daemon, both opencode stores, OPENCODE_DB and untrusted
 # values are held by the shared and partition tests, as is the
 # unused-machine record; the limits and scan caches go through the contract
@@ -20,15 +20,18 @@ from agent_usage_fixtures import *
 
 # The checks below compare today's totals with rows stamped now.
 freeze_today()
-USAGE = "ollama.com/api/usage"
+BALANCE = "ollama.com/api/balance"
 ME = "ollama.com/api/me"
+SESSION_RESET = iso_in(3 * 3600)
+WEEKLY_RESET = iso_in(4 * 86400)
+# A legacy plan's answer, as docs.ollama.com/api/balance documents it.
 ROUTES = {
-  USAGE: {
-    "activity": {"cost": "0.00"},
-    "limits": {
-      "session": {"usage": 0.434, "models": [{"name": "deepseek-v4-pro:0813", "request_count": 340}]},
-      "weekly": {"usage": 0.298, "models": [{"name": "kimi-k3", "request_count": 377}]},
+  BALANCE: {
+    "included": {
+      "session": {"remaining_percent": 75, "resets_at": SESSION_RESET},
+      "weekly": {"remaining_percent": 40, "resets_at": WEEKLY_RESET},
     },
+    "purchased": {"balance_usd": 25},
   },
   ME: {"Plan": "pro"},
 }
@@ -97,18 +100,16 @@ def add_reply():
   write_pi_session(sessions() / "grown" / f"{add_reply.count}.jsonl", [pi_reply("ollama-cloud", 5, id=f"grown-{add_reply.count}")])
 
 
-# A probe asks for the usage and then the plan. Ollama's usage answer names no
-# reset times, so no kept window can elapse; the contract's check that kept
-# limits come back as they were measured covers how they are kept.
+# A probe asks for the balance and then the plan.
 adapter = Adapter("ollama", plant=lambda: os.environ.update(OLLAMA_API_KEY="key"), answer=ROUTES, requests_per_probe=2,
-                  skip=("elapsed",), grow=add_reply, pi_root=sessions)
+                  grow=add_reply, pi_root=sessions)
 fresh = check_limits_contract(adapter)
-expect("Ollama's plan and its session and weekly fractions come from its answers, with no reset times made up", {
+expect("Ollama's plan and a legacy plan's session and weekly use and resets come from its answers", {
   "tierLabel": fresh["tierLabel"], "limits": fresh["limits"],
 }, {
   "tierLabel": "Pro", "limits": [
-    {"label": "Session (5-hour)", "percent": 0.434, "resetsAt": ""},
-    {"label": "Weekly (7-day)", "percent": 0.298, "resetsAt": ""},
+    {"label": "Session (5-hour)", "percent": 0.25, "resetsAt": SESSION_RESET},
+    {"label": "Weekly (7-day)", "percent": 0.6, "resetsAt": WEEKLY_RESET},
   ],
 }, fresh)
 check_scan_cache(adapter)
@@ -127,10 +128,10 @@ expect("Ollama keeps the cached plan when the plan lookup fails", [record["tierL
 # on the network.
 def later_run(request):
   edit_limits_cache("ollama", fetched_ago=-60)
-  return ROUTES[USAGE]
+  return ROUTES[BALANCE]
 
 
-ollama(routes={**ROUTES, USAGE: later_run})
+ollama(routes={**ROUTES, BALANCE: later_run})
 expect("Ollama never overwrites a newer cached answer with its own",
        [json.loads(path.read_text())["fetchedAtMs"] > ms_in(30) for path in limits_cache_files("ollama")], [True])
 edit_limits_cache("ollama", fetched_ago=0)
@@ -154,14 +155,32 @@ record = ollama(mode=500)
 expect("Ollama advises no retry for a server's error status", [record["usageStatusText"], record.get("retryAdvised")],
        ["Ollama limits unavailable", None], record)
 
+# A current plan's answer, as documented: the included credits are a monthly
+# meter of what is spent, resetting when the period ends.
+record = ollama(routes={BALANCE: {
+  "included": {"balance_usd": 72.5, "allowance_usd": 100, "period": {"from": iso_in(-86400), "until": WEEKLY_RESET}},
+  "purchased": {"balance_usd": 25},
+}, ME: {"Plan": "pro"}})
+expect("Ollama meters a current plan's included credits until the period ends", [record["limits"], record["usageStatusText"]],
+       [[{"label": "Included credits", "title": "Monthly", "percent": 0.275, "resetsAt": WEEKLY_RESET}], ""], record)
+
 # An answer with no usable windows explains itself instead of printing none.
-record = ollama(routes={USAGE: {"limits": {"session": {"usage": "unknown"}, "weekly": None}}, ME: {"Plan": "pro"}})
-expect("Ollama reports an answer without usable limits", [record["limits"], record["usageStatusText"], "no limits" in record["authHelpText"]],
+sandbox()
+os.environ["OLLAMA_API_KEY"] = "key"
+record = ollama(routes={BALANCE: {"included": {"session": {"remaining_percent": "unknown"}, "weekly": None}, "purchased": {"balance_usd": 0}},
+                        ME: {"Plan": "pro"}})
+expect("Ollama reports a balance answer without usable limits", [record["limits"], record["usageStatusText"], "no limits" in record["authHelpText"]],
        [[], "Ollama limits unavailable", True], record)
 
-# A window used past its allowance reads as full, never above it.
-record = ollama(routes={USAGE: {"limits": {"session": {"usage": 1.7}, "weekly": {"usage": 0.2}}}, ME: {"Plan": "pro"}})
-expect("Ollama caps a window used past its allowance at full", [entry["percent"] for entry in record["limits"]], [1.0, 0.2], record)
+# Values out of range or of the wrong type skip that window, never the rest:
+# a negative remainder is dropped, one past 100 reads as untouched, and a
+# reset that won't parse as none.
+record = ollama(routes={BALANCE: {"included": {
+  "session": {"remaining_percent": -20, "resets_at": SESSION_RESET},
+  "weekly": {"remaining_percent": 140, "resets_at": "not a time"},
+}}, ME: {"Plan": "pro"}})
+expect("Ollama skips a window it can't read and keeps the rest in range",
+       record["limits"], [{"label": "Weekly (7-day)", "percent": 0.0, "resetsAt": ""}], record)
 
 # Without OLLAMA_API_KEY, the key pi or omp signed in with stands in, pi's
 # first, and goes out as a Bearer token on both requests. A pi `$VAR` or
