@@ -842,6 +842,15 @@ grep -Fx "prereleases=true use -g $dsh_package" "$mise_history" >/dev/null ||
 : >"$mise_history"
 omarchy-default-agent --install kilo >/dev/null
 grep -q '^prereleases=' "$mise_history" && fail "other agents install only stable releases after Remove Preinstalls"
+# An npm-backed agent brings node along here too, since node may still be
+# declared without being installed; Muse isn't npm-backed and doesn't.
+node_line=$(grep -nx "install node" "$mise_history" | cut -d: -f1)
+kilo_line=$(grep -nFx "use -g $kilo_package" "$mise_history" | cut -d: -f1)
+[[ -n $node_line && -n $kilo_line ]] && (( node_line < kilo_line )) ||
+  fail "an npm-backed agent installs node before it after Remove Preinstalls"
+: >"$mise_history"
+omarchy-default-agent --install muse >/dev/null
+grep -qx "install node" "$mise_history" && fail "an agent that isn't npm-backed installs no node after Remove Preinstalls"
 rm -f "$agent_file" "$test_home/.config/mise/miserc.toml"
 
 # With Omarchy's system config, installing is enough; the user config stays alone.

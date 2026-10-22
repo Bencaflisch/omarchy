@@ -106,20 +106,28 @@ else
   # Omarchy declares the default agents as mise tools, so installing one is
   # enough and leaves the user's config alone. A user who removed the
   # preinstalls, like one without Omarchy's declarations, selects it instead.
+  # An npm-backed agent needs node, itself a lazy tool where Omarchy declares
+  # it, and mise won't install it as the agent's dependency while it's missing.
+  npm_backed() {
+    [[ $1 == npm:* || $(mise tool "${1%%\[*}" --backend 2>/dev/null) == npm:* ]]
+  }
   agent_install() {
     user_install && return
     if omarchy-mise-default-tools declares "$agent_tool"; then
-      # An npm-backed agent needs node, itself a lazy tool, and mise won't
-      # install it as the agent's dependency on a machine without it yet.
-      if [[ $(mise tool "$agent_tool" --backend 2>/dev/null) == npm:* ]]; then
+      if npm_backed "$agent_tool"; then
         mise install node "$agent_tool"
       else
         mise install "$agent_tool"
       fi
-    elif [[ ${agent_prereleases:-} == "true" ]]; then
-      MISE_PRERELEASES=true mise use -g "$agent_package"
     else
-      mise use -g "$agent_package"
+      if npm_backed "$agent_package" && ! mise where node &>/dev/null; then
+        mise install node || return 1
+      fi
+      if [[ ${agent_prereleases:-} == "true" ]]; then
+        MISE_PRERELEASES=true mise use -g "$agent_package"
+      else
+        mise use -g "$agent_package"
+      fi
     fi
   }
 fi
