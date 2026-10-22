@@ -104,6 +104,21 @@ pass "the upgrade leaves a grant that already carries the default alone"
 )
 pass "the upgrade leaves administrator policy under the generated prefix alone"
 
+# Status and revocation run the installed copy. A dev-linked checkout newer
+# than the package must not rewrite a grant into a form that copy cannot revoke.
+(
+  source "$library"
+  reset_grant
+  printf 'audituser ALL=(ALL) NOPASSWD: ALL\n' >"$(rule_file 1000 permanent)"
+  rm "$test_tmp/installed/omarchy-sudo-passwordless"
+  sed '/__upgrade-grant-format/d' "$test_tmp/omarchy-sudo-passwordless" >"$test_tmp/installed/omarchy-sudo-passwordless"
+  upgrade_grant_format_locked
+  [[ $(cat "$(rule_file 1000 permanent)") == 'audituser ALL=(ALL) NOPASSWD: ALL' ]]
+)
+rm -f "$test_tmp/installed/omarchy-sudo-passwordless"
+ln -s ../omarchy-sudo-passwordless "$test_tmp/installed/omarchy-sudo-passwordless"
+pass "the upgrade leaves grants alone while the installed copy cannot read the new form"
+
 # The migration reaches the upgrade through the command's own dispatch, so the
 # action has to be reachable from the executable and not only from inside it.
 (
