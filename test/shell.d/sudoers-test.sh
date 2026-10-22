@@ -253,13 +253,16 @@ chmod +x "$stub_bin/pkexec"
   cat <<'SH'
 if [[ $1 == -n && $2 == -l ]]; then
   shift 2
+  options=""
   if [[ $1 == -l ]]; then
     shift
     if [[ -n $STUB_DROPIN ]] && sudoers_permits "$STUB_DROPIN" "$@"; then
-      echo "    Options: !authenticate"
+      options=$'    Options: !authenticate\n'
     fi
   fi
-  echo "    $*"
+  # One write: the caller's grep -q stops reading at the first match, and a
+  # second write would then die of SIGPIPE and fail its pipefail pipeline.
+  printf '%s    %s\n' "$options" "$*"
   exit 0
 fi
 printf 'sudo %s\n' "$*" >"$ELEVATION_LOG"
