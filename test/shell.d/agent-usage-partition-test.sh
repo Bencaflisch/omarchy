@@ -975,3 +975,146 @@ if [[ -s $WORK/ids-report.txt ]]; then
   fail "each harness's own id for a plan is counted once, by the collector that meters it" "$(cat "$WORK/ids-report.txt")"
 fi
 pass "each harness's own id for a plan is counted once, by the collector that meters it"
+
+# ----------------------------------------------------- harness stores' routes
+
+# Kimi Code, Qwen Code, Hermes and Mistral Vibe keep stores of their own and
+# record where each request went: each request on a route counts once, by
+# the harness's own collector when its service billed it, by `local` on a
+# server you run, and by nobody on any other provider or a gateway, since no
+# other collector reads these stores.
+HARNESS_HOME="$WORK/harnesses"
+mkdir -p "$HARNESS_HOME"
+python3 - "$HARNESS_HOME" "$WORK/harness-cells.json" <<'PY'
+import json
+import sqlite3
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+home = Path(sys.argv[1])
+now = time.time()
+now_ms = int(now * 1000)
+stamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+cells = []
+
+
+def cell(source, route, owner):
+  tag = f"zq{900 + len(cells)}"
+  tokens = 91000 + 100 * len(cells)
+  cells.append({"tag": tag, "source": source, "route": route, "tokens": tokens, "owner": owner})
+  return tag, tokens
+
+
+# Kimi Code: a model alias per route in config.toml, one usage.record each.
+KIMI_ROUTES = [
+  ("plan", 'type = "kimi"\nbase_url = "https://api.kimi.com/coding/v1"', "kimi"),
+  ("box", 'type = "kimi"\nbase_url = "http://192.168.1.20:8000/v1"', "local"),
+  ("anth", 'type = "anthropic"', None),
+  ("acme", 'type = "openai"\nbase_url = "https://llm.acme.example/v1"', None),
+]
+config, wire = [], []
+for name, provider, owner in KIMI_ROUTES:
+  tag, tokens = cell("kimi-code", name, owner)
+  config.append(f'[providers.{name}]\n{provider}\napi_key = "k"\n\n[models."{name}/m-{tag}"]\nprovider = "{name}"\nmodel = "m-{tag}"\nmax_context_size = 1000\n')
+  wire.append({"type": "usage.record", "agentId": "main", "model": f"{name}/m-{tag}", "usage": {"inputOther": tokens, "output": 0, "inputCacheRead": 0, "inputCacheCreation": 0}, "usageScope": "turn", "time": now_ms})
+(home / ".kimi-code").mkdir()
+(home / ".kimi-code" / "config.toml").write_text("\n".join(config))
+path = home / ".kimi-code" / "sessions" / "wd_p_1" / "session_1" / "agents" / "main" / "wire.jsonl"
+path.parent.mkdir(parents=True)
+path.write_text("".join(json.dumps(line) + "\n" for line in wire))
+
+# Qwen Code: settings.json's modelProviders say where each model goes.
+QWEN_ROUTES = [
+  ("openai", "https://coding-intl.dashscope.aliyuncs.com/v1", "qwen"),
+  ("openai", None, "qwen"),
+  ("openai", "http://localhost:1234/v1", "local"),
+  ("openai", "https://openrouter.ai/api/v1", None),
+  ("anthropic", None, None),
+]
+providers, lines = {}, []
+for auth, url, owner in QWEN_ROUTES:
+  tag, tokens = cell("qwen-code", f"{auth} {url}", owner)
+  if url:
+    providers.setdefault(auth, []).append({"id": f"q-{tag}", "baseUrl": url})
+  lines.append({"uuid": tag, "sessionId": "s", "timestamp": stamp, "type": "system", "subtype": "ui_telemetry", "systemPayload": {"uiEvent": {
+    "event.name": "qwen-code.api_response", "event.timestamp": stamp, "response_id": tag, "model": f"q-{tag}", "auth_type": auth,
+    "input_token_count": tokens, "output_token_count": 0, "cached_content_token_count": 0}}})
+(home / ".qwen" / "projects" / "p" / "chats").mkdir(parents=True)
+(home / ".qwen" / "settings.json").write_text(json.dumps({"modelProviders": providers}))
+(home / ".qwen" / "projects" / "p" / "chats" / "s.jsonl").write_text("".join(json.dumps(line) + "\n" for line in lines))
+
+# Hermes: each session and request names the base URL it was billed through.
+(home / ".hermes").mkdir()
+conn = sqlite3.connect(home / ".hermes" / "state.db")
+conn.executescript("""
+CREATE TABLE sessions (id TEXT PRIMARY KEY, model TEXT, started_at REAL NOT NULL, billing_provider TEXT, billing_base_url TEXT);
+CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL, timestamp REAL NOT NULL);
+CREATE TABLE session_model_usage (session_id TEXT NOT NULL, model TEXT NOT NULL, billing_provider TEXT NOT NULL DEFAULT '', billing_base_url TEXT NOT NULL DEFAULT '',
+  input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0, cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0);
+""")
+HERMES_ROUTES = [
+  ("nous", "https://inference-api.nousresearch.com/v1", "hermes"),
+  ("custom", "http://127.0.0.1:8080/v1", "local"),
+  ("openrouter", "https://openrouter.ai/api/v1", None),
+]
+for provider, url, owner in HERMES_ROUTES:
+  tag, tokens = cell("hermes", provider, owner)
+  conn.execute("INSERT INTO sessions VALUES (?, ?, ?, ?, ?)", (tag, f"h-{tag}", now, provider, url))
+  conn.execute("INSERT INTO session_model_usage (session_id, model, billing_provider, billing_base_url, input_tokens) VALUES (?, ?, ?, ?, ?)", (tag, f"h-{tag}", provider, url, tokens))
+conn.commit()
+conn.close()
+
+# Mistral Vibe: a legacy session per provider, its config dumped beside it.
+VIBE_ROUTES = [
+  ("mistral", {"name": "mistral", "backend": "mistral"}, "vibe"),
+  ("llamacpp", {"name": "llamacpp", "api_base": "http://127.0.0.1:8080/v1", "backend": "generic"}, "local"),
+  ("proxy", {"name": "proxy", "api_base": "https://llm.acme.example/v1", "backend": "generic"}, None),
+]
+for n, (provider, entry, owner) in enumerate(VIBE_ROUTES):
+  tag, tokens = cell("vibe", provider, owner)
+  session = home / ".vibe" / "logs" / "session" / f"session_20260101_12000{n}_{tag}"
+  session.mkdir(parents=True)
+  (session / "meta.json").write_text(json.dumps({"session_id": session.name, "start_time": stamp, "config": {
+    "active_model": f"v-{tag}", "models": {f"v-{tag}": {"name": f"v-{tag}", "provider": provider, "alias": f"v-{tag}"}}, "providers": [entry]},
+    "stats": {"session_prompt_tokens": tokens, "session_cached_tokens": 0, "session_completion_tokens": 0}}))
+
+Path(sys.argv[2]).write_text(json.dumps(cells))
+PY
+run_all "$HARNESS_HOME" "$WORK/harness-results"
+
+harness_report=$(python3 - "$WORK" "${collectors[@]}" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+work = Path(sys.argv[1])
+cells = {cell["tag"]: cell for cell in json.load(open(work / "harness-cells.json"))}
+seen = {tag: {} for tag in cells}
+for cid in sys.argv[2:]:
+  try:
+    record = json.loads((work / "harness-results" / f"{cid}.json").read_text())
+  except ValueError:
+    print(f"{cid} printed no JSON record")
+    continue
+  for model, bucket in (record.get("modelUsage") or {}).items():
+    total = sum(bucket.get(key) or 0 for key in ("inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"))
+    for tag in re.findall(r"zq9\d\d", model):
+      if tag in seen and total:
+        seen[tag][cid] = seen[tag].get(cid, 0) + total
+for tag, cell in sorted(cells.items()):
+  owner, tokens = cell["owner"], cell["tokens"]
+  wrong = [f"{cid} counted it {total / tokens:g}x" for cid, total in sorted(seen[tag].items()) if cid != owner or total != tokens]
+  if owner and owner not in seen[tag]:
+    wrong.insert(0, f"{owner} missed it")
+  if wrong:
+    print(f"{cell['source']} on {cell['route']} ({tag}), expected {owner or 'nobody'}: {'; '.join(wrong)}")
+PY
+)
+if [[ -z $harness_report ]]; then
+  pass "each Kimi Code, Qwen Code, Hermes and Vibe request is counted once, by the collector that bills its recorded route, or by none"
+else
+  fail "each Kimi Code, Qwen Code, Hermes and Vibe request is counted once, by the collector that bills its recorded route, or by none" "$harness_report"
+fi
