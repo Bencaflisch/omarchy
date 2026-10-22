@@ -643,6 +643,31 @@ check(
   == [("demo-model", 33, 0), ("demo-model", 45184, 0), ("omp-model", 77, 0), ("warm-model", 500, 0)],
   json.dumps([row._asdict() for row in summary_rows]),
 )
+# A prompt is a typed user message, booked on the first reply answering it,
+# as pi 1.4.0 wrote one that called a tool: the step after the tool result
+# answers no new prompt. omp marks the user messages it writes itself (a
+# handoff) as the agent's, and a prompt another provider answered is not
+# this one's.
+turns = work / "turns" / "sessions"
+write_session(turns / "pi.jsonl", [
+  {"type": "model_change", "id": "mc", "timestamp": stamp, "provider": "demo", "modelId": "m"},
+  {"type": "message", "id": "sys", "timestamp": stamp, "message": {"role": "system", "content": "", "timestamp": 1}},
+  {"type": "message", "id": "u1", "timestamp": stamp, "message": {"role": "user", "content": [{"type": "text", "text": "Use the tool"}], "timestamp": 1}},
+  reply("demo", 0, "step1", usage={"input": 21401, "output": 47, "cacheRead": 274, "cacheWrite": 0, "totalTokens": 21722}),
+  {"type": "message", "id": "tr", "timestamp": stamp, "message": {"role": "toolResult", "toolCallId": "call_1", "toolName": "bash", "content": [{"type": "text", "text": "ok"}], "isError": False}},
+  reply("demo", 0, "step2", usage={"input": 21501, "output": 47, "cacheRead": 275, "cacheWrite": 0, "totalTokens": 21823}),
+  {"type": "message", "id": "u2", "timestamp": stamp, "message": {"role": "user", "content": "Ask the other one", "timestamp": 2}},
+  reply("other", 0, "o1", usage={"input": 9000}),
+  {"type": "message", "id": "u3", "timestamp": stamp, "message": {"role": "user", "content": [{"type": "text", "text": "handoff"}], "attribution": "agent"}},
+  reply("demo", 0, "step3", usage={"input": 5}),
+])
+turn_rows, _ = collectors.scan_pi_sessions(r'"provider"\s*:\s*"(demo|other)"', lambda provider, model, entry: provider == "demo", roots=[turns])
+check(
+  "a typed prompt books on its first reply, not on a tool step, a handoff, or another provider's reply",
+  sorted((row.input_tokens, row.prompts) for row in turn_rows) == [(5, 0), (21401, 1), (21501, 0)],
+  json.dumps([row._asdict() for row in turn_rows]),
+)
+check("a session without user messages keeps a prompt per reply", all(row.prompts == 1 for row in thinking_rows))
 check("a forked message counts toward the session it was forked from", next(row for row in rows if row.input_tokens == 100).session == os.path.realpath(parent))
 check("a fork that only copied its parent is no session of its own", os.path.realpath(sessions / "a" / "copy-only.jsonl") not in {row.session for row in rows})
 check("the provider filter is the caller's", all(row.provider == "demo" for row in rows))
@@ -841,6 +866,52 @@ os.environ.pop("OPENCODE_DB")
 check(
   "a database with only the V2 store reads on its own, flat rows and nested alike",
   complete and sorted((row.session, row.model, row.input_tokens) for row in rows) == [("opencode:ses_a", "flat-model", 5), ("opencode:ses_b", "v2-model", 7)],
+  json.dumps([row._asdict() for row in rows]),
+)
+
+# A prompt is a typed user message, so of the steps answering one, as
+# opencode 1.19.3 writes them (the same parentID), the first books it. A
+# compaction's summary answers the marker opencode adds, and a subagent's
+# session holds the model's prompts, not typed ones. V2 keeps a prompt as a
+# `user` row without a model, booked on the first reply after it.
+turns_db = work / "turns.db"
+conn = sqlite3.connect(turns_db)
+conn.execute("CREATE TABLE session (id text PRIMARY KEY, parent_id text, time_created integer NOT NULL)")
+conn.execute("CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)")
+conn.execute("CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL,"
+             " seq integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)")
+conn.executemany("INSERT INTO session VALUES (?, ?, ?)", [("ses_tool", None, fork_ms), ("ses_task", "ses_tool", fork_ms)])
+
+
+def step(parent, input_tokens, created, **extra):
+  return json.dumps({"parentID": parent, "role": "assistant", "mode": "build", "agent": "build", "cost": 0, "modelID": "oc-tooltest", "providerID": "demo",
+                     "tokens": {"total": input_tokens, "input": input_tokens, "output": 0, "reasoning": 0, "cache": {"write": 0, "read": 0}},
+                     "time": {"created": created, "completed": created + 1}, **extra})
+
+
+conn.executemany("INSERT INTO message VALUES (?, ?, ?, ?, ?)", [
+  ("msg_u1", "ses_tool", now_ms, now_ms, json.dumps({"role": "user", "time": {"created": now_ms}, "agent": "build", "model": {"providerID": "demo", "modelID": "oc-tooltest"}})),
+  ("msg_a2", "ses_tool", now_ms + 2, now_ms + 2, step("msg_u1", 21501, now_ms + 2, finish="stop")),
+  ("msg_a1", "ses_tool", now_ms + 1, now_ms + 1, step("msg_u1", 21401, now_ms + 1, finish="tool-calls")),
+  ("msg_u2", "ses_tool", now_ms + 3, now_ms + 3, json.dumps({"role": "user", "time": {"created": now_ms + 3}, "model": {"providerID": "demo", "modelID": "oc-tooltest"}})),
+  ("msg_c1", "ses_tool", now_ms + 4, now_ms + 4, step("msg_u2", 23153, now_ms + 4, mode="compaction", agent="compaction", summary=True)),
+  ("msg_t1", "ses_task", now_ms + 5, now_ms + 5, step("msg_tu", 300, now_ms + 5)),
+])
+conn.executemany("INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?, ?)", [
+  ("v2_u1", "ses_v2", "user", 1, now_ms, now_ms, json.dumps({"text": "hi", "time": {"created": now_ms}})),
+  ("v2_a1", "ses_v2", "assistant", 2, now_ms, now_ms, v2("demo", {"input": 11})),
+  ("v2_a2", "ses_v2", "assistant", 3, now_ms, now_ms, v2("demo", {"input": 12})),
+  ("v2_c1", "ses_v2", "compaction", 4, now_ms, now_ms, v2("demo", {"input": 13})),
+  ("v2_lone", "ses_v2_lone", "assistant", 1, now_ms, now_ms, v2("demo", {"input": 14})),
+])
+conn.commit()
+conn.close()
+os.environ["OPENCODE_DB"] = str(turns_db)
+rows, complete = collectors.scan_opencode(["demo"], accept_demo)
+os.environ.pop("OPENCODE_DB")
+check(
+  "an opencode prompt books on its first step, never on a later one, a compaction, or a subagent's",
+  complete and sorted((row.input_tokens, row.prompts) for row in rows) == [(11, 1), (12, 0), (13, 0), (14, 1), (300, 0), (21401, 1), (21501, 0), (23153, 0)],
   json.dumps([row._asdict() for row in rows]),
 )
 

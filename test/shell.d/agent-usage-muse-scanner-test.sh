@@ -332,9 +332,9 @@ new_muse_home()
 prompt = pi_reply("meta", 5000, id="user", model="muse-spark")
 prompt["message"]["role"] = "user"
 write_pi_session(home() / ".pi" / "agent" / "sessions" / "p" / "a.jsonl", [
+  prompt,
   pi_reply("meta", 10, id="meta", model="muse-spark"),
   pi_reply("opencode", 5000, id="zen", model="muse-spark"),
-  prompt,
 ])
 record = muse()
 expect("Muse counts Meta's pi replies alone", [record["todayTotalTokens"], record["totalPrompts"]], [10, 1], record)

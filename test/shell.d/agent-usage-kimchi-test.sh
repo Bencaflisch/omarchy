@@ -273,7 +273,9 @@ expect("a budget cached under its old name is read, elapsed at zero and an unclo
 
 # Tokens come from assistant messages in the harness's pi session files:
 # cached input kept apart, a repeated entry counted once, user turns and other
-# entries skipped, whatever the provider.
+# entries skipped, whatever the provider. The one typed prompt today books on
+# its first reply, not on each step; a file without user messages keeps one
+# per reply.
 sandbox()
 sessions = harness() / "sessions" / "--home-me--"
 now = iso_in(0)
@@ -291,7 +293,7 @@ record = kimchi(key="key-coder")
 expect("Kimchi counts sessions, prompts, and tokens from its session files",
        {key: record[key] for key in ("hasLocalStats", "todayPrompts", "todaySessions", "totalPrompts", "totalSessions", "activeDays", "todayTotalTokens", "todayTokensByModel")}
        | {"today": record["recentDays"][6]["messageCount"]},
-       {"hasLocalStats": True, "todayPrompts": 3, "todaySessions": 1, "totalPrompts": 4, "totalSessions": 2, "activeDays": 2,
+       {"hasLocalStats": True, "todayPrompts": 1, "todaySessions": 1, "totalPrompts": 2, "totalSessions": 2, "activeDays": 2,
         "todayTotalTokens": 1015, "todayTokensByModel": {"minimax-m3": 925, "glm-5.3": 90}, "today": 1015}, record)
 expect("Kimchi's tokens by model keep cached input apart", record["modelUsage"], {
   "minimax-m3": {"inputTokens": 400, "outputTokens": 50, "cacheReadInputTokens": 800, "cacheCreationInputTokens": 5},

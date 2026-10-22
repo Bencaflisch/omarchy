@@ -698,7 +698,8 @@ def _pi_line(entry: Any) -> tuple | None:
   ("model", provider, model, reference) for a model switch, ("reply", ...)
   for an assistant message, which also names the model the session is on,
   ("spent", provider, model, entry, usage) for usage with its own provider,
-  ("summary", usage) for usage spent on the session's model, or None."""
+  ("summary", usage) for usage spent on the session's model, ("prompt",)
+  for a typed prompt, or None."""
   if not isinstance(entry, dict):
     return None
   kind = entry.get("type")
@@ -713,6 +714,10 @@ def _pi_line(entry: Any) -> tuple | None:
       return "reply", provider, model, reference, obj(message.get("usage"))
     if role == "toolResult" and isinstance(message.get("usage"), dict):
       return "summary", message["usage"]
+    # omp marks the user messages it writes itself (a handoff, a compaction
+    # summary) as the agent's.
+    if role == "user" and message.get("attribution") != "agent" and message.get("synthetic") is not True:
+      return ("prompt",)
     return None
   if kind == "model_change":
     # pi names the provider and model apart; omp joins them as provider/model.
@@ -799,15 +804,24 @@ def _pi_rows(path: str, lines: list[tuple[int, Any]], accept: Accept) -> Iterato
 
   Usage with no provider of its own bills the model the session was on: the
   last model switch or reply before it. With neither, nothing says who
-  billed it, and it is skipped.
+  billed it, and it is skipped. A typed prompt is booked on the first reply
+  that spent tokens answering it, so tool steps and summaries answer none,
+  and a prompt another provider answered stays with that one. A file with
+  no user messages at all, as only a writer copying pi's format leaves,
+  keeps a prompt per reply.
   """
   parsed = [(line_number, entry, _pi_line(entry)) for line_number, entry in lines]
+  typed = any(line == ("prompt",) for _, _, line in parsed)
+  asked = False
   contexts = _pi_contexts(path, lines) if any(line and line[0] == "summary" for _, _, line in parsed) else []
   for line_number, entry, line in parsed:
     try:
       if line is None or line[0] == "model":
         continue
       kind = line[0]
+      if kind == "prompt":
+        asked = True
+        continue
       if kind == "summary":
         before = [context for number_at, context in contexts if number_at < line_number]
         if not before:
@@ -817,16 +831,20 @@ def _pi_rows(path: str, lines: list[tuple[int, Any]], accept: Accept) -> Iterato
       else:
         provider, model, reference, usage = line[1:]
       if not accept(provider, model, reference):
+        if kind == "reply":
+          asked = False
         continue
       # The entry's own time, else the message's.
       timestamp = entry.get("timestamp")
       if timestamp is None:
         timestamp = obj(entry.get("message")).get("timestamp")
-      counted = _pi_row(entry, timestamp, path, provider, model, obj(usage), 1 if kind == "reply" else 0)
+      counted = _pi_row(entry, timestamp, path, provider, model, obj(usage), int(kind == "reply" and (asked or not typed)))
     except Exception:
       # One odd line costs that line, never the scan.
       continue
     if counted is not None:
+      if kind == "reply":
+        asked = False
       yield line_number, *counted
 
 
@@ -854,8 +872,9 @@ def scan_pi_sessions(pattern: str, accept: Accept, roots: Iterable[Path] | None 
     warn("rg is missing; pi and omp sessions were not scanned")
     return [], False
 
-  # Usage that names no provider of its own, spent on the session's model.
-  context = r'"type"\s*:\s*"(compaction|branch_summary)"|"role"\s*:\s*"toolResult".*"usage"\s*:\s*\{'
+  # Usage that names no provider of its own, spent on the session's model,
+  # and the prompts the replies answer.
+  context = r'"type"\s*:\s*"(compaction|branch_summary)"|"role"\s*:\s*"user"|"role"\s*:\s*"toolResult".*"usage"\s*:\s*\{'
 
   # (root, path, line) of every counted line, so the rows come back in one
   # order however rg's threads interleave the files.
@@ -1023,10 +1042,17 @@ def scan_opencode(providers: Iterable[str], accept: Accept) -> tuple[list[UsageR
     return [], False
   patterns = [f'%"providerID"%:%"{provider}%' for provider in providers]
   rows: list[UsageRow] = []
+  # The typed prompt each row answers, and where it falls among the steps
+  # answering the same one; the first step books the prompt.
+  turns: list[tuple[Any, tuple]] = []
   seen: set[str] = set()
+  # A subagent's session: the prompts in it are the model's, not typed.
+  children: set[str] = set()
 
-  def take(message_id: Any, session_id: Any, raw: Any, row_type: str, created: Any, since: Any = None) -> None:
-    # One row that still fails must not take the scan down with it.
+  def take(message_id: Any, session_id: Any, raw: Any, row_type: str, created: Any, since: Any = None, turn: Any = "") -> None:
+    # `turn` is the prompt the row answers, None for none, or "" to read it
+    # from the row. One row that still fails must not take the scan down
+    # with it.
     try:
       entry = json.loads(raw)
       # A copy a fork made predates the session holding it.
@@ -1040,13 +1066,51 @@ def scan_opencode(providers: Iterable[str], accept: Accept) -> tuple[list[UsageR
     if row is None or str(message_id) in seen:
       return
     seen.add(str(message_id))
+    if turn == "":
+      # The original store's steps name the user message they answer; a
+      # compaction's summary answers the marker opencode adds, no prompt.
+      parent = entry.get("parentID")
+      if entry.get("summary") is True or entry.get("mode") == "compaction":
+        turn = None
+      elif isinstance(parent, str) and parent:
+        turn = (str(session_id), parent)
+      else:
+        turn = ("message", str(message_id))
+    if str(session_id) in children:
+      turn = None
     rows.append(row)
+    turns.append((turn, (spent_at, str(message_id))))
+
+  def answered() -> list[UsageRow]:
+    first: dict[Any, int] = {}
+    for index, (turn, order) in enumerate(turns):
+      if turn is not None and (turn not in first or order < turns[first[turn]][1]):
+        first[turn] = index
+    return [row._replace(prompts=int(first.get(turn) == index)) for index, (row, (turn, _)) in enumerate(zip(rows, turns))]
 
   try:
     conn.execute("PRAGMA query_only = ON")
     tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    if "session" in tables and {"id", "parent_id"} <= _table_columns(conn, "session"):
+      children = {str(session_id) for (session_id,) in conn.execute("SELECT id FROM session WHERE parent_id IS NOT NULL")}
     columns = _table_columns(conn, "session_message") if "session_message" in tables else set()
     if {"id", "session_id", "type", "data"} <= columns and patterns:
+      # V2 keeps typed prompts as `user` rows without a model, so each books
+      # the first reply after it in its session; `synthetic` rows are the
+      # ones opencode adds itself. A session without any keeps a prompt per
+      # reply.
+      asked: set[str] = set()
+      replies: set[str] = set()
+      order = "seq" if "seq" in columns else "time_created" if "time_created" in columns else ""
+      if order:
+        for session_id, reply_id in conn.execute(
+          "SELECT u.session_id, (SELECT a.id FROM session_message a WHERE a.session_id = u.session_id AND a.type = 'assistant'"
+          f" AND (a.{order} > u.{order} OR (a.{order} = u.{order} AND a.id > u.id)) ORDER BY a.{order}, a.id LIMIT 1)"
+          " FROM session_message u WHERE u.type = 'user'"
+        ):
+          asked.add(str(session_id))
+          if reply_id is not None:
+            replies.add(str(reply_id))
       created = "m.time_created" if "time_created" in columns else "NULL"
       source = "session_message m"
       fork_filter = ""
@@ -1061,7 +1125,11 @@ def scan_opencode(providers: Iterable[str], accept: Accept) -> tuple[list[UsageR
         f" WHERE m.type IN ('assistant', 'compaction') AND ({gate})" + fork_filter,
         patterns,
       ):
-        take(message_id, session_id, raw, str(row_type or ""), time_created)
+        if row_type == "compaction" or (str(session_id) in asked and str(message_id) not in replies):
+          turn = None
+        else:
+          turn = ("message", str(message_id))
+        take(message_id, session_id, raw, str(row_type or ""), time_created, turn=turn)
     columns = _table_columns(conn, "message") if "message" in tables else set()
     if {"session_id", "data"} <= columns and patterns:
       row_id = "m.id" if "id" in columns else "m.rowid"
@@ -1083,10 +1151,10 @@ def scan_opencode(providers: Iterable[str], accept: Accept) -> tuple[list[UsageR
   except sqlite3.Error:
     # Transient lock, schema migration, corruption: the numbers stop here,
     # incomplete.
-    return rows, False
+    return answered(), False
   finally:
     conn.close()
-  return rows, True
+  return answered(), True
 
 
 # ------------------------------------------------------------------ limits

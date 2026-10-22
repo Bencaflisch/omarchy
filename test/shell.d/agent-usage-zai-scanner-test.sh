@@ -39,11 +39,13 @@ def sessions():
 sandbox()
 stamp = today_stamp()
 write_pi_session(sessions() / "project" / "pi.jsonl", [
+  {"type": "message", "id": "u1", "timestamp": stamp, "message": {"role": "user", "content": "hi"}},
   pi_reply("zai", id="a", model="glm-5.3", timestamp=stamp, usage={"input": 10, "output": 10, "reasoning": 6, "cacheRead": 3, "cacheWrite": 2}),
   pi_reply("zhipu", id="b", model="glm-4.7", timestamp=stamp, usage={"input": 20, "output": 5}),
   pi_reply("openai", id="c", model="gpt", timestamp=stamp, usage={"input": 999, "output": 999}),
   {"type": "message", "id": "d", "timestamp": stamp, "message": {"role": "user", "provider": "zai", "model": "glm-5.3", "usage": {"input": 500, "output": 500}}},
   pi_reply("zai", id="a", model="glm-5.3", timestamp=stamp, usage={"input": 77, "output": 77}),
+  {"type": "message", "id": "u2", "timestamp": stamp, "message": {"role": "user", "content": "again"}},
   {"type": "message", "id": "f", "message": {"role": "assistant", "provider": "zai", "model": "glm-4.6", "timestamp": "2020-01-01T00:00:00Z", "usage": {"input": 7}}},
   '{"type":"message","id":"e","message":{"role":"assistant","provider":"zai","usage":{ broken',
 ])
@@ -64,9 +66,10 @@ expect("Z.ai counts zai and zhipu assistant turns, reasoning already in output",
 }, record)
 
 # a + b land today (25 + 25); f is dated by its message's own time, an old
-# day, so it counts in the totals and never in today's.
+# day, so it counts in the totals and never in today's. A prompt books on the
+# first reply after it: a's and f's, b being a further step.
 expect("Z.ai dates a turn by message.timestamp, keeping an old one out of today",
-       [record["todayTotalTokens"], record["todayPrompts"], record["totalPrompts"], record["activeDays"]], [50, 2, 3, 2], record)
+       [record["todayTotalTokens"], record["todayPrompts"], record["totalPrompts"], record["activeDays"]], [50, 1, 2, 2], record)
 
 # ---------------------------------------------------------------- contract
 
