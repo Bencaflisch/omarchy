@@ -13,36 +13,56 @@ if ! omarchy-hw-aarch64-n1x; then
 fi
 
 card=mt8901soundwire
+state_file="${OMARCHY_ALSA_STATE:-/var/lib/alsa/asound.state}"
 
 if ! amixer -c "$card" info >/dev/null 2>&1; then
   exit 0
 fi
 
-route() {
+live_route() {
   amixer -c "$card" sget "$1" | sed -n "s/^  Item0: '\(.*\)'$/\1/p"
 }
 
-stale=()
+saved_route() {
+  if [[ -r $state_file ]]; then
+    awk -v card="state.$card" -v name="name '$1'" '
+      /^state\./ { in_card = ($1 == card) }
+      in_card && $0 ~ "^[ \t]*" name "$" { found = 1; next }
+      found && $1 == "value" { print $2; exit }
+    ' "$state_file"
+  fi
+}
 
-if [[ $(route "PDI2 Demux") == "DP3" ]]; then
-  stale+=("PDI2 Demux")
-fi
+stale_route() {
+  if [[ $1 == "PDI2 Demux" ]]; then
+    [[ $2 == "DP3" ]]
+  else
+    [[ -n $2 && $2 != "None" ]]
+  fi
+}
 
-for control in "PDI7 Mux" "PDI8 Mux"; do
-  if [[ $(route "$control") != "None" ]]; then
-    stale+=("$control")
+live_stale=()
+saved_stale=0
+
+for control in "PDI2 Demux" "PDI7 Mux" "PDI8 Mux"; do
+  if stale_route "$control" "$(live_route "$control")"; then
+    live_stale+=("$control")
+  fi
+  if stale_route "$control" "$(saved_route "$control")"; then
+    saved_stale=1
   fi
 done
 
-if (( ${#stale[@]} == 0 )); then
+if (( ${#live_stale[@]} == 0 && saved_stale == 0 )); then
   exit 0
 fi
 
-for control in "${stale[@]}"; do
+for control in "${live_stale[@]}"; do
   amixer -q -c "$card" cset name="$control" None
 done
 
-# Save the cleared routes so the next boot does not restore the stale ones.
+# Save even when only the saved state is stale: a run whose save failed has
+# already cleared the live routes, and the next boot would restore the old ones.
 sudo alsactl store "$card"
 
 # PipeWire only probes the card's UCM profiles when WirePlumber opens it.
