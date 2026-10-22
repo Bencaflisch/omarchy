@@ -347,10 +347,15 @@ def scan_projects(projects_path: Path, index_file: Path | None = None) -> Stats:
 
   # One API message can show up in several transcripts (a resumed session
   # carries the earlier ones). As within a file, the record with the highest
-  # output count wins, the last one visited breaking a tie.
+  # output count wins, the last one visited breaking a tie. Only the tokens
+  # are deduplicated: every transcript holding a reply on a day was a session
+  # in use that day, so a fork that copied a session's replies never takes
+  # that session out of the count.
   seen: dict[str, list[Any]] = {}
+  active: set[tuple[Any, str]] = set()
   for key in order:
     for record in current[key].get("records") or []:
+      active.add((record[2], record[7]))
       held = seen.get(record[0])
       if held is not None and record[4] < held[4]:
         continue
@@ -368,6 +373,11 @@ def scan_projects(projects_path: Path, index_file: Path | None = None) -> Stats:
       typed.setdefault(prompt[0], prompt)
   for _, day, session_key in typed.values():
     stats.add_prompts(day or stats.today, session_key)
+  for key in order:
+    for _, day, session_key in current[key].get("prompts") or []:
+      active.add((day, session_key))
+  for day, session_key in active:
+    stats.add_prompts(day or stats.today, session_key, 0)
   return stats
 
 

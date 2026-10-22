@@ -244,6 +244,23 @@ record = claude()
 expect("Claude counts a transcript line with a falsy time nowhere",
        [record["todayTotalTokens"], sum(bucket["inputTokens"] for bucket in record["modelUsage"].values())], [10, 10], record)
 
+# `--fork-session` copies the parent's replies into a new transcript under the
+# fork's session id. Their tokens count once, but the parent was still a
+# session in use, whichever transcript the scan visits last.
+sandbox()
+transcript(*({**message(f"msg_{n}", 1000, 50 + n), "sessionId": "parent"} for n in (1, 2)), name="parent.jsonl")
+transcript(*({**message(f"msg_{n}", 1000, 50 + n), "sessionId": "fork"} for n in (1, 2, 3)), name="fork.jsonl")
+module = load_collector("claude")
+real_rglob = Path.rglob
+for reverse in (False, True):
+  module.Path.rglob = lambda path, pattern, reverse=reverse: iter(sorted(real_rglob(path, pattern), reverse=reverse))
+  try:
+    forked = module.scan_projects(projects().parent).snapshot()
+  finally:
+    module.Path.rglob = real_rglob
+  expect(f"Claude counts a forked session's parent and its tokens once ({'parent' if reverse else 'fork'} read first)",
+         [forked["todaySessions"], forked["totalSessions"], forked["todayTotalTokens"]], [2, 2, 3156], forked)
+
 # Unreadable transcripts are expected when an agent ran as another user, so
 # they make one bounded warning rather than a line each.
 sandbox()
