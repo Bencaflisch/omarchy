@@ -977,7 +977,7 @@ assert_launch kiro-cli kiro-cli chat --trust-all-tools -- "Review this project"
 assert_launch freebuff freebuff
 assert_launch kilo kilo --auto "--prompt=Review this project"
 assert_launch devin devin --permission-mode dangerous --respect-workspace-trust false -- "Review this project"
-assert_launch amp bash -c 'printf "%s\n" "$1" | exec amp --dangerously-allow-all' amp "Review this project"
+assert_launch amp bash -c 'printf "%s\n" "$1" | exec "$0" --dangerously-allow-all' amp "Review this project"
 assert_launch commandcode commandcode --yolo -- "Review this project"
 [[ $(<"$clipboard_log") == "Review this project" ]] || fail "Freebuff launcher puts the prompt on the clipboard"
 mapfile -d '' -t notification_args <"$notification_history"
@@ -1166,13 +1166,19 @@ fi
 pass "OpenClaw's agent hands a missing command to its launcher only when the package is there"
 
 # Native lazy shims can precede ~/.local/bin. The agent launcher must still run
-# the official command when the default-agent selector recognized one.
-for agent in cursor-agent muse; do
+# the official command when the default-agent selector recognized one, for
+# every agent and whether or not it is wrapped in env or bash.
+lazy_shims="$test_tmp/lazy-shims"
+mkdir -p "$lazy_shims"
+for agent in cursor-agent muse claude kiro-cli devin amp dsh hermes; do
   printf '#!/bin/bash\nprintf "official %s\\n"\n' "$agent" >"$test_home/.local/bin/$agent"
-  chmod +x "$test_home/.local/bin/$agent"
+  printf '#!/bin/bash\nprintf "lazy shim %s\\n"\n' "$agent" >"$lazy_shims/$agent"
+  chmod +x "$test_home/.local/bin/$agent" "$lazy_shims/$agent"
   printf '%s\n' "$agent" >"$agent_file"
-  output=$("$ROOT/bin/omarchy-agent" --inline)
+  output=$(PATH="$lazy_shims:$PATH" "$ROOT/bin/omarchy-agent" --inline)
   [[ $output == "official $agent" ]] || fail "agent launcher preserves the user-installed $agent ahead of a mise shim"
-  rm "$test_home/.local/bin/$agent"
+  output=$(PATH="$lazy_shims:$PATH" omarchy-agent-prompt --inline "Review this project")
+  [[ $output == "official $agent" ]] || fail "prompted agent launcher preserves the user-installed $agent ahead of a mise shim"
+  rm "$test_home/.local/bin/$agent" "$lazy_shims/$agent"
 done
-pass "agent launcher runs user-installed Cursor and Muse ahead of native lazy shims"
+pass "agent launcher runs user-installed agents ahead of native lazy shims"
