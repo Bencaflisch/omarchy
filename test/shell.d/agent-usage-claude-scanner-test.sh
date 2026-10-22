@@ -279,6 +279,21 @@ record = claude()
 expect("Claude counts a response by message and request id, once across forks and sidechain replays",
        record["todayTotalTokens"], 5000 + 10 + 20 + 30 + 40 + 50, record)
 
+# An advisor the model consulted is billed apart under its own model, from
+# the reply's `usage.iterations`; the top-level usage is the main model's
+# alone, and no other iteration is added again. ccusage's own fixture line,
+# with Claude models.
+sandbox()
+transcript({"timestamp": STAMP, "version": "1.2.3", "sessionId": "session-a", "type": "assistant", "requestId": "req-parent", "costUSD": 1.23,
+            "message": {"id": "msg-parent", "model": "claude-main", "usage": {"input_tokens": 1, "output_tokens": 2, "iterations": [
+              {"type": "message", "input_tokens": 1, "output_tokens": 2, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+              {"type": "advisor_message", "model": "claude-advisor", "input_tokens": 10, "output_tokens": 2, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+            ]}}})
+record = claude()
+expect("Claude counts an advisor iteration under the advisor's model",
+       [record["todayTokensByModel"], record["modelUsage"].get("claude-advisor")],
+       [{"claude-main": 3, "claude-advisor": 12}, {"inputTokens": 10, "outputTokens": 2, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0}], record)
+
 # Unreadable transcripts are expected when an agent ran as another user, so
 # they make one bounded warning rather than a line each.
 sandbox()
