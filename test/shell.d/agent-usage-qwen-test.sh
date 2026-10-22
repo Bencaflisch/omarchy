@@ -151,6 +151,39 @@ local = collect("local", "--force")
 expect("Local counts the Qwen Code replies sent to a self-hosted server",
        [local["todayTokensByModel"], local["todayPrompts"]], [{"local-qwen": 3030}, 1], local)
 
+
+# A request no reply answered, as Qwen Code logs it: a ui_telemetry api_error
+# event naming the model and auth type it was sent with.
+def failed(uuid, session, timestamp, model, auth, execution):
+  event = {"event.name": "qwen-code.api_error", "event.timestamp": timestamp, "response_id": "", "execution_id": execution, "model": model, "duration_ms": 2990,
+           "prompt_id": f"{session}########0", "auth_type": auth, "error_message": "Connection error. (cause: connect ECONNREFUSED 127.0.0.1:18499)", "error_type": "APIConnectionError"}
+  return {"uuid": uuid, "sessionId": session, "timestamp": timestamp, "type": "system", "subtype": "ui_telemetry", "systemPayload": {"uiEvent": event}}
+
+
+# A prompt no reply answered goes where its requests were sent, else where
+# settings.json's selected model goes: a server you run that refused them all
+# is local's, not Qwen's. Shaped as Qwen Code 0.26.0 wrote a run against a
+# dead port on a modelProviders route.
+sandbox()
+write_json(home() / ".qwen" / "settings.json", {
+  "modelProviders": {"openai": [{"id": "qwen-dead-model", "name": "dead", "baseUrl": "http://127.0.0.1:18499/v1", "envKey": "MOCK_QWEN_KEY"},
+                                {"id": "qwen3-coder-plus", "baseUrl": "https://coding-intl.dashscope.aliyuncs.com/v1"}]},
+  "security": {"auth": {"selectedType": "openai"}},
+  "model": {"name": "qwen-dead-model"},
+})
+transcript(chats() / "93e3e301.jsonl", [
+  prompt("f5316beb", "93e3e301", NOW),
+  failed("1e40dc03", "93e3e301", NOW, "qwen-dead-model", "openai", "cb1ab8b5"),
+  failed("a76f1d2f", "93e3e301", NOW, "qwen-dead-model", "openai", "0746ab80"),
+])
+transcript(chats() / "plan.jsonl", [prompt("p1", "plan", NOW), failed("p2", "plan", NOW, "qwen3-coder-plus", "openai", "e1")])
+# Typed, and stopped before any request: the selected model's route decides.
+transcript(chats() / "bare.jsonl", [prompt("b1", "bare", NOW)])
+records = {cid: collect(cid, "--force") for cid in ("qwen", "local")}
+expect("a Qwen Code prompt no reply answered counts where its route goes",
+       {cid: [record["todayPrompts"], record["todaySessions"], record["todayTotalTokens"]] for cid, record in records.items()},
+       {"qwen": [1, 1, 0], "local": [2, 2, 0]}, records)
+
 # A scan answers only for the routes it was made under: a route moved after
 # it is reflected at once, even on a --limits-only run. As Qwen Code 0.26.0
 # wrote a run against a server of the user's own.

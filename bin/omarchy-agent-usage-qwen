@@ -65,6 +65,9 @@ AGENT_ID = "qwen"
 AGENT_NAME = "Qwen Code"
 
 API_RESPONSE_EVENT = "qwen-code.api_response"
+# A request no reply answered (a refused connection, an error status) still
+# names the model and auth type it was sent with.
+API_ERROR_EVENT = "qwen-code.api_error"
 
 # Qwen Code's own rule (getEventTotalTokenCount) takes a response's total
 # when it has one, and otherwise counts thinking on top of the output only
@@ -84,8 +87,9 @@ PROMPT_SUBTYPES = (None, "mid_turn_user_message")
 # undated record undated, so it counted as today's on every day after.
 # Version 3 counted a reply's thinking twice where its output held it.
 # Version 4 kept no reply's auth type and model id, which say where it was
-# sent.
-INDEX_VERSION = 5
+# sent. Version 5 kept no failed request, which says where a prompt went that
+# no reply answered.
+INDEX_VERSION = 6
 INDEX_HEAD_BYTES = 4096
 
 MAX_MODEL_NAME_LEN = 120
@@ -185,10 +189,10 @@ def parse_line(raw, session):
 
   A prompt is ["p", key, time, session]; a billed response is
   ["r", key, time, session, model, input, output, cacheRead, authType,
-  modelId]. The key dedups a record a resumed or branched session carries
-  again.
+  modelId]; a failed request is ["e", key, time, session, authType, modelId].
+  The key dedups a record a resumed or branched session carries again.
   """
-  if b'"user"' not in raw and API_RESPONSE_EVENT.encode() not in raw:
+  if b'"user"' not in raw and API_RESPONSE_EVENT.encode() not in raw and API_ERROR_EVENT.encode() not in raw:
     return None
   try:
     record = json.loads(raw)
@@ -211,6 +215,9 @@ def parse_line(raw, session):
   if record.get("type") != "system" or record.get("subtype") != "ui_telemetry":
     return None
   event = obj(obj(record.get("systemPayload")).get("uiEvent"))
+  if event.get("event.name") == API_ERROR_EVENT and uuid:
+    stamp, _ = trusted_time(event.get("event.timestamp"), record.get("timestamp"))
+    return ["e", uuid, stamp, session, str(event.get("auth_type") or ""), str(event.get("model") or "")]
   if event.get("event.name") != API_RESPONSE_EVENT:
     return None
   stamp, ok = trusted_time(event.get("event.timestamp"), record.get("timestamp"))
@@ -373,18 +380,28 @@ def model_routes(home):
   return routes
 
 
+def selected_route(home):
+  """(auth type, model id) settings.json selects, where Qwen Code sends a
+  prompt when nothing else says: /auth's security.auth.selectedType and
+  /model's model.name."""
+  settings = read_json(home / "settings.json")
+  auth = obj(obj(settings.get("security")).get("auth")).get("selectedType")
+  model = obj(settings.get("model")).get("name")
+  return str(auth) if isinstance(auth, str) else "", str(model) if isinstance(model, str) else ""
+
+
 def route_config(home):
-  """What route_owner() decides with: the modelProviders routes and the base
-  URLs outside them."""
-  return model_routes(home), base_urls(home)
+  """What route_owner() decides with: the modelProviders routes, the base
+  URLs outside them, and the selected route."""
+  return model_routes(home), base_urls(home), selected_route(home)
 
 
 def harness_match():
   """For a scan's cached_scan(match=...): a digest of where Qwen Code's
   replies are sent, which its settings and .env files can change without a
   transcript changing."""
-  routes, urls = route_config(qwen_home())
-  config = json.dumps([sorted([*key, url] for key, url in routes.items()), sorted(urls.items())])
+  routes, urls, selected = route_config(qwen_home())
+  config = json.dumps([sorted([*key, url] for key, url in routes.items()), sorted(urls.items()), selected])
   return {"qwenRoutes": hashlib.sha1(config.encode("utf-8", "surrogatepass")).hexdigest()}
 
 
@@ -413,8 +430,9 @@ def summarize(rows, owner):
   """The usage rows `owner` bills from a transcript's index rows, in file
   order. Qwen Code's prompts are its user records, not its replies: a reply
   adds its tokens, and a prompt only its session and day, billed with the
-  reply that answered it, else Qwen Code's own."""
-  routes, urls = route_config(qwen_home())
+  next request sent for it, answered or not, else with the route settings.json
+  selects."""
+  routes, urls, selected = route_config(qwen_home())
   parsed = []
   for row in rows:
     try:
@@ -424,6 +442,8 @@ def summarize(rows, owner):
         model = str(row[4])
         counts = [int(value) for value in row[5:8]]
         billed = route_owner(str(row[8]), str(row[9]), routes, urls)
+      elif kind == "e":
+        model, counts, billed = "", [0, 0, 0], route_owner(str(row[4]), str(row[5]), routes, urls)
       elif kind == "p":
         model, counts, billed = "", [0, 0, 0], None
       else:
@@ -431,12 +451,13 @@ def summarize(rows, owner):
     except (TypeError, ValueError, IndexError, OverflowError, OSError):
       continue
     parsed.append([kind, key, day, str(session), model, counts, billed])
-  answered = AGENT_ID
+  answered = route_owner(*selected, routes, urls)
   for entry in reversed(parsed):
-    if entry[0] == "r":
+    if entry[0] in ("r", "e"):
       answered = entry[6]
     else:
       entry[6] = answered
+  parsed = [entry for entry in parsed if entry[0] != "e"]
   return [
     UsageRow(day, session, "", model, *counts, 0, prompts=0 if kind == "r" else 1)
     for kind, key, day, session, model, counts, billed in parsed
