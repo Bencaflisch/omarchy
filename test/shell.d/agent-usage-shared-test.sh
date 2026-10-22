@@ -557,6 +557,21 @@ os.environ["PI_CODING_AGENT_DIR"] = str(home / ".pi" / "agent")
 check("an override that aliases a default root is read once", collectors.pi_session_roots().count(sessions.resolve()) == 1)
 os.environ.pop("PI_CODING_AGENT_DIR")
 
+# pi's SettingsManager.getSessionDir() reads `sessionDir` from the agent
+# tree's settings.json, expanding a leading ~, and new sessions go there.
+(home / ".pi" / "agent").mkdir(parents=True, exist_ok=True)
+(home / ".pi" / "agent" / "settings.json").write_text(json.dumps({"sessionDir": "~/pi-sessions"}))
+(home / ".omp" / "profiles" / "work" / "agent").mkdir(parents=True, exist_ok=True)
+(home / ".omp" / "profiles" / "work" / "agent" / "settings.json").write_text(json.dumps({"sessionDir": "relative/sessions"}))
+roots = collectors.pi_session_roots()
+check(
+  "a settings.json sessionDir is read as a root, a relative one skipped",
+  (home / "pi-sessions").resolve() in roots and not any(root.name == "sessions" and root.parent.name == "relative" for root in roots),
+  "\n".join(map(str, roots)),
+)
+(home / ".pi" / "agent" / "settings.json").unlink()
+(home / ".omp" / "profiles" / "work" / "agent" / "settings.json").unlink()
+
 parent = sessions / "p" / "parent.jsonl"
 write_session(parent, [
   reply("demo", 100, "m1"),

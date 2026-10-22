@@ -626,19 +626,28 @@ def pi_session_roots() -> list[Path]:
   <base>/profiles/<name>/. pi moves its agent tree with PI_CODING_AGENT_DIR
   and its sessions alone with PI_CODING_AGENT_SESSION_DIR, both expanding a
   leading ~; either is read as well as the default trees, which keep
-  whatever was written before the move.
+  whatever was written before the move. A `sessionDir` in an agent tree's
+  settings.json moves its sessions too and is read the same way; a relative
+  one resolves against the cwd pi started in, which can't be known here.
   """
-  roots: list[Path] = []
+  agent_dirs: list[Path] = []
   for base in (Path.home() / ".pi", Path.home() / ".omp"):
-    roots.append(base / "agent" / "sessions")
+    agent_dirs.append(base / "agent")
     try:
       # Sorted so the scan order does not depend on directory order.
-      roots.extend(sorted(child / "agent" / "sessions" for child in (base / "profiles").iterdir() if child.is_dir()))
+      agent_dirs.extend(sorted(child / "agent" for child in (base / "profiles").iterdir() if child.is_dir()))
     except OSError:
       # No profiles directory, or it is unreadable: the default root stands.
       pass
   if os.environ.get("PI_CODING_AGENT_DIR", "").strip():
-    roots.append(Path(os.environ["PI_CODING_AGENT_DIR"].strip()).expanduser() / "sessions")
+    agent_dirs.append(Path(os.environ["PI_CODING_AGENT_DIR"].strip()).expanduser())
+  roots = [agent_dir / "sessions" for agent_dir in agent_dirs]
+  for agent_dir in agent_dirs:
+    configured = read_json(agent_dir / "settings.json").get("sessionDir")
+    if isinstance(configured, str) and configured.strip():
+      configured_root = Path(configured.strip()).expanduser()
+      if configured_root.is_absolute():
+        roots.append(configured_root)
   if os.environ.get("PI_CODING_AGENT_SESSION_DIR", "").strip():
     roots.append(Path(os.environ["PI_CODING_AGENT_SESSION_DIR"].strip()).expanduser())
   return canonical_roots(roots)
