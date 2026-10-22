@@ -653,13 +653,25 @@ def ask_quota(token: str) -> dict[str, Any]:
     return {"available": False, "reason": "no-quota"}
 
   # Under token-based billing the snapshot counts AI credits directly; only
-  # the local store and transcripts count in nano units. A limited allowance
-  # needs both amounts: one missing or unreadable would pass for no meter or
-  # an untouched allowance and replace the last good answer, so it is a
-  # failed check instead.
+  # the local store and transcripts count in nano units. GitHub's snapshot
+  # (the CLI's CopilotUserResponseQuotaSnapshotsPremiumInteractions) says
+  # what is left, as remaining, quota_remaining or percent_remaining, so the
+  # amount used is the entitlement less that; a credits_used amount is still
+  # read first where one is sent. A limited allowance needs both amounts: one
+  # missing or unreadable would pass for no meter or an untouched allowance
+  # and replace the last good answer, so it is a failed check instead.
   unlimited = snapshot.get("unlimited") is True
   entitlement = quota_amount(snapshot.get("entitlement"))
   used = quota_amount(snapshot.get("credits_used"))
+  if used is None and entitlement is not None:
+    remaining = quota_amount(snapshot.get("remaining"))
+    if remaining is None:
+      remaining = quota_amount(snapshot.get("quota_remaining"))
+    percent_remaining = quota_amount(snapshot.get("percent_remaining"))
+    if remaining is not None:
+      used = max(0.0, entitlement - remaining)
+    elif percent_remaining is not None:
+      used = entitlement * max(0.0, 100.0 - percent_remaining) / 100.0
   if not unlimited and (entitlement is None or used is None):
     return {"available": False, "reason": "bad-payload"}
   return {

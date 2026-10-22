@@ -395,6 +395,25 @@ record = copilot(routes=snapshot_without("entitlement", "credits_used", unlimite
 expect("an unlimited allowance needs no amounts", meter(record),
        {"limits": [], "stale": False, "status": "", "retry": False, "tier": "Pro"}, record)
 
+# GitHub's own snapshot, as the CLI's CopilotUserResponseQuotaSnapshots types
+# it, carries no credits_used: what is used is the entitlement less what
+# remains, read from remaining, quota_remaining or percent_remaining.
+def upstream(**remaining):
+  answer = quota("individual", 300, 0, overage_count=0, overage_permitted=False, quota_id="premium_interactions",
+                 timestamp_utc=NOW, has_quota=True, token_based_billing=True, **remaining)
+  del answer["quota_snapshots"]["premium_interactions"]["credits_used"]
+  return {QUOTA_URL: answer}
+
+
+shapes = {
+  "remaining": upstream(remaining=225, quota_remaining=225, percent_remaining=75),
+  "quota_remaining": upstream(quota_remaining=225),
+  "percent_remaining": upstream(percent_remaining=75),
+}
+read = {name: meter(copilot(routes=routes)) for name, routes in shapes.items()}
+expect("an upstream allowance is used by what it has left",
+       read, {name: {"limits": [["Monthly allowance", 0.25, True]], "stale": False, "status": "", "retry": False, "tier": "Pro"} for name in shapes}, read)
+
 # A reset date that can't be read is no reset date, both live and once kept.
 damaged_reset = quota("individual", 300, 30)
 damaged_reset["quota_reset_date_utc"] = "\u00b2"
