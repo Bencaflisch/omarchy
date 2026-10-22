@@ -272,7 +272,7 @@ The Local models section counts work that ran on hardware you own: Codex rollout
 { "providers": ["homelab", "my-gateway"] }
 ```
 
-It is the exact complement of the provider collectors: a provider id another collector counts is never counted here, whatever `local.json` says, and the Codex collector keeps every rollout on the built-in `openai` provider. Two providers are claimed only for some models, and only those rows are left out: Ollama's cloud models (a `:cloud` or `-cloud` tag) run on Ollama's servers even through the local daemon, so they count under Ollama Cloud instead, and opencode's Antigravity plugin records a `google` provider with `antigravity-` models, which the Antigravity collector counts. There are no limits or balance.
+It is the exact complement of the provider collectors: a provider id another collector counts is never counted here, whatever `local.json` says, and the Codex collector keeps every rollout on the built-in `openai` provider. Two providers are claimed only for some models, and only those rows are left out: Ollama's cloud models (a `:cloud` or `-cloud` tag) run on Ollama's servers even through the local daemon, so they count under Ollama Cloud instead, and opencode's Antigravity plugin records a `google` provider with `antigravity-` models, which the Antigravity collector counts. A Codex rollout's prompts are the ones typed, read as the Codex collector reads them. There are no limits or balance.
 
 ## Interactions
 

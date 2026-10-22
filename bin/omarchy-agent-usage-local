@@ -107,8 +107,9 @@ NATIVE_WINDOW_DAYS = 30
 
 # Per-file totals of Codex rollouts survive between runs, so a rescan only
 # reads the files that changed. Bumping it retires every older record; version
-# 2 drops totals cached while an untrusted time still counted on the file's day.
-FILE_CACHE_SCHEMA = 2
+# 2 drops totals cached while an untrusted time still counted on the file's day,
+# and version 3 those that counted every request as a prompt.
+FILE_CACHE_SCHEMA = 3
 
 
 def model_name(raw):
@@ -282,17 +283,49 @@ def write_file_cache(files):
     warn(f"could not write file cache ({exc})")
 
 
+def typed_prompt(entry):
+  """Whether a rollout line is a prompt the user typed, as the Codex collector
+  reads it: an item_completed UserMessage in paginated rollouts, a plain
+  user_message event in legacy ones."""
+  if entry.get("type") != "event_msg":
+    return False
+  payload = obj(entry.get("payload"))
+  if payload.get("type") == "user_message":
+    return payload.get("kind") in (None, "plain")
+  return payload.get("type") == "item_completed" and obj(payload.get("item")).get("type") == "UserMessage"
+
+
+def typed_session(meta):
+  # A subagent's or Codex's own internal thread is prompted by Codex itself.
+  source = meta.get("source")
+  return not (isinstance(source, dict) and ("subagent" in source or "internal" in source))
+
+
+ROLLOUT_MARKERS = ('"token_count"', '"turn_context"', '"session_meta"', '"user_message"', '"UserMessage"')
+
+
 def read_codex_rollout(path, stat_result):
   """One rollout's provider and day -> model -> [input, output, cacheRead,
-  cacheWrite, prompts], counted the way the Codex collector counts its own."""
+  cacheWrite, prompts], counted the way the Codex collector counts its own.
+
+  A prompt counts on its own day, under the model that answered it: the one
+  in effect at the next request, since a legacy rollout can write the prompt
+  before the turn_context naming its model.
+  """
   record = {"mtime": stat_result.st_mtime, "size": stat_result.st_size, "provider": "", "days": {}}
   current_model = "local"
   seen_meta = False
+  typed = True
+  pending_prompts = []
   previous_total_usage = None
+
+  def bucket(day, model):
+    return record["days"].setdefault(day, {}).setdefault(model, [0, 0, 0, 0, 0])
+
   try:
     with path.open(errors="replace") as handle:
       for raw in handle:
-        if '"token_count"' not in raw and '"turn_context"' not in raw and '"session_meta"' not in raw:
+        if not any(marker in raw for marker in ROLLOUT_MARKERS):
           continue
         try:
           entry = json.loads(raw)
@@ -313,8 +346,17 @@ def read_codex_rollout(path, stat_result):
           # collector's: nothing here can count it.
           if record["provider"] in ("", CODEX_NATIVE_PROVIDER):
             break
+          typed = typed_session(obj(entry.get("payload")))
           continue
         if not seen_meta:
+          continue
+        if typed_prompt(entry):
+          # A prompt with no time is the file's; one whose time can't be
+          # trusted counts nowhere.
+          timestamp = entry.get("timestamp")
+          day = local_day(stat_result.st_mtime if timestamp is None else timestamp)
+          if typed and day is not None:
+            pending_prompts.append(day)
           continue
         if entry.get("type") == "turn_context":
           payload = obj(entry.get("payload"))
@@ -351,16 +393,23 @@ def read_codex_rollout(path, stat_result):
         day = local_day(stat_result.st_mtime if timestamp is None else timestamp)
         if day is None:
           continue
-        totals = record["days"].setdefault(day, {}).setdefault(current_model, [0, 0, 0, 0, 0])
+        totals = bucket(day, current_model)
         totals[0] += input_tokens
         totals[1] += output_tokens
         totals[2] += cache_read
         totals[3] += cache_write
-        totals[4] += 1
+        # One prompt can take many requests, one per tool call it makes; the
+        # requests count no prompts of their own.
+        for prompt_day in pending_prompts:
+          bucket(prompt_day, current_model)[4] += 1
+        pending_prompts = []
   except OSError:
     # Keep what was read, but a partial record must not be cached as the
     # file's whole story.
     record["mtime"] = None
+  # A prompt no request answered yet, or ever, was put to the last model.
+  for prompt_day in pending_prompts:
+    bucket(prompt_day, current_model)[4] += 1
   return record
 
 
@@ -436,7 +485,7 @@ def main():
   max_age = scan_max_age(args.force, args.limits_only)
   stats = cached_scan(AGENT_ID, scan_sources(), max_age, lambda: run_local_scans(max_age))
   # Self-hosted work has no plan, no limits and no balance.
-  record = base_record(AGENT_ID, AGENT_NAME, ready=number(stats.get("totalPrompts")) > 0, hasLocalStats=True)
+  record = base_record(AGENT_ID, AGENT_NAME, ready=number(stats.get("totalSessions")) > 0, hasLocalStats=True)
   record.update(stats)
   emit(record, sort_keys=True)
   return 0

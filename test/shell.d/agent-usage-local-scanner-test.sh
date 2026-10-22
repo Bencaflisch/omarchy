@@ -50,8 +50,18 @@ def rollout(name, *lines):
   return path
 
 
+# A prompt as Codex 0.163 writes it in a paginated rollout.
+def typed(text="hello"):
+  item = {"type": "UserMessage", "id": "u1", "content": [{"type": "text", "text": text, "text_elements": []}]}
+  return {"timestamp": STAMP, "type": "event_msg", "payload": {"type": "item_completed", "thread_id": "t1", "turn_id": "turn1", "item": item}}
+
+
+def context(model):
+  return {"timestamp": STAMP, "type": "turn_context", "payload": {"model": model}}
+
+
 def turn(name, provider, model):
-  return rollout(name, meta(provider), {"timestamp": STAMP, "type": "turn_context", "payload": {"model": model}}, token_count(1000))
+  return rollout(name, meta(provider), context(model), typed(), token_count(1000))
 
 
 def local_config(*providers):
@@ -91,9 +101,9 @@ rollout("fork", meta("openai"), meta("ollama"), {"timestamp": STAMP, "type": "tu
 
 local_record = collect("local")
 expect("Local counts Codex turns on LAN endpoints and known runtimes, nothing else", models(local_record), ["qwen-here", "qwen-net"], local_record)
-expect("Local counts a repeated Codex token_count once",
+expect("Local counts a repeated Codex token_count once, and each typed prompt once",
        [local_record["todayTotalTokens"], local_record["modelUsage"]["qwen-here"]["inputTokens"], local_record["todayPrompts"], local_record["ready"]],
-       [3300, 2000, 3, True], local_record)
+       [3300, 2000, 2, True], local_record)
 
 # The Local and Codex collectors split the rollouts between them: the
 # subscription's turns are Codex's alone, and no model shows in both.
@@ -148,6 +158,25 @@ with contextlib.redirect_stderr(io.StringIO()):
   record = collect("local")
 os.environ["XDG_CACHE_HOME"] = cache_home
 expect("Local still prints its record when the cache can't be written", models(record), ["qwen-here", "qwen-net"], record)
+
+# Prompts are the ones typed, not the requests answering them, each under the
+# model that answered it even when a legacy rollout writes it before the
+# turn_context: a tool call's two requests are one prompt, Codex's own context
+# and a subagent's messages are none, and a cloud model's prompt is no more
+# local than its tokens.
+use_home()
+rollout("paginated", meta("ollama"), context("qwen-tools"), typed("run ls"), token_count(1000),
+        {"timestamp": STAMP, "type": "event_msg", "payload": {"type": "item_completed", "item": {"type": "CommandExecution", "id": "c1"}}},
+        token_count(2000), context("gpt-oss:120b-cloud"), typed("now in the cloud"), token_count(3000))
+rollout("legacy", meta("ollama"),
+        {"timestamp": STAMP, "type": "event_msg", "payload": {"type": "user_message", "message": "<user_instructions>", "kind": "user_instructions"}},
+        {"timestamp": STAMP, "type": "event_msg", "payload": {"type": "user_message", "message": "fix it"}}, context("qwen-legacy"), token_count(1000))
+rollout("subagent", {"timestamp": STAMP, "type": "session_meta", "payload": {"model_provider": "ollama", "source": {"subagent": "review"}}},
+        context("qwen-review"), typed(), token_count(1000))
+record = local()
+expect("Local counts the prompts typed, under the model that answered them", {
+  "prompts": record["todayPrompts"], "sessions": record["totalSessions"], "models": models(record), "ready": record["ready"],
+}, {"prompts": 2, "sessions": 3, "models": ["qwen-legacy", "qwen-review", "qwen-tools"], "ready": True}, record)
 
 # Only a turn with no time at all takes the file's day; a time of 0, false or
 # "" can't be trusted, so that turn counts nowhere, as in the Codex collector.
