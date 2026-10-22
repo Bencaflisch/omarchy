@@ -28,8 +28,6 @@ Item {
   // Injected by omarchy-shell (the first-party service loader).
   property var shell: null
 
-  property string omarchyPath: Quickshell.env("OMARCHY_PATH")
-
   // ------------------------------------------------------------- settings
   //
   // shell.json's `notifications` object; Settings.resolve fills every default.
