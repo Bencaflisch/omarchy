@@ -654,7 +654,7 @@ def harness_rows(owner: str) -> tuple[list[UsageRow], bool]:
   return found, complete
 
 
-def scan() -> tuple[dict[str, Any], bool]:
+def scan(reuse: bool = True) -> tuple[dict[str, Any], bool]:
   """Kimi Code's usage and typed prompts on Kimi's routes, pi, omp and
   opencode sessions on the Kimi Code plan, Claude Code's turns on Kimi
   (pointed at Kimi's or Moonshot's API, or answered by a Kimi model) and
@@ -664,7 +664,7 @@ def scan() -> tuple[dict[str, Any], bool]:
   code_rows, complete = harness_rows(AGENT_ID)
   for row in code_rows:
     stats.add_row(row, row.model)
-  routed_rows, routed_complete = scan_routed(AGENT_ID)
+  routed_rows, routed_complete = scan_routed(AGENT_ID, reuse)
   pi_rows, pi_complete = scan_pi_sessions(r'"provider"\s*:\s*"(' + "|".join(PROVIDERS) + r')"', billed_here)
   # The database's prefilter matches every plan id.
   db_rows, db_complete = scan_opencode(["kimi-cod", "moonshot"], billed_here)
@@ -733,7 +733,9 @@ def main() -> int:
   # Claude Code's and MiniMax Code's sessions, whose owner depends on where
   # they are sent, as Kimi Code's does on its routes.
   sources = [code_home(), *pi_session_roots(), opencode_db(), *routed_sources()]
-  stats = cached_scan(AGENT_ID, sources, scan_max_age(args.force, args.limits_only), scan, match={**routed_match(), **harness_match()})
+  # A forced scan reads every Codex rollout again too.
+  max_age = scan_max_age(args.force, args.limits_only)
+  stats = cached_scan(AGENT_ID, sources, max_age, lambda: scan(reuse=max_age > 0), match={**routed_match(), **harness_match()})
   if not in_use() and not stats.get("modelUsage") and not stats.get("totalPrompts"):
     emit(base_record())
     return 0

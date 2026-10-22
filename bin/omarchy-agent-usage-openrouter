@@ -321,14 +321,14 @@ def scan_dsh(stats: Stats) -> bool:
   return complete
 
 
-def scan_local(stats: Stats) -> bool:
+def scan_local(stats: Stats, reuse: bool = True) -> bool:
   # Every source always runs, so one failing still leaves the others' numbers.
   opencode_complete = scan_opencode(stats)
   pi_complete = scan_pi(stats)
   dsh_complete = scan_dsh(stats)
   # Claude Code pointed at OpenRouter's Anthropic-compatible API, and MiniMax
   # Code's custom providers (its OpenRouter preset among them) at OpenRouter.
-  routed_rows, routed_complete = scan_routed(AGENT_ID)
+  routed_rows, routed_complete = scan_routed(AGENT_ID, reuse)
   for row in routed_rows:
     stats.add_row(row, model_name(row.model))
   return opencode_complete and pi_complete and dsh_complete and routed_complete
@@ -352,7 +352,8 @@ def cached_local_stats(max_age: float) -> tuple[dict, bool]:
 
   def scan() -> tuple[dict[str, Any], bool]:
     stats = Stats()
-    complete = scan_local(stats)
+    # A forced scan reads every Codex rollout again too.
+    complete = scan_local(stats, reuse=max_age > 0)
     return stats.snapshot(), complete
 
   return cached_scan(AGENT_ID, scan_sources(), max_age, scan, match=routed_match(), with_complete=True)

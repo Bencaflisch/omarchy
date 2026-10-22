@@ -1498,3 +1498,45 @@ PY
 else
   fail "moving a Codex provider's base_url off Z.ai rescans rather than keeping a cached count" "$codex_cached"
 fi
+
+# --force reads every Codex rollout again in each collector that bills one,
+# even one rewritten to the same size and mtime its per-file cache keeps.
+python3 - "$CODEX_ROUTES_HOME" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+for rollout in sorted((Path(sys.argv[1]) / ".codex" / "sessions").rglob("rollout-zr*.jsonl")):
+  stat = rollout.stat()
+  rollout.write_text(rollout.read_text().replace('"output_tokens": 51,', '"output_tokens": 91,').replace('"output_tokens": 103,', '"output_tokens": 143,'))
+  os.utime(rollout, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+PY
+run_all "$CODEX_ROUTES_HOME" "$WORK/codex-routes-forced"
+if codex_forced=$(python3 - "$WORK/codex-routes-cells.json" "$WORK/codex-routes-forced" "${collectors[@]}" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+# Z.ai's coding endpoint moved off its host above, so that rollout is nobody's now.
+cells = {cell["tag"]: {**cell, "tokens": cell["tokens"] + 40, "owner": None if cell["tag"] == "zr001" else cell["owner"]} for cell in json.load(open(sys.argv[1]))}
+routed = {"zai", "openrouter", "deepseek", "kimi", "qwen", "minimax", "ollama"}
+for cid in sys.argv[3:]:
+  if cid not in routed:
+    continue
+  try:
+    record = json.loads((Path(sys.argv[2]) / f"{cid}.json").read_text())
+  except ValueError:
+    print(f"{cid} printed no record")
+    continue
+  for model, bucket in (record.get("modelUsage") or {}).items():
+    total = sum(bucket.get(key) or 0 for key in ("inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"))
+    for tag in re.findall(r"zr\d{3}", model):
+      if tag in cells and cells[tag]["owner"] == cid and total != cells[tag]["tokens"]:
+        print(f"{cid} counted {tag} as {total}, expected the rewritten {cells[tag]['tokens']}")
+PY
+) && [[ -z $codex_forced ]]; then
+  pass "--force rereads a Codex rollout rewritten to the same size and mtime in every collector that bills one"
+else
+  fail "--force rereads a Codex rollout rewritten to the same size and mtime in every collector that bills one" "$codex_forced"
+fi
