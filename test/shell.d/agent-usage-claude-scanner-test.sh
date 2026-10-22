@@ -175,6 +175,13 @@ record = rescan()
 expect("Claude takes a streamed message's final count from appended lines",
        [record["modelUsage"]["claude-fallback"]["outputTokens"], record["totalPrompts"]], [90, 2], record)
 
+# A line of JSON that isn't an object skips that line, never the transcript.
+sandbox()
+transcript(message("listed-1", 10), [message("listed-x", 99)], message("listed-2", 20))
+record = claude()
+expect("Claude skips a transcript line that isn't an object and keeps the rest",
+       [record["totalPrompts"], record["todayTotalTokens"]], [2, 30], record)
+
 # Unreadable transcripts are expected when an agent ran as another user, so
 # they make one bounded warning rather than a line each.
 sandbox()
