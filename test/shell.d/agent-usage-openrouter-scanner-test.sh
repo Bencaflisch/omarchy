@@ -223,6 +223,28 @@ for code in (401, 403):
          picked(refused, "usageStatusText", "limitsStale", "retryAdvised", "ready", "limits") + [refused["authHelpText"].startswith("OpenRouter refused the API key. ")],
          ["Sign-in expired", True, None, True, fresh["limits"], True], refused)
 
+# OpenRouter documents /credits as management-key only, answering an
+# inference key with its 403 example. That key is healthy: the meter shows,
+# with no balance and nothing to sign in to again. A management key, when
+# there is one, reads the balance instead.
+def management_only(request):
+  if request.get_header("Authorization") == "Bearer sk-mgmt":
+    return CREDITS
+  return FakeHttp.refusal(request.full_url, 403, {"error": {"code": 403, "message": "Only management keys can perform this operation"}})
+
+
+sandbox()
+record = openrouter(OPENROUTER_API_KEY="sk-test", routes=with_routes(credits=management_only))
+expect("an inference key /credits refuses still shows its meter, with no balance and no sign-in asked",
+       picked(record, "usageStatusText", "authHelpText", "limitsStale", "balance", "retryAdvised") + [len(record["limits"]), openrouter.asked],
+       ["", "", False, None, None, 1, ["/credits=sk-test", "/key=sk-test"]], record)
+record = openrouter(OPENROUTER_API_KEY="sk-test", OPENROUTER_MANAGEMENT_KEY="sk-mgmt",
+                    routes=with_routes(credits=management_only))
+expect("a management key reads the balance an inference key is refused",
+       picked(record, "usageStatusText", "limitsStale") + [remaining(record), openrouter.asked],
+       ["", False, 9.0, ["/activity=sk-mgmt", "/credits=sk-mgmt", "/credits=sk-test", "/key=sk-test"]], record)
+os.environ["OPENROUTER_API_KEY"] = "sk-test"
+
 # A failed /credits keeps the last good balance, marked stale; with none
 # kept, the balance says it is unavailable.
 openrouter()

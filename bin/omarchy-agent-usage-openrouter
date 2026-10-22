@@ -428,8 +428,8 @@ def collect_billing(key: str, manager: str, force: bool) -> dict[str, Any]:
   """The key-limit meter and the balance, each kept past a failed check.
 
   The meter describes an inference key's own credit limit, so with only a
-  management key there is none to show; the balance is the account's and
-  either key can read it.
+  management key there is none to show; the balance is the account's, and
+  an inference key reads it only where OpenRouter still lets it.
   """
   result: dict[str, Any] = {
     "limits": [], "limitsStale": False, "limitsFetchedAt": 0,
@@ -443,6 +443,15 @@ def collect_billing(key: str, manager: str, force: bool) -> dict[str, Any]:
       errors["key"] = error
   credits_key = key or manager
   parts["credits"], error = probe("/credits", credits_key, "credits", lambda data: {"balance": credits_balance(data)}, force)
+  # OpenRouter documents /credits as management-key only, answering another
+  # key 403 "Only management keys can perform this operation". That is no
+  # balance for this key, not a refused one: /key says whether the key
+  # itself still works. A management key, when there is one, asks instead.
+  if isinstance(error, OpenRouterAuthError) and error.code == 403 and credits_key != manager:
+    if manager:
+      parts["credits"], error = probe("/credits", manager, "credits", lambda data: {"balance": credits_balance(data)}, force)
+    else:
+      parts["credits"], error = None, None
   if error:
     errors["credits"] = error
 
