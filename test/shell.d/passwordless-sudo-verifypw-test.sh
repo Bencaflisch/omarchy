@@ -57,6 +57,18 @@ pass "a grant published before the default existed is still read as the user's g
 )
 pass "a default that names another account is not read as the user's grant"
 
+# Readable policy under the generated prefix that is not this command's grant
+# is foreign, so cleanup takes it out of sudoers instead of leaving it live.
+(
+  source "$library"
+  reset_grant
+  printf 'Defaults:root verifypw = any\naudituser ALL=(ALL) NOPASSWD: ALL\n' >"$(rule_file 1000)"
+  cleanup_all_locked
+  [[ ! -e $(rule_file 1000) ]]
+  grep -qx 'Defaults:root verifypw = any' "$test_tmp"/var/lib/omarchy/sudoers-quarantine/*/policy
+)
+pass "cleanup quarantines a grant whose default names another account"
+
 # The upgrade rewrites such a grant in place, keeping the rule and its
 # deadline exactly as they were.
 (
