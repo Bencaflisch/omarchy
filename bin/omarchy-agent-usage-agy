@@ -244,10 +244,18 @@ def extract_tier(data):
 
 
 # How much of a bucket is spent, or None when its fraction isn't a number.
-# Google answers in proto3 JSON, which leaves zero values out, so a bucket
-# with a reset time and no fraction has none left: fully spent.
+# A bucket's remainder is either a fraction or an amount, which gives no
+# share of the whole to show unless it's zero, and either arrives even when
+# it is zero. Proto3 JSON leaves zero values out of answers without that
+# choice, so a bucket with a reset time and neither has none left: fully
+# spent. A disabled bucket counts against nothing.
 def used(bucket):
+  if bucket.get("disabled") is True:
+    return None
   remaining = bucket.get("remainingFraction", bucket.get("remaining_fraction"))
+  amount = bucket.get("remainingAmount", bucket.get("remaining_amount"))
+  if remaining is None and amount is not None:
+    return 1.0 if amount in (0, "0") and not isinstance(amount, bool) else None
   if remaining is None and reset_of(bucket):
     return 1.0
   if remaining is None or isinstance(remaining, bool):

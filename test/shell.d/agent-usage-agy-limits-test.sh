@@ -104,6 +104,22 @@ read = limits({"buckets": [{"window": "5h", "resetTime": "2026-09-15T19:31:46Z"}
 expect("Antigravity collector reads a bucket whose zero fraction proto3 JSON left out as fully spent, and skips one with no reset either",
        [(entry["label"], entry["percent"]) for entry in read], [("Session (5-hour)", 1.0)], read)
 
+# agy's QuotaSummaryBucket holds its remainder as a oneof of a fraction and an
+# amount (an int64, a string in JSON), so a bucket on the amount arm has no
+# fraction yet isn't spent unless the amount is zero; a disabled bucket is
+# skipped, as omp's reader skips it.
+read = limits({"groups": [
+  {"displayName": "Gemini Models", "buckets": [
+    {"window": "5h", "remainingAmount": "800", "resetTime": "2026-09-15T19:31:46Z"},
+    {"window": "weekly", "remainingAmount": "0", "resetTime": "2026-09-17T18:19:42Z"},
+  ]},
+  {"displayName": "Claude and GPT models", "buckets": [
+    {"window": "5h", "disabled": True, "resetTime": "2026-09-15T22:16:22Z"},
+  ]},
+]})
+expect("Antigravity collector reads a bucket's amount arm, spent only at zero, and skips a disabled bucket",
+       [(entry["label"], entry["percent"]) for entry in read], [("Weekly (7-day)", 1.0)], read)
+
 # An answer of another shape is no answer, not a plan without quotas; another
 # group's buckets of the wrong shape skip that group alone.
 gemini = {"displayName": "Gemini Models", "buckets": [{"window": "5h", "remainingFraction": 0.5}]}
