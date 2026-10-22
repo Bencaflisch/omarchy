@@ -46,6 +46,8 @@ from collectors import (  # noqa: E402
   base_record as shared_base_record,
   cache_root,  # noqa: F401 - the tests find the cached answers through it
   cached_scan,
+  claude_code_dir,
+  claude_code_scan_match,
   config_home,
   data_home,
   emit,
@@ -60,6 +62,7 @@ from collectors import (  # noqa: E402
   pi_session_roots,
   read_json,
   scan_cache_paths as shared_scan_cache_paths,
+  scan_claude_code,
   scan_max_age,
   scan_opencode as shared_scan_opencode,
   scan_pi_sessions,
@@ -298,14 +301,17 @@ def scan_pi(stats: Stats) -> bool:
 
 
 def scan_local(stats: Stats) -> bool:
-  # Both sources always run, so one failing still leaves the other's numbers.
+  # Every source always runs, so one failing still leaves the others' numbers.
   opencode_complete = scan_opencode(stats)
   pi_complete = scan_pi(stats)
+  # Claude Code pointed at OpenRouter's Anthropic-compatible API.
+  for row in scan_claude_code(AGENT_ID):
+    stats.add_row(row, model_name(row.model))
   return opencode_complete and pi_complete
 
 
 def scan_sources() -> list[Path]:
-  return [opencode_db(), *pi_session_roots()]
+  return [opencode_db(), *pi_session_roots(), claude_code_dir() / "projects"]
 
 
 def scan_cache_paths() -> tuple[Path, Path]:
@@ -325,7 +331,7 @@ def cached_local_stats(max_age: float) -> tuple[dict, bool]:
     complete = scan_local(stats)
     return stats.snapshot(), complete
 
-  return cached_scan(AGENT_ID, scan_sources(), max_age, scan, with_complete=True)
+  return cached_scan(AGENT_ID, scan_sources(), max_age, scan, match=claude_code_scan_match(), with_complete=True)
 
 
 # ---------------------------------------------------------------- record

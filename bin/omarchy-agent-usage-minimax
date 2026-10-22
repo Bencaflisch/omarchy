@@ -35,6 +35,8 @@ from collectors import (  # noqa: E402
   Stats,
   base_record as shared_base_record,
   cached_scan,
+  claude_code_dir,
+  claude_code_scan_match,
   data_home,
   emit,
   local_day,
@@ -42,6 +44,7 @@ from collectors import (  # noqa: E402
   opencode_db,
   pi_session_roots,
   read_json,
+  scan_claude_code,
   scan_max_age,
   scan_opencode,
   scan_pi_sessions,
@@ -491,12 +494,16 @@ def scan_sessions() -> tuple[dict[str, Any], bool]:
   db_rows, db_complete = scan_opencode(["minimax"], billed_here)
   for row in db_rows:
     stats.add_row(row, row.model.rstrip("/").split("/")[-1] or "minimax")
+  # Claude Code pointed at MiniMax's API, or answered by a MiniMax model.
+  for row in scan_claude_code(AGENT_ID):
+    stats.add_row(row, row.model or "minimax")
   return stats.snapshot(), mcode_complete and pi_complete and db_complete
 
 
 def cached_local_stats(max_age_seconds: float) -> dict[str, Any]:
   # The digest covers every data path the scan reads.
-  return cached_scan(AGENT_ID, [mcode_data_dir(), opencode_db(), *pi_session_roots()], max_age_seconds, scan_sessions)
+  sources = [mcode_data_dir(), opencode_db(), *pi_session_roots(), claude_code_dir() / "projects"]
+  return cached_scan(AGENT_ID, sources, max_age_seconds, scan_sessions, match=claude_code_scan_match())
 
 
 # --------------------------------------------------------------------------

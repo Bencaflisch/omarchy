@@ -238,6 +238,18 @@ first = collector.api_key()
 expect("DeepSeek reads the key dsh stores, from its credentials or its .env", [first, collector.api_key()], ["sk-from-dsh", "sk-from-env-file"])
 del os.environ["DSH_HOME"]
 
+# Claude Code pointed at DeepSeek's Anthropic API is DeepSeek's; with no
+# endpoint, only a DeepSeek model's reply is.
+sandbox()
+claude_code_session("ds", [("deepseek-chat", 300), ("claude-sonnet-4-5", 40)])
+record = deepseek()
+expect("DeepSeek counts Claude Code's DeepSeek replies, and no Claude one",
+       [record["todayTokensByModel"], record["todayPrompts"], record["todaySessions"]], [{"deepseek-chat": 300}, 1, 1], record)
+claude_code_session("ds", [("deepseek-chat", 300), ("claude-sonnet-4-5", 40)], base_url="https://api.deepseek.com/anthropic")
+record = deepseek()
+expect("DeepSeek counts every Claude Code reply while Claude Code is pointed at DeepSeek",
+       [record["todayTokensByModel"], record["todayPrompts"]], [{"deepseek-chat": 300, "claude-sonnet-4-5": 40}, 2], record)
+
 # ---------------------------------------------------------------- contract
 
 sandbox()

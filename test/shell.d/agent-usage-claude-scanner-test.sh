@@ -314,6 +314,10 @@ transcript(user("synthetic-1", "hello", session="synthetic", promptSource="typed
 record = claude()
 expect("Claude leaves out the turns Claude Code sent to another provider's model",
        [record["todayTokensByModel"], record["todayPrompts"], record["todaySessions"]], [{"claude-sonnet-4-5": 1052}, 2, 2], record)
+# What Claude leaves out, the provider's collector counts by the same rule:
+# the GLM reply is Z.ai's, once.
+zai_record = collect("zai", "--force")
+expect("Z.ai counts the Claude Code reply Claude leaves out", zai_record["todayTokensByModel"], {"glm-4.6": 501285}, zai_record)
 
 # A transcript doesn't say where it was sent, so while Claude Code is pointed
 # at another provider (its settings' env, else the environment), a Claude

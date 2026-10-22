@@ -358,6 +358,67 @@ run_collector "$CONFIGURED_HOME" local "$WORK/configured-local" PI_CODING_AGENT_
 # request going to the dead proxy, shows what its own filter counts.
 run_collector "$FIXTURE_HOME" openrouter "$WORK/keyed-openrouter" OPENROUTER_API_KEY=sk-or-placeholder PI_CODING_AGENT_DIR="$FIXTURE_HOME/pi-moved"
 
+
+# Claude Code fronts whatever ANTHROPIC_BASE_URL names, and its transcripts
+# record only the model that answered each reply. One home holds a reply by
+# each kind of model (and a fork's copy of one), and every collector runs
+# against it once per endpoint Claude Code can be sent to; each reply must
+# land in exactly the collector that bills it there, or in none.
+CLAUDE_HOME="$WORK/claude-code"
+mkdir -p "$CLAUDE_HOME"
+python3 - "$CLAUDE_HOME" "$WORK/claude-cells.json" "$WORK/claude-endpoints" <<'PY'
+import json
+import re
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+home = Path(sys.argv[1])
+stamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+# (model, owner with no endpoint, owner behind a self-hosted one, owner
+# behind a gateway nothing can place). A provider's own host owns them all.
+MODELS = [
+  ("claude-sonnet-zq900", "claude", "claude", "claude"),
+  ("glm-zq901", "zai", "local", None),
+  ("MiniMax-zq902", "minimax", "local", None),
+  ("deepseek-zq903", "deepseek", "local", None),
+  ("kimi-zq904", "kimi", "local", None),
+  ("moonshot-zq905", "kimi", "local", None),
+  ("gpt-oss-zq906:120b-cloud", "ollama", "ollama", "ollama"),
+  ("qwen3-zq907", None, "local", None),
+]
+ENDPOINTS = {
+  "": 1, "https://api.z.ai/api/anthropic": "zai", "https://ollama.com": "ollama", "https://openrouter.ai/api": "openrouter",
+  "https://api.minimax.io/anthropic": "minimax", "https://api.deepseek.com/anthropic": "deepseek",
+  "https://api.kimi.com/coding/": "kimi", "http://localhost:11434": 2, "https://llm-proxy.example.com/anthropic": 3,
+}
+projects = home / ".claude/projects/project"
+projects.mkdir(parents=True)
+lines, cells = [], []
+for n, (model, *owners) in enumerate(MODELS):
+  tokens = 90000 + 100 * n
+  lines.append({"type": "user", "uuid": f"prompt-{n}", "sessionId": "main", "timestamp": stamp, "message": {"role": "user", "content": "go"}})
+  lines.append({"type": "assistant", "sessionId": "main", "timestamp": stamp, "requestId": f"req-{n}",
+                "message": {"id": f"msg-{n}", "role": "assistant", "model": model, "usage": {"input_tokens": tokens, "output_tokens": 0}}})
+  for index, (url, owner) in enumerate(ENDPOINTS.items()):
+    cells.append({"endpoint": index, "url": url, "tag": re.search(r"zq\d{3}", model).group(0), "model": model, "tokens": tokens,
+                  "owner": owners[owner - 1] if isinstance(owner, int) else owner})
+(projects / "main.jsonl").write_text("".join(json.dumps(line) + "\n" for line in lines))
+# A fork copies the first reply into a session of its own.
+(projects / "fork.jsonl").write_text(json.dumps({**lines[1], "sessionId": "fork"}) + "\n")
+Path(sys.argv[2]).write_text(json.dumps(cells))
+Path(sys.argv[3]).write_text("".join(url + "\n" for url in ENDPOINTS))
+PY
+mapfile -t claude_endpoints <"$WORK/claude-endpoints"
+for endpoint in "${!claude_endpoints[@]}"; do
+  url=${claude_endpoints[endpoint]}
+  if [[ -n $url ]]; then
+    run_all "$CLAUDE_HOME" "$WORK/claude-results-$endpoint" ANTHROPIC_BASE_URL="$url"
+  else
+    run_all "$CLAUDE_HOME" "$WORK/claude-results-$endpoint"
+  fi
+done
+
 # ----------------------------------------------------------------- analysis
 
 python3 - "$WORK" "${collectors[@]}" >"$WORK/report.tsv" <<'PY'
@@ -572,6 +633,30 @@ else:
       problems.append(f"{label} counted, owned by {cell['owner']}")
   report("openrouter-keyed", not problems, f"openrouter: {'; '.join(problems)}" if problems else "openrouter")
 
+# 6. Claude Code's replies, behind every endpoint it can be sent to.
+claude_cells = json.load(open(work / "claude-cells.json"))
+for endpoint in sorted({cell["endpoint"] for cell in claude_cells}):
+  cells_here = {cell["tag"]: cell for cell in claude_cells if cell["endpoint"] == endpoint}
+  url = next(iter(cells_here.values()))["url"] or "Anthropic (no ANTHROPIC_BASE_URL)"
+  seen = {tag: {} for tag in cells_here}
+  for cid in collectors:
+    record, error = load(f"claude-results-{endpoint}/{cid}")
+    if record is None:
+      report("claude-code", False, f"{url}: {cid}: {error}")
+      continue
+    for model, bucket in (record.get("modelUsage") or {}).items():
+      total = sum(bucket.get(key) or 0 for key in BUCKET) if isinstance(bucket, dict) else 0
+      for tag in re.findall(r"zq\d{3}", model):
+        if tag in seen and total:
+          seen[tag][cid] = seen[tag].get(cid, 0) + total
+  for tag, cell in sorted(cells_here.items()):
+    owner, tokens = cell["owner"], cell["tokens"]
+    wrong = [f"{cid} counted it {total / tokens:g}x" for cid, total in sorted(seen[tag].items()) if cid != owner or total != tokens]
+    if owner and owner not in seen[tag]:
+      wrong.insert(0, f"{owner} missed it")
+    label = f"{cell['model']} sent to {url}, expected {owner or 'nobody'}"
+    report("claude-code", not wrong, f"{label}: {'; '.join(wrong)}" if wrong else label)
+
 for check, ok, detail in results:
   print(f"{check}\t{'ok' if ok else 'fail'}\t{detail}".replace("\n", "\\n"))
 PY
@@ -590,8 +675,9 @@ declare -A DESCRIPTIONS=(
   [opencode-db-env]="with opencode's database moved by a relative OPENCODE_DB, every collector counts the same rows"
   [local-config]="a local.json naming claimed providers doesn't pull them into the local collector"
   [openrouter-keyed]="with a key, the OpenRouter collector counts exactly the OpenRouter rows, once each"
+  [claude-code]="each Claude Code reply is counted once, by the collector that bills it behind every endpoint Claude Code can be sent to, or by none"
 )
-order=(empty-home fixture-run fixture-shape attribution today-matches-models partition unclaimed sum opencode-db-env local-config openrouter-keyed)
+order=(empty-home fixture-run fixture-shape attribution today-matches-models partition unclaimed sum opencode-db-env local-config openrouter-keyed claude-code)
 
 failed=()
 details=""

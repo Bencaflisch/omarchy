@@ -256,6 +256,18 @@ record = local()
 expect("Local leaves out exactly the rows another collector claims",
        [record["todayTotalTokens"], models(record)], [100, ["antigravity-pi-gemini", "gemini-oc", "gemini-vertex", "minimax-gateway"]], record)
 
+# Claude Code pointed at a self-hosted endpoint (Ollama's guide sets
+# localhost:11434) ran its models here, but a cloud-tagged one is Ollama's
+# and a Claude one went on to Anthropic; with no endpoint, nothing is local.
+sandbox()
+claude_code_session("box", [("qwen3-coder", 30), ("glm-4.6:cloud", 300), ("claude-sonnet-4-5", 40)])
+record = local()
+expect("Local counts no Claude Code reply while Claude Code is sent to Anthropic", [record["todayTokensByModel"], record["ready"]], [{}, False], record)
+claude_code_session("box", [("qwen3-coder", 30), ("glm-4.6:cloud", 300), ("claude-sonnet-4-5", 40)], base_url="http://localhost:11434")
+record = local()
+expect("Local counts the Claude Code replies a self-hosted endpoint ran itself",
+       [record["todayTokensByModel"], record["todayPrompts"], record["todaySessions"]], [{"qwen3-coder": 30}, 1, 1], record)
+
 # ---------------------------------------------------------------- contract
 
 use_home()

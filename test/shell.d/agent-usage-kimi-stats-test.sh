@@ -163,6 +163,20 @@ with contextlib.redirect_stderr(io.StringIO()):
 expect("an unreadable wire leaves the rest counted", record["todayTotalTokens"], 12, record)
 check("a scan that couldn't read every wire isn't cached", not scan_cache_files("kimi"))
 
+# Claude Code pointed at Kimi's or Moonshot's API is Kimi's; with no endpoint,
+# only a Kimi model's reply is. That usage alone puts Kimi in use here, with
+# no sign-in to ask for its limits.
+sandbox()
+claude_code_session("k", [("kimi-k2-0905", 300), ("moonshot-v1-8k", 20), ("claude-sonnet-4-5", 40)])
+record = kimi()
+expect("Kimi counts Claude Code's Kimi and Moonshot replies, and waits for a sign-in on them alone",
+       [record["todayTokensByModel"], record["todayPrompts"], record["ready"], record["usageStatusText"]],
+       [{"kimi-k2-0905": 300, "moonshot-v1-8k": 20}, 2, True, "Waiting for auth"], record)
+claude_code_session("k", [("kimi-for-coding", 300), ("claude-sonnet-4-5", 40)], base_url="https://api.kimi.com/coding/")
+record = kimi()
+expect("Kimi counts every Claude Code reply while Claude Code is pointed at Kimi Code",
+       [record["todayTokensByModel"], record["todayPrompts"]], [{"kimi-for-coding": 300, "claude-sonnet-4-5": 40}, 2], record)
+
 # ---------------------------------------------------------------- contract
 
 sandbox()

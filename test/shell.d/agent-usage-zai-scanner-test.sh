@@ -71,6 +71,19 @@ expect("Z.ai counts zai and zhipu assistant turns, reasoning already in output",
 expect("Z.ai dates a turn by message.timestamp, keeping an old one out of today",
        [record["todayTotalTokens"], record["todayPrompts"], record["totalPrompts"], record["activeDays"]], [50, 1, 2, 2], record)
 
+# Claude Code pointed at Z.ai (its settings' env, as Z.ai's guide sets it) is
+# Z.ai's whatever model answered; with no endpoint, only a GLM reply is. A
+# Claude reply sent to Anthropic stays Claude's.
+sandbox()
+claude_code_session("glm", [("glm-4.6", 500), ("claude-sonnet-4-5", 40)])
+record = zai()
+expect("Z.ai counts Claude Code's GLM replies and their prompts, and no Claude one",
+       [record["todayTokensByModel"], record["todayPrompts"], record["todaySessions"], record["ready"]], [{"glm-4.6": 500}, 1, 1, True], record)
+claude_code_session("glm", [("glm-4.6", 500), ("claude-sonnet-4-5", 40)], base_url="https://api.z.ai/api/anthropic")
+record = zai()
+expect("Z.ai counts every Claude Code reply while Claude Code is pointed at Z.ai",
+       [record["todayTokensByModel"], record["todayPrompts"]], [{"glm-4.6": 500, "claude-sonnet-4-5": 40}, 2], record)
+
 # ---------------------------------------------------------------- contract
 
 sandbox()

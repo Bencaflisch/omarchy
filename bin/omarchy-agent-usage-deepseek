@@ -41,6 +41,8 @@ from collectors import (  # noqa: E402
   Stats,
   base_record as shared_base_record,
   cached_scan,
+  claude_code_dir,
+  claude_code_scan_match,
   config_home,
   data_home,
   emit,
@@ -53,6 +55,7 @@ from collectors import (  # noqa: E402
   opencode_db,
   pi_session_roots,
   read_json,
+  scan_claude_code,
   scan_max_age,
   scan_opencode,
   scan_pi_sessions,
@@ -308,12 +311,17 @@ def run_local_scans() -> tuple[dict[str, Any], bool]:
   stats = Stats()
   complete = add_harness_rows(stats)
   complete = scan_dsh_sessions(stats) and complete
+  # Claude Code pointed at DeepSeek's Anthropic API, or answered by a
+  # DeepSeek model.
+  for row in scan_claude_code(AGENT_ID):
+    stats.add_row(row, model_name(row.model))
   return stats.snapshot(), complete
 
 
 def cached_local_stats(max_age: float) -> dict[str, Any]:
   # The digest covers every data path the scan reads.
-  return cached_scan(AGENT_ID, [opencode_db(), dsh_home(), *pi_session_roots()], max_age, run_local_scans)
+  sources = [opencode_db(), dsh_home(), *pi_session_roots(), claude_code_dir() / "projects"]
+  return cached_scan(AGENT_ID, sources, max_age, run_local_scans, match=claude_code_scan_match())
 
 
 # -------------------------------------------------------------- credentials

@@ -153,6 +153,18 @@ expect("MiniMax counts only MiniMax Code replies on MiniMax's own routes, and th
        {key: record[key] for key in ("todayTotalTokens", "todayPrompts", "todaySessions", "todayTokensByModel")},
        {"todayTotalTokens": 40, "todayPrompts": 2, "todaySessions": 1, "todayTokensByModel": {"MiniMax-M2": 40}}, record)
 
+# Claude Code pointed at MiniMax's Anthropic API is MiniMax's; with no
+# endpoint, only a MiniMax model's reply is.
+sandbox()
+claude_code_session("mm", [("MiniMax-M2", 300), ("claude-sonnet-4-5", 40)])
+record = minimax()
+expect("MiniMax counts Claude Code's MiniMax replies, and no Claude one",
+       [record["todayTokensByModel"], record["todayPrompts"], record["todaySessions"]], [{"MiniMax-M2": 300}, 1, 1], record)
+claude_code_session("mm", [("MiniMax-M2", 300), ("claude-sonnet-4-5", 40)], base_url="https://api.minimax.io/anthropic")
+record = minimax()
+expect("MiniMax counts every Claude Code reply while Claude Code is pointed at MiniMax",
+       [record["todayTokensByModel"], record["todayPrompts"]], [{"MiniMax-M2": 300, "claude-sonnet-4-5": 40}, 2], record)
+
 # ---------------------------------------------------------------- contract
 
 sandbox()

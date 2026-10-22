@@ -1574,7 +1574,9 @@ def scan_claude_code(
 ) -> list[UsageRow]:
   """The Claude Code usage `owner` counts, as rows: each reply once (with no
   prompts of its own), each typed prompt once (no tokens), and a tokenless
-  row for every session in use on a day, for Stats.add_row().
+  row for every session in use on a day, for Stats.add_row(). A prompt's row
+  names the model that answered it ("" for none yet), so a collector that
+  keeps some models alone can keep their prompts alone too.
 
   `projects` defaults to the Claude Code home's projects/, `index_file` to
   the index every collector shares there (None reads without one), and
@@ -1640,11 +1642,11 @@ def scan_claude_code(
   # in use that day, so a fork that copied a session's replies never takes
   # that session out of the count.
   seen: dict[str, list[Any]] = {}
-  active: set[tuple[Any, str]] = set()
+  active: set[tuple[Any, str, str]] = set()
   for key in order:
     for record in current[key].get("records") or []:
       if ours(record[1]):
-        active.add((record[2], record[7]))
+        active.add((record[2], record[7], record[1]))
       held = seen.get(record[0])
       if held is not None and record[4] < held[4]:
         continue
@@ -1667,13 +1669,13 @@ def scan_claude_code(
   for key in order:
     for prompt in current[key].get("prompts") or []:
       if ours(prompt[3]):
-        active.add((prompt[1], prompt[2]))
+        active.add((prompt[1], prompt[2], prompt[3] or ""))
       typed.setdefault(prompt[0], prompt)
   for _, day, session_key, model in typed.values():
     if ours(model):
-      rows.append(UsageRow(day or scan_day, session_key, owner, "", 0, 0, 0, 0, prompts=1))
-  for day, session_key in sorted(active, key=lambda item: (str(item[0]), item[1])):
-    rows.append(UsageRow(day or scan_day, session_key, owner, "", 0, 0, 0, 0, prompts=0))
+      rows.append(UsageRow(day or scan_day, session_key, owner, model or "", 0, 0, 0, 0, prompts=1))
+  for day, session_key, model in sorted(active, key=lambda item: (str(item[0]), item[1], item[2])):
+    rows.append(UsageRow(day or scan_day, session_key, owner, model, 0, 0, 0, 0, prompts=0))
   return rows
 
 

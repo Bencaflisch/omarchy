@@ -286,4 +286,15 @@ for incomplete in ({"data": {}}, {}, {"data": {"limit": 10}}, {"data": {"limit":
 openrouter()
 record = openrouter(routes=with_routes(key={"data": {"limit": None, "limit_remaining": None}}))
 expect("an unlimited key replaces the meter with none, fresh", picked(record, "limits", "limitsStale", "usageStatusText"), [[], False, ""], record)
+# Claude Code pointed at OpenRouter's Anthropic-compatible API is
+# OpenRouter's, counted from this machine even with no key.
+sandbox()
+claude_code_session("or", [("anthropic/claude-sonnet-4.5", 70), ("claude-sonnet-4-5", 40)])
+record = openrouter()
+expect("OpenRouter counts no Claude Code reply while Claude Code is sent to Anthropic", [record["todayTokensByModel"], record["ready"]], [{}, False], record)
+claude_code_session("or", [("anthropic/claude-sonnet-4.5", 70), ("claude-sonnet-4-5", 40)], base_url="https://openrouter.ai/api")
+record = openrouter()
+expect("OpenRouter counts every Claude Code reply while Claude Code is pointed at it",
+       [record["todayTokensByModel"], record["todayPrompts"], record["usageStatusText"]], [{"claude-sonnet-4.5": 70, "claude-sonnet-4-5": 40}, 2, "Waiting for auth"], record)
+
 PY

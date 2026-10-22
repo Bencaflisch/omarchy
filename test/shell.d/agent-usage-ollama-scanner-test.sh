@@ -90,6 +90,19 @@ expect("Ollama reuses a scan made with the same model prefix", list(ollama("--li
 prefix(None)
 expect("Ollama scans again when the model prefix changes", sorted(ollama("--limits-only")["modelUsage"]), ["deepseek-v4-pro", "kimi-k3"])
 
+# Claude Code pointed at ollama.com is Ollama's whatever model answered, and
+# a cloud-tagged model is Ollama's wherever Claude Code sent it; a model the
+# local daemon ran itself is not.
+sandbox()
+claude_code_session("cloud", [("glm-4.6:cloud", 300), ("qwen3-coder", 30), ("claude-sonnet-4-5", 40)], base_url="http://localhost:11434")
+record = ollama()
+expect("Ollama counts Claude Code's cloud-tagged replies through the local daemon, and nothing it ran itself",
+       [record["todayTokensByModel"], record["todayPrompts"], record["todaySessions"]], [{"glm-4.6": 300}, 1, 1], record)
+claude_code_session("cloud", [("kimi-k2.7-code:cloud", 300), ("claude-sonnet-4-5", 40)], base_url="https://ollama.com")
+record = ollama()
+expect("Ollama counts every Claude Code reply while Claude Code is pointed at ollama.com",
+       [record["todayTokensByModel"], record["todayPrompts"]], [{"kimi-k2.7-code": 300, "claude-sonnet-4-5": 40}, 2], record)
+
 # ---------------------------------------------------------------- contract
 
 sandbox()
