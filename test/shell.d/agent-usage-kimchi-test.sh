@@ -126,6 +126,16 @@ expect("a region is matched whatever its case", kimchi.asked, ["https://llm.eu.k
 kimchi(KIMCHI_BASE_URL="https://gateway.example/openai/v1/")
 expect("KIMCHI_BASE_URL names the gateway, without its OpenAI path", kimchi.asked, ["https://gateway.example/v1/budget", "https://gateway.example/v1/credits"])
 
+# A gateway override never sends the key in the clear to another machine;
+# plain HTTP is for a gateway on this one.
+record = kimchi(KIMCHI_BASE_URL="http://gateway.example")
+expect("a plain HTTP KIMCHI_BASE_URL is never sent the key", [kimchi.asked, record["usageStatusText"], "HTTPS" in record["authHelpText"]], [[], "Balance unavailable", True], record)
+write_json(home() / ".config" / "kimchi" / "config.json", {"apiKey": "key-coder", "llmEndpoint": "http://gateway.example/openai/v1"})
+kimchi()
+expect("a plain HTTP llmEndpoint is never sent the key", kimchi.asked, [])
+kimchi(KIMCHI_BASE_URL="http://127.0.0.1:9")
+expect("plain HTTP to loopback still carries the key", kimchi.asked, ["http://127.0.0.1:9/v1/budget", "http://127.0.0.1:9/v1/credits"])
+
 # ------------------------------------------------------------- contract
 
 sandbox()

@@ -36,6 +36,7 @@ from collectors import (  # noqa: E402
   scan_max_age,
   scan_pi_sessions,
   stamp,
+  trusted_endpoint,
 )
 
 AGENT_ID = "kimchi"
@@ -254,6 +255,12 @@ def collect_billing(force):
   if not key:
     return result
   result["signedIn"] = True
+  # KIMCHI_BASE_URL and llmEndpoint move the gateway, never the key onto a
+  # connection anyone on the way can read.
+  if not trusted_endpoint(base):
+    result["usageStatusText"] = "Balance unavailable"
+    result["authHelpText"] = "Kimchi's gateway must use HTTPS (plain HTTP only for loopback). Local Kimchi stats are still shown."
+    return result
 
   parts = {}
   failed = set()
