@@ -63,6 +63,7 @@ from collectors import (  # noqa: E402
 AGENT_ID = "deepseek"
 AGENT_NAME = "DeepSeek"
 API_BASE_URL = "https://api.deepseek.com"
+OUT_OF_CREDITS_HELP = "DeepSeek says the balance no longer covers API calls. Top up at platform.deepseek.com."
 
 # DeepSeek Harness bills DeepSeek through these provider routes: an API key
 # and a DeepSeek account sign-in (its DeepSeek adapter), and its pi-ai
@@ -484,6 +485,8 @@ def fetch_balance(api_base_url: str, key: str) -> dict[str, Any]:
     "granted": money(info.get("granted_balance")),
     "toppedUp": money(info.get("topped_up_balance")),
     "currency": str(info.get("currency") or "CNY"),
+    # DeepSeek's own word on whether the balance still covers API calls.
+    "available": payload.get("is_available") is not False and remaining > 0,
   }
 
 
@@ -510,6 +513,13 @@ def balance_cache_path(key: str, api_base_url: str) -> Path:
   return limits_cache_path(AGENT_ID, api_base_url.rstrip("/"), key)
 
 
+def out_of_credits(result: dict[str, Any], available: Any) -> None:
+  # With no funded figure the balance gauge can't raise this alarm itself,
+  # so the status does.
+  if available is False:
+    result.update(usageStatusText="Out of credits", authHelpText=OUT_OF_CREDITS_HELP)
+
+
 def collect_balance(key: str, api_base_url: str, force: bool) -> dict[str, Any]:
   result: dict[str, Any] = {"balance": None, "stale": False, "fetchedAtMs": 0, "usageStatusText": "", "authHelpText": "", "retryAdvised": False}
   cache = None
@@ -525,6 +535,7 @@ def collect_balance(key: str, api_base_url: str, force: bool) -> dict[str, Any]:
   # windows; --force skips the wait.
   if kept and cache.fresh(force, allow_empty=True):
     result.update(balance=balance_record(money(kept.get("remaining")), str(kept.get("currency") or "")), fetchedAtMs=fetched_at)
+    out_of_credits(result, kept.get("available"))
     return result
 
   try:
@@ -536,15 +547,18 @@ def collect_balance(key: str, api_base_url: str, force: bool) -> dict[str, Any]:
       # The last good balance, marked stale with when it was read, beats an
       # empty section while DeepSeek can't be asked.
       result.update(balance=balance_record(money(kept.get("remaining")), str(kept.get("currency") or "")), stale=True, fetchedAtMs=fetched_at)
+      out_of_credits(result, kept.get("available"))
+      result["authHelpText"] = str(error)
     if error.refused:
       result["usageStatusText"] = "Sign-in expired"
     elif not kept:
       result["usageStatusText"] = "Balance unavailable"
     return result
 
-  balance = {"remaining": str(live["remaining"]), "currency": live["currency"]}
+  balance = {"remaining": str(live["remaining"]), "currency": live["currency"], "available": live["available"]}
   fetched_at = cache.save([], only_if_newer=True, balance=balance) if cache is not None else now_ms()
   result.update(balance=balance_record(live["remaining"], live["currency"]), fetchedAtMs=fetched_at)
+  out_of_credits(result, live["available"])
   return result
 
 

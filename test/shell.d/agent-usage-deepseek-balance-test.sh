@@ -192,4 +192,16 @@ with FakeHttp({BALANCE: {"is_available": True, "balance_infos": [
 expect("DeepSeek collector reads the currency that holds the credit",
        [record["balance"]["remaining"], record["balance"]["currency"], record["usageStatusText"]], [12.5, "USD", ""], record)
 
+# is_available false is DeepSeek saying the balance no longer covers a call:
+# with no funded figure the gauge raises no alarm, so the status does, and a
+# reused answer keeps saying so.
+with FakeHttp({BALANCE: {"is_available": False, "balance_infos": [
+  {"currency": "CNY", "total_balance": "0.00", "granted_balance": "0.00", "topped_up_balance": "0.00"},
+]}}):
+  record = collect("deepseek", "--force")
+expect("DeepSeek collector reads an unavailable balance as Out of credits",
+       [record["balance"]["remaining"], record["usageStatusText"], "Top up" in record["authHelpText"], record.get("retryAdvised")],
+       [0.0, "Out of credits", True, None], record)
+record, http = deepseek(500, ())
+expect("DeepSeek collector keeps saying Out of credits from the balance it reuses", [http.count, record["usageStatusText"]], [0, "Out of credits"], record)
 PY
