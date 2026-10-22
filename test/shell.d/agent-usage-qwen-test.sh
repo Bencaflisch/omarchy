@@ -56,6 +56,14 @@ def chats(project="p"):
   return home() / ".qwen" / "projects" / project / "chats"
 
 
+# Qwen Code sends an OpenAI-compatible reply to OPENAI_BASE_URL, else to
+# OpenAI's API, its default. The checks that aren't about routes run Qwen Code
+# pointed at Model Studio, as from the shell it was started in.
+def studio():
+  sandbox()
+  os.environ["OPENAI_BASE_URL"] = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+
+
 # A machine that never ran Qwen Code has no local stats to show.
 sandbox()
 record = qwen()
@@ -63,7 +71,7 @@ expect("Qwen with no usage says it has no local stats", [record["ready"], record
 
 # ------------------------------------------------------------- transcripts
 
-sandbox()
+studio()
 transcript(chats("-home-me-app") / "s1.jsonl", [
   prompt("u1", "s1", NOW),
   response("r1", "s1", NOW, "qwen3-coder-plus", "qwen-oauth", 1000, 200, 600, 50, "resp-1"),
@@ -104,7 +112,7 @@ expect("Qwen reads tokens the way Qwen Code's own statistics do", record["modelU
 # already include reasoning_tokens, with and without a total, and a record
 # kept without its auth type, with a total: thinking the total already holds
 # in the output counts once.
-sandbox()
+studio()
 transcript(chats() / "r.jsonl", [
   prompt("u1", "r", NOW),
   response("r1", "r", NOW, "qwen-resp-model", "openai-responses", 5234, 55, 75, 5, "resp_mock5", total=5289),
@@ -123,8 +131,10 @@ expect("Qwen counts a Responses API reply's reasoning once, and other thinking o
 # and settings.json's modelProviders the base URL each model is sent to:
 # Alibaba's hosts are Qwen's, OpenRouter's or a self-hosted server's are
 # theirs, and Anthropic's API, which Qwen Code reaches with --auth-type
-# anthropic, is no Qwen plan. Each prompt goes with the reply that answered
-# it. Shaped as Qwen Code 0.26.0 wrote them against a mock of each API.
+# anthropic, is no Qwen plan, nor OpenAI's, where Qwen Code sends a model no
+# route or OPENAI_BASE_URL places. Each prompt goes with the reply that
+# answered it. Shaped as Qwen Code 0.26.0 wrote them against a mock of each
+# API.
 sandbox()
 write_json(home() / ".qwen" / "settings.json", {"modelProviders": {"openai": [
   {"id": "qwen3-coder-plus", "baseUrl": "https://coding-intl.dashscope.aliyuncs.com/v1", "envKey": "BAILIAN_CODING_PLAN_API_KEY"},
@@ -144,9 +154,9 @@ transcript(chats() / "routes.jsonl", [
   response("r5", "routes", NOW, "qwen-unlisted", "openai", 100, 10, 0, 0, "chatcmpl-default"),
 ])
 record = qwen()
-expect("Qwen counts the replies Alibaba billed or nothing places, with their prompts, and leaves other providers' out",
+expect("Qwen counts the replies Alibaba billed, with their prompts, and leaves other providers' out",
        [sorted(record["modelUsage"]), record["todayPrompts"], record["todayTotalTokens"]],
-       [["qwen-unlisted", "qwen3-coder-plus"], 2, 1285 + 110], record)
+       [["qwen3-coder-plus"], 1, 1285], record)
 local = collect("local", "--force")
 expect("Local counts the Qwen Code replies sent to a self-hosted server",
        [local["todayTokensByModel"], local["todayPrompts"]], [{"local-qwen": 3030}, 1], local)
@@ -235,13 +245,13 @@ for where, configure, owner in ENV_ROUTES:
 
 # A .env route set after a scan is reflected at once too.
 clear_routes()
-expect("Qwen counts a reply with no route", collect("qwen")["todayTotalTokens"], 13730)
-(home() / ".qwen" / ".env").write_text("OPENAI_BASE_URL=http://127.0.0.1:18491/v1\n")
-expect("a Qwen scan made before a .env route is not reused after it", collect("qwen", "--limits-only")["todayTotalTokens"], 0)
+expect("Qwen leaves out an OpenAI-compatible reply with no route, which went to OpenAI's API", collect("qwen")["todayTotalTokens"], 0)
+(home() / ".qwen" / ".env").write_text("OPENAI_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1\n")
+expect("a Qwen scan made before a .env route is not reused after it", collect("qwen", "--limits-only")["todayTotalTokens"], 13730)
 
 # --------------------------------------------------------- untrusted fields
 
-sandbox()
+studio()
 transcript(chats() / "s.jsonl", [
   prompt("bad1", "s", "yesterday-ish"),
   prompt("bad2", "s", "2999-01-01T00:00:00Z"),
@@ -260,7 +270,7 @@ expect("Qwen skips bad times, bad token fields, a line nested too deep, and a to
 
 # A record with no time is dated once, by the transcript's time as it is
 # read, so it isn't today's again on every day after.
-sandbox()
+studio()
 undated = transcript(chats() / "u.jsonl", [prompt("nt1", "u", None), response("nt2", "u", None, "m", "openai", 10, 2, 0, 0, "nt")])
 three_days_ago = time.time() - 3 * 86400
 os.utime(undated, (three_days_ago, three_days_ago))
@@ -271,7 +281,7 @@ expect("an undated record is dated by its transcript, once",
 
 # ---------------------------------------------------------------- locations
 
-sandbox()
+studio()
 transcript(home() / "runtime" / "projects" / "p" / "chats" / "s.jsonl", [response("a", "s", NOW, "m", "openai", 1, 0, 0, 0, "ra")])
 transcript(home() / "qhome" / "projects" / "p" / "chats" / "s.jsonl", [response("b", "s", NOW, "m", "openai", 10, 0, 0, 0, "rb")])
 transcript(chats() / "s.jsonl", [response("c", "s", NOW, "m", "openai", 100, 0, 0, 0, "rc")])
@@ -295,7 +305,7 @@ expect("Qwen ignores a runtimeOutputDir holding a NUL", record["todayTotalTokens
 # pi, omp and opencode turns on Alibaba's Qwen plans count beside Qwen Code's
 # own transcripts: every plan id once, and nothing on a pay-as-you-go key, a
 # custom gateway that only starts with a plan's name, or a bare `qwen`.
-sandbox()
+studio()
 PLAN_IDS = ["alibaba-coding-plan", "alibaba-coding-plan-cn", "alibaba-token-plan", "alibaba-token-plan-cn",
             "qwen-token-plan", "qwen-token-plan-cn", "qwen-token-plan-individual", "qwen-portal"]
 OTHER_IDS = ["alibaba", "alibaba-cn", "alibaba-coding-plan-proxy", "qwen", "dashscope"]
@@ -330,7 +340,7 @@ expect("Qwen shows Qwen plan usage without Qwen Code transcripts or a sign-in",
 
 # ---------------------------------------------------------------- contract
 
-sandbox()
+studio()
 
 
 def add_response():

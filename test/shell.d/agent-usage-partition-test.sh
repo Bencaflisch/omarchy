@@ -1029,7 +1029,7 @@ path.write_text("".join(json.dumps(line) + "\n" for line in wire))
 # Qwen Code: settings.json's modelProviders say where each model goes.
 QWEN_ROUTES = [
   ("openai", "https://coding-intl.dashscope.aliyuncs.com/v1", "qwen"),
-  ("openai", None, "qwen"),
+  ("openai", None, None),
   ("openai", "http://localhost:1234/v1", "local"),
   ("openai", "https://openrouter.ai/api/v1", None),
   ("anthropic", None, None),

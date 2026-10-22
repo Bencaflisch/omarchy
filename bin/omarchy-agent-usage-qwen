@@ -413,17 +413,18 @@ def route_owner(auth_type, model, routes, urls=None):
   Code's (claude_code_owner): Alibaba's hosts are Qwen's, a provider's host
   is that provider's, a server you run local's unless the model is a Claude
   or an Ollama cloud one it only forwards, and a gateway nobody's. Without a
-  URL, an OpenAI-compatible reply (and one from before Qwen Code kept the
-  type) ran on Qwen Code's default service, as every reply was read before,
-  while Anthropic, Gemini and Vertex AI are their own services, which no
-  collector here bills."""
+  URL, a reply from before Qwen Code kept the type ran on Qwen Code's
+  default service, as every reply was read before, while an OpenAI-compatible
+  one went to OpenAI's API, Qwen Code's default for it (getDefaultBaseUrl),
+  and Anthropic, Gemini and Vertex AI are their own services, none of which
+  a collector here bills."""
   if auth_type == "qwen-oauth":
     return AGENT_ID
   url = routes.get((auth_type, model)) or next((value for (_, routed), value in routes.items() if routed == model), "")
   url = url or (urls or {}).get(auth_type, "")
   if url:
     return claude_code_owner(model, url)
-  return AGENT_ID if auth_type in ("", "openai", "openai-responses") else None
+  return AGENT_ID if auth_type == "" else None
 
 
 def summarize(rows, owner):
