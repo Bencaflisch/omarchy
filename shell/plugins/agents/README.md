@@ -103,7 +103,7 @@ Limits come from Anthropic's OAuth usage endpoint, asked with the access token t
 
 Local stats come from the CLI's transcripts under `projects/`, falling back to `stats-cache.json` and `history.jsonl` (the cache's days are UTC dates that stop at yesterday, so its daily tokens are approximate and rarely cover today), plus pi and omp sessions (honouring `PI_CODING_AGENT_DIR` and `PI_CODING_AGENT_SESSION_DIR`) and opencode sessions on the `anthropic` provider.
 
-A prompt is one a person sent: a main-thread user line that isn't a tool's result, Claude Code's own meta line, a compaction summary, a task notification or a local command's output, plus a prompt typed mid-turn, which Claude Code queues as a `queued_command` attachment. Each counts once by its uuid, which a resumed or forked transcript keeps, so a tool loop's API requests are tokens, not prompts.
+A reply counts once by its message and request ids, across the transcripts a resume or fork copies it into; a `/btw` side question's sidechain replay of its parent's message counts under the parent. A prompt is one a person sent: a main-thread user line that isn't a tool's result, Claude Code's own meta line, a compaction summary, a task notification or a local command's output, plus a prompt typed mid-turn, which Claude Code queues as a `queued_command` attachment. Each counts once by its uuid, which a resumed or forked transcript keeps, so a tool loop's API requests are tokens, not prompts.
 
 ### Codex
 

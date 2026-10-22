@@ -261,6 +261,24 @@ for reverse in (False, True):
   expect(f"Claude counts a forked session's parent and its tokens once ({'parent' if reverse else 'fork'} read first)",
          [forked["todaySessions"], forked["totalSessions"], forked["todayTotalTokens"]], [2, 2, 3156], forked)
 
+# A response is its message id and its request id. A gateway that reuses one
+# message id for every response still served each of them; a copy in a fork
+# keeps both ids and counts once; and a /btw side question's sidechain replays
+# its parent's message under a new request id, which the parent's copy covers.
+sandbox()
+
+
+def served(message_id, request_id, output, session="session-1", **extra):
+  return {**message(message_id, 1000, output), "requestId": request_id, "sessionId": session, **extra}
+
+
+transcript(served("msg_gateway", "req_1", 10), served("msg_gateway", "req_2", 20), served("msg_parent", "req_3", 30), name="main.jsonl")
+transcript(served("msg_gateway", "req_1", 10, session="fork"), served("msg_gateway", "req_4", 40, session="fork"), name="fork.jsonl")
+transcript(served("msg_parent", "req_5", 30, isSidechain=True), served("msg_aside", "req_6", 50, isSidechain=True), name="main/subagents/agent-aside.jsonl")
+record = claude()
+expect("Claude counts a response by message and request id, once across forks and sidechain replays",
+       record["todayTotalTokens"], 5000 + 10 + 20 + 30 + 40 + 50, record)
+
 # Unreadable transcripts are expected when an agent ran as another user, so
 # they make one bounded warning rather than a line each.
 sandbox()
