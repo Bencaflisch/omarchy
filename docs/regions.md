@@ -16,11 +16,20 @@ The China profile changes only where packages come from, never which repositorie
 
 Installs from before regions have no marker and stay global; nothing changes their pacman files on update. An existing machine in mainland China opts in by writing the marker and refreshing: `echo cn | sudo tee /etc/omarchy/region` then `omarchy-refresh-pacman`, which backs up both files first.
 
+## Developer tools
+
+While the marker says `cn`, `default/bash/env-bootstrap` exports the region's `environment` file, so every login shell, interactive shell, SSH session and the uwsm desktop session get the same registries, for every user. It covers npm (`NPM_CONFIG_REGISTRY`), pip and uv (`PIP_INDEX_URL`, `UV_DEFAULT_INDEX`), Go (`GOPROXY`, with `GOSUMDB=sum.golang.google.cn`, the reachable mirror of `sum.golang.org` that Go checks with the same key), rustup (`RUSTUP_DIST_SERVER`, `RUSTUP_UPDATE_ROOT`), Bundler (`BUNDLE_MIRROR__ALL`), RubyGems (`GEMRC`, pointing at the profile's `gemrc`) and Maven (`MAVEN_ARGS` with the profile's `maven-settings.xml`, found through `OMARCHY_PATH`). A value the user exported first is kept, and none of the user's own config files are rewritten. Root's shells skip it, because on a dev link `OMARCHY_PATH` is a user-writable checkout.
+
+cargo has no environment setting for source replacement, and `cargo install` reads only `$CARGO_HOME/config.toml`, so `omarchy-region-user cn` adds a block marked `# BEGIN omarchy region` there for the first user of a China install, and `omarchy-region-user global` removes exactly that block. A config that already configures crates.io's source, one that is not valid TOML, and a block the user has edited, inside or around its markers, are left alone.
+
+Not covered: tools mise installs from GitHub releases or other upstream URLs, the AUR, the arch-mact2 hardware repository, and Google services. Other users of the same machine get the registries through their shells but add the cargo block themselves with `omarchy-region-user cn`.
+
 ## Profile layout
 
 Each profile lives in `default/regions/<code>/`:
 
 - `timezones`: the timezones that select this region, one per line, with blank lines and `#` comments allowed. List tzdata's backward-compatible names too, since the installer's timezone list includes them. A timezone may belong to at most one profile.
+- `environment`: optional shell assignments exported while the region is active, each kept if the user set it first.
 - `pacman/`: per channel (`stable`, `rc`, `edge`), `omarchy-<channel>.prepend`, placed first in the `[omarchy]` section of `pacman.conf`, and `mirrorlist-<channel>.prepend`, placed ahead of the channel's mirrorlist, so the regional mirrors are tried first.
 
 A profile adds mirrors of repositories every install already uses, never a repository or a signing key of its own. Hong Kong, Macau and Taiwan belong to no profile under any timezone name, and a test keeps it that way.
@@ -30,13 +39,13 @@ A profile adds mirrors of repositories every install already uses, never a repos
 There is one ISO for every region. The companion `omarchy-iso` repository reads the profiles from the runtime it bundles, so a region and its repository defaults can never disagree.
 
 - **Build:** the builder bundles the profiles with the runtime; it adds no repository, key or package for them.
-- **Install:** the installer maps the timezone the user picked to a region through the `timezones` files; a timezone no profile lists means `global`. It shows the result on the summary screen. Unattended installs can set the region explicitly instead. For a regional install it writes `/etc/omarchy/region`; the runtime finalizer then applies the fragments.
+- **Install:** the installer maps the timezone the user picked to a region through the `timezones` files; a timezone no profile lists means `global`. It shows the result on the summary screen. Unattended installs can set the region explicitly instead. For a regional install it writes `/etc/omarchy/region`; the runtime finalizer then applies the fragments and its first user's cargo block.
 - **Deferred installs** have no timezone until first boot, so they are `global` unless the unattended configuration sets a region.
 
 
 ## Scope of the China profile
 
-The China profile provides repository defaults only. Language is a separate installer choice, not part of a region: a Chinese speaker outside China keeps global mirrors, and a China install in English still gets the regional ones.
+The China profile provides repository and developer registry defaults only. Language is a separate installer choice, not part of a region: a Chinese speaker outside China keeps global mirrors, and a China install in English still gets the regional ones.
 
 ## Remaining release validation
 

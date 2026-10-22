@@ -1,0 +1,104 @@
+#!/bin/bash
+
+# omarchy:summary=Apply a region's developer tool settings for the current user
+# omarchy:args=<global|cn>
+# omarchy:hidden=true
+
+set -euo pipefail
+
+region=${1:-}
+case "$region" in
+  global|cn) ;;
+  *) echo "Usage: omarchy-region-user <global|cn>" >&2; exit 1 ;;
+esac
+
+# cargo has no environment setting for source replacement and `cargo install`
+# reads only $CARGO_HOME, so the region's registry goes in a marked block there.
+# The block records what it added, so removing it restores the file exactly.
+python3 - "$region" "${CARGO_HOME:-$HOME/.cargo}/config.toml" "$OMARCHY_PATH/default/regions/cn/cargo.toml" <<'PY'
+import os, sys, tomllib
+region, path, fragment = sys.argv[1:]
+BEGIN = "# BEGIN omarchy region: managed by omarchy-region, removed for World"
+END = "# END omarchy region"
+MODES = ("created", "joined", "appended")
+
+def leave(reason):
+    print(f"Leaving {path} alone: {reason}.", file=sys.stderr)
+    sys.exit(0)
+
+def parses(raw):
+    try:
+        tomllib.loads(raw.decode())
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError):
+        return False
+    return True
+
+data = open(path, "rb").read() if os.path.exists(path) else None
+original = data
+# Nothing is rewritten unless the whole file reads as TOML, whichever way the
+# switch goes.
+if data is not None and not parses(data):
+    leave("it cannot be read as TOML")
+if data is not None:
+    lines = data.split(b"\n")
+    begins = [i for i, line in enumerate(lines) if line.startswith(BEGIN.encode())]
+    ends = [i for i, line in enumerate(lines) if line == END.encode()]
+    if begins or ends:
+        # One complete block under an exact marker, or nothing is touched: a
+        # hand-edited marker could otherwise take the user's own lines with it.
+        markers = [f"{BEGIN} {mode}".encode() for mode in MODES]
+        if len(begins) != 1 or len(ends) != 1 or ends[0] < begins[0] or lines[begins[0]] not in markers or ends[0] == len(lines) - 1:
+            leave("its omarchy region block has been edited")
+        mode = lines[begins[0]].decode()[len(BEGIN) + 1:]
+        # Lines changed inside the block are the user's too.
+        if b"\n".join(lines[begins[0] + 1:ends[0]]) + b"\n" != open(fragment, "rb").read():
+            leave("its omarchy region block has been edited")
+        # before is everything ahead of the newline that precedes BEGIN; after
+        # is everything following END's newline.
+        before = b"\n".join(lines[:begins[0]])
+        after = b"\n".join(lines[ends[0] + 1:])
+        if mode == "appended":
+            # The block came after a blank line of its own; without that line,
+            # removing the block would join two of the user's lines.
+            if begins[0] == 0 or lines[begins[0] - 1] != b"":
+                leave("its omarchy region block has been edited")
+            # The original ended with a newline (or was empty) and is before.
+            data = before + after
+        elif mode == "joined":
+            # The original's last line had no newline; a line added later needs one.
+            if begins[0] == 0:
+                leave("its omarchy region block has been edited")
+            data = before + (b"\n" + after if after else b"")
+        elif begins[0] == 0:
+            # Created by the block: only lines added after it stay.
+            data = after or None
+        else:
+            # Created by the block, with lines the user added above it.
+            data = before + b"\n" + after
+
+if region == "cn":
+    source = tomllib.loads((data or b"").decode()).get("source", {})
+    if "crates-io" in source or "omarchy-region" in source:
+        leave("it already configures crates.io's source")
+    block = open(fragment).read()
+    if data is None:
+        data = f"{BEGIN} created\n{block}{END}\n".encode()
+    elif data and not data.endswith(b"\n"):
+        data += f"\n{BEGIN} joined\n{block}{END}\n".encode()
+    else:
+        data += f"\n{BEGIN} appended\n{block}{END}\n".encode()
+    # An inline `source = {}` table, for one, cannot take the block's tables.
+    if not parses(data):
+        leave("the region's block would not fit its TOML")
+
+# A config the switch has nothing to change in stays untouched, mtime and all.
+if data == original:
+    sys.exit(0)
+if data is None:
+    if os.path.exists(path):
+        os.remove(path)
+else:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(data)
+PY
