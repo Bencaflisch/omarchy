@@ -321,7 +321,10 @@ def stats_cache_fallback(claude_dir: Path) -> dict[str, Any] | None:
     return [entry for entry in value if isinstance(entry, dict)] if isinstance(value, list) else []
 
   # Tokens by model per day, the first entry for a day standing, as the
-  # record's recentDays and today's tokens read them.
+  # record's recentDays and today's tokens read them. Claude Code keys these
+  # by UTC date (toISOString) and stops at yesterday's, so each is read as
+  # the local day of the same date, the one it mostly overlaps: off by the
+  # UTC offset at either end, and today's tokens are usually none.
   tokens_by_day: dict[str, dict[str, int]] = {}
   for entry in entries("dailyModelTokens"):
     date = entry.get("date")

@@ -101,7 +101,7 @@ When `~/.local/state/omarchy/agents/accounts/<claude|codex|grok>.json` registers
 
 Limits come from Anthropic's OAuth usage endpoint, asked with the access token the Claude Code CLI keeps in `.credentials.json` under `CLAUDE_CONFIG_DIR` (default `~/.claude`); the plan comes from the CLI's profile, else the credentials. Only the CLI refreshes that token, so one left to lapse reads "Limits paused" and keeps the last numbers until Claude Code runs again; a lapsed refresh token reads "Sign-in expired". Without credentials the panel says so and falls back to local stats only.
 
-Local stats come from the CLI's transcripts under `projects/`, falling back to `stats-cache.json` and `history.jsonl`, plus pi and omp sessions (honouring `PI_CODING_AGENT_DIR` and `PI_CODING_AGENT_SESSION_DIR`) and opencode sessions on the `anthropic` provider.
+Local stats come from the CLI's transcripts under `projects/`, falling back to `stats-cache.json` and `history.jsonl` (the cache's days are UTC dates that stop at yesterday, so its daily tokens are approximate and rarely cover today), plus pi and omp sessions (honouring `PI_CODING_AGENT_DIR` and `PI_CODING_AGENT_SESSION_DIR`) and opencode sessions on the `anthropic` provider.
 
 ### Codex
 
