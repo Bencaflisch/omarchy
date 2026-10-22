@@ -123,7 +123,7 @@ for supply in "$power_supply_path"/*; do
 done
 
 charge_idle=false
-if awk -v rate="${power_rate_raw:-0}" 'BEGIN { exit !(rate <= 0.2) }'; then
+if awk -v rate="${power_rate_raw:-0}" 'BEGIN { if (rate < 0) rate = -rate; exit !(rate <= 0.2) }'; then
   charge_idle=true
 fi
 
