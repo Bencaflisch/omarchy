@@ -78,7 +78,8 @@ TRANSPORT_ERRORS = (
 # Per-file totals of native Codex sessions survive between runs, so a rescan
 # only reads the session files that changed. Bumping the schema retires every
 # record written by an older layout; version 2 reads token counts and times
-# the way every collector reads them.
+# the way every collector reads them, and version 3 drops totals cached while a
+# falsy time still counted on the file's day.
 FILE_CACHE_SCHEMA = 3
 
 
