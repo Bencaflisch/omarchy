@@ -26,6 +26,12 @@ def use_home():
   os.environ["CODEX_HOME"] = str(home() / ".codex")
 
 
+# A machine that never ran a self-hosted model has no local stats to show.
+use_home()
+record = collect("local", "--force")
+expect("Local with no usage says it has no local stats", [record["ready"], record["hasLocalStats"]], [False, False], record)
+
+
 def rollouts():
   return Path(os.environ["CODEX_HOME"]) / "sessions" / datetime.now().strftime("%Y/%m/%d")
 

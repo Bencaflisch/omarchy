@@ -30,6 +30,11 @@ def sessions():
   return home() / ".pi" / "agent" / "sessions"
 
 
+# A machine that never used DeepSeek has no local stats to show.
+sandbox()
+record = deepseek()
+expect("DeepSeek with no usage says it has no local stats", [record["ready"], record["hasLocalStats"]], [False, False], record)
+
 # ------------------------------------------------- pi, omp and opencode
 
 # Only the deepseek provider counts, from pi, omp and opencode alike, with

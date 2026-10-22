@@ -28,6 +28,16 @@ def kimi(*args):
   return collect("kimi", *(args or ("--force",)))
 
 
+# A machine that never ran Kimi Code has no local stats to show, and nor does
+# a Kimi home with no session in it.
+sandbox()
+record = kimi()
+(home() / ".kimi-code").mkdir()
+in_use = kimi()
+expect("Kimi with no sessions says it has no local stats",
+       [record["ready"], record["hasLocalStats"], in_use["ready"], in_use["hasLocalStats"]], [False, False, True, False], in_use)
+
+
 def prompt(text, prompt_id, at, origin=None, kind="turn.prompt"):
   line = {"type": kind, "agentId": "main", "input": [{"type": "text", "text": text}], "origin": origin or {"kind": "user"}, "turnId": 0, "time": at}
   line["promptId" if kind == "turn.prompt" else "messageId"] = prompt_id

@@ -295,7 +295,8 @@ def main():
   max_age = scan_max_age(args.force, args.limits_only)
   stats = cached_scan(AGENT_ID, scan_sources(), max_age, lambda: run_local_scans(max_age), match=routed_match())
   # Self-hosted work has no plan, no limits and no balance.
-  record = base_record(AGENT_ID, AGENT_NAME, ready=number(stats.get("totalSessions")) > 0, hasLocalStats=True)
+  in_use = number(stats.get("totalSessions")) > 0
+  record = base_record(AGENT_ID, AGENT_NAME, ready=in_use, hasLocalStats=in_use)
   record.update(stats)
   emit(record, sort_keys=True)
   return 0

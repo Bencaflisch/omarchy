@@ -342,8 +342,8 @@ def modern_quota(root):
   expect("the current CLI's quota windows are read, the monthly code allowance titled",
          [[row["percent"] for row in data["limits"]], data["limits"][0]["resetsAt"], data["limits"][-1].get("title")],
          [[0.25, 0.8, 1, 0], RESET_AT, "Code Monthly"], data)
-  expect("Kimi's quota stands beside this machine's local stats",
-         [data.get("scope"), data["hasLocalStats"], data["hasPromptStats"]], [None, True, True], data)
+  expect("Kimi's quota is this machine's record, with no local stats while no session has run",
+         [data.get("scope"), data["hasLocalStats"], data["hasPromptStats"]], [None, False, True], data)
   scanner.USAGE_URL = "https://api.kimi.ai/coding/v1/usages"
   record()
   expect("the global Kimi service gets the authorization header too", auth_header(), "Bearer AT_env")

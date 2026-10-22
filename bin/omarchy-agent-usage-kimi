@@ -121,7 +121,7 @@ def trusted_url(url: str) -> tuple[str, bool]:
 
 
 def base_record(**overrides: Any) -> dict[str, Any]:
-  return shared_base_record(AGENT_ID, AGENT_NAME, hasLocalStats=True, **overrides)
+  return shared_base_record(AGENT_ID, AGENT_NAME, **overrides)
 
 
 # --------------------------------------------------------------- kimi auth
@@ -675,6 +675,7 @@ def main() -> int:
       cache = limits_cache(auth["key"])
     record = failure_record(error, cache)
   record.update(stats)
+  record["hasLocalStats"] = bool(stats.get("modelUsage") or stats.get("totalSessions"))
   emit(record)
   return 0
 

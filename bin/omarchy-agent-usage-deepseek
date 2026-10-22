@@ -384,18 +384,24 @@ def collect_balance(key: str, api_base_url: str, force: bool) -> dict[str, Any]:
 
 # ------------------------------------------------------------------ record
 
+# Whether a scan found any DeepSeek usage on this machine: a session, or
+# tokens no session is known for.
+def has_local_stats(stats: dict[str, Any]) -> bool:
+  return number(stats.get("totalSessions")) > 0 or bool(stats.get("modelUsage"))
+
+
 def base_record(stats: dict[str, Any] | None = None) -> dict[str, Any]:
   # Prompt and session counts are real: every pi session message carries
   # them, so today's tooltip may show "N prompts · M sessions".
-  record = shared_base_record(AGENT_ID, AGENT_NAME, hasLocalStats=True)
+  record = shared_base_record(AGENT_ID, AGENT_NAME)
   if stats is not None:
-    record.update(stats)
+    record.update(stats, hasLocalStats=has_local_stats(stats))
   return record
 
 
 def collect(api_base_url: str, max_age: float, force: bool) -> dict[str, Any]:
   record = base_record(cached_local_stats(max_age))
-  record["ready"] = number(record.get("totalPrompts")) > 0
+  record["ready"] = record["hasLocalStats"]
 
   # Without a key the record carries local stats only, with no plan, so the
   # panel leaves out the balance section, and skips the record altogether on
