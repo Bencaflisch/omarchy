@@ -5,8 +5,10 @@ credentials live, the endpoint it asks and how to read the answer, which
 providers' tokens it counts, and the quirks of its record. Everything the
 collector contract (docs/agent-usage-collectors.md) asks of all of them lives
 here, once: the cache files, how untrusted numbers and times are read, the
-record's shape, the limits cache, and the readers for the pi, omp, and
-opencode stores several collectors split between them by provider.
+record's shape, the limits cache, and the readers for the stores several
+collectors split between them by provider: pi, omp and opencode sessions,
+Claude Code transcripts, Codex rollouts, DeepSeek Harness logs and MiniMax
+Code sessions, with the one rule each split follows.
 
 It ships with the agents panel the records feed, and a collector loads it
 from `$OMARCHY_PATH/shell/plugins/agents`. Nothing here prints a record, reads
