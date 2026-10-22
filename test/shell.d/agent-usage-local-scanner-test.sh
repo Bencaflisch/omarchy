@@ -111,6 +111,14 @@ codex_record = collect("codex", "--force")
 expect("Codex keeps the subscription's own rollouts", models(codex_record), ["gpt-sub", "qwen-forked"], codex_record)
 expect("Local and Codex never count the same rollout", set(models(local_record)) & set(models(codex_record)), set())
 
+# The cloud-tagged turn Local leaves out is Ollama Cloud's, as Codex's `--oss`
+# wrote it: counted there once, with the prompt that asked for it.
+with FakeHttp():
+  ollama_record = collect("ollama", "--force")
+expect("Ollama counts the cloud-tagged Codex rollout Local leaves out",
+       [ollama_record["todayTokensByModel"], ollama_record["todayPrompts"], set(models(local_record)) & set(models(ollama_record))],
+       [{"gpt-oss": 1100}, 1, set()], ollama_record)
+
 # A rollout is replayed from the per-file cache while its size and mtime stand:
 # change its contents but neither, and the old count stays.
 stat = homelab.stat()

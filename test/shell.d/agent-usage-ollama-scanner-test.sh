@@ -103,6 +103,43 @@ record = ollama()
 expect("Ollama counts every Claude Code reply while Claude Code is pointed at ollama.com",
        [record["todayTokensByModel"], record["todayPrompts"]], [{"kimi-k2.7-code": 300, "claude-sonnet-4-5": 40}, 2], record)
 
+# Codex's `--oss` rollouts name the local daemon's `ollama` provider: a
+# cloud-tagged model ran on Ollama's servers and counts here, with its typed
+# prompt, while one the daemon ran itself is the local collector's. A
+# model_providers entry named `ollama-cloud` is Ollama Cloud whatever the
+# model. A built-in `openai` rollout is the Codex collector's.
+sandbox()
+os.environ["CODEX_HOME"] = str(home() / ".codex")
+day_dir = home() / ".codex" / "sessions" / datetime.now().strftime("%Y/%m/%d")
+day_dir.mkdir(parents=True)
+STAMP = today_stamp()
+
+
+def codex_rollout(name, provider, model, tokens):
+  lines = [
+    {"timestamp": STAMP, "type": "session_meta", "payload": {"model_provider": provider}},
+    {"timestamp": STAMP, "type": "turn_context", "payload": {"model": model}},
+    {"timestamp": STAMP, "type": "event_msg", "payload": {"type": "user_message", "message": "go"}},
+    {"timestamp": STAMP, "type": "event_msg", "payload": {"type": "token_count", "info": {
+      "last_token_usage": {"input_tokens": tokens, "cached_input_tokens": 10, "output_tokens": 5},
+      "total_token_usage": {"input_tokens": tokens}}}},
+  ]
+  (day_dir / f"rollout-{name}.jsonl").write_text("".join(json.dumps(line) + "\n" for line in lines))
+
+
+codex_rollout("cloud", "ollama", "gpt-oss:120b-cloud", 6280)
+codex_rollout("here", "ollama", "gpt-oss:20b", 4280)
+codex_rollout("hosted", "ollama-cloud", "qwen3-coder:480b", 980)
+codex_rollout("sub", "openai", "gpt-5.1-codex", 777)
+record = ollama()
+expect("Ollama counts Codex rollouts on its cloud models and its own provider, prompts as typed",
+       [record["todayTokensByModel"], record["modelUsage"].get("gpt-oss"), record["todayPrompts"], record["todaySessions"]],
+       [{"gpt-oss": 6285, "qwen3-coder": 985}, {"inputTokens": 6270, "outputTokens": 5, "cacheReadInputTokens": 10, "cacheCreationInputTokens": 0}, 2, 2], record)
+write_json(config_home() / "omarchy" / "agents" / "ollama.json", {"modelPrefix": "qwen"})
+record = ollama()
+expect("Ollama's model prefix filters Codex rollouts too", record["todayTokensByModel"], {"qwen3-coder": 985}, record)
+del os.environ["CODEX_HOME"]
+
 # ---------------------------------------------------------------- contract
 
 sandbox()

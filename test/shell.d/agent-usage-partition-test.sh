@@ -110,6 +110,9 @@ run_all() {
 #   (counted as output), a forked session whose copies of its source's
 #   messages count nowhere while its own reply does, and a row dated at zero,
 #   which counts nowhere either.
+# - Codex rollouts on the built-in provider, on `--oss`'s local daemon (a
+#   cloud-tagged model and a local one), on a provider named `ollama-cloud`,
+#   on LM Studio, and on a custom provider nothing can place.
 #
 # Every row carries a unique tag (zqNNN) in its model name and a
 # recognizable token total, 100 * provider + source, so a collector's
@@ -299,6 +302,36 @@ conn.executemany("INSERT INTO message VALUES (?, ?, ?, ?, ?)", message_rows)
 conn.executemany("INSERT INTO session_message VALUES (?, ?, ?, ?, ?)", session_rows)
 conn.commit()
 conn.close()
+
+
+# Codex rollouts, as Codex 0.163 writes them: the built-in `openai` provider
+# is the Codex collector's, `--oss` on the local daemon's `ollama` provider is
+# the local collector's unless the model is cloud-tagged (Ollama Cloud's), a
+# provider named `ollama-cloud` is Ollama Cloud's, LM Studio is local, and a
+# custom provider nothing can place is nobody's.
+CODEX_ROLLOUTS = [
+  ("openai", "gpt-codex@", "codex"),
+  ("ollama", "gpt-oss@:120b-cloud", "ollama"),
+  ("ollama-cloud", "qwen-codex@", "ollama"),
+  ("ollama", "plain-codex@:20b", "local"),
+  ("lmstudio", "plain-codex@", "local"),
+  ("acme-unclaimed", "acme-codex@", None),
+]
+rollouts = home / ".codex/sessions" / datetime.now().strftime("%Y/%m/%d")
+rollouts.mkdir(parents=True)
+for n, (provider, stem, owner) in enumerate(CODEX_ROLLOUTS):
+  tag = f"zq{len(cells):03d}"
+  tokens = 80000 + 100 * n
+  base, _, suffix = stem.partition("@")
+  lines = [
+    {"timestamp": stamp, "type": "session_meta", "payload": {"model_provider": provider}},
+    {"timestamp": stamp, "type": "turn_context", "payload": {"model": f"{base}-{tag}{suffix}"}},
+    {"timestamp": stamp, "type": "event_msg", "payload": {"type": "user_message", "message": "go"}},
+    {"timestamp": stamp, "type": "event_msg", "payload": {"type": "token_count", "info": {
+      "last_token_usage": {"input_tokens": tokens, "output_tokens": 0}, "total_token_usage": {"input_tokens": tokens}}}},
+  ]
+  (rollouts / f"rollout-{tag}.jsonl").write_text("".join(json.dumps(line) + "\n" for line in lines))
+  cells.append({"tag": tag, "provider": provider, "api": "", "source": "codex-rollout", "tokens": tokens, "owner": owner})
 
 cells_path.write_text(json.dumps(cells))
 PY
