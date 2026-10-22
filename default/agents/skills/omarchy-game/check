@@ -340,8 +340,9 @@ def main():
     print("\n".join(f"- {p}" for p in problems))
     print("\nFix these, then run check again.")
     sys.exit(1)
-  print("PASSED the automatic checks. Now open the three screenshots and look at them: is everything readable,")
-  print("in the theme's colours, and does it look like the game you meant to make?")
+  print("PASSED the automatic checks, which only prove the game runs. Now view the three screenshots above with your")
+  print("image tool (view_image in Codex, Read in Claude Code) and fix what looks wrong: is the player obvious, is")
+  print("everything on screen and readable, in the theme's colours, and does it look like the game you meant to make?")
 
 
 main()

@@ -184,7 +184,16 @@ const saved = {
 };
 
 // Renderer, scene, camera and lights, tuned for three r180: these intensities light a scene well.
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+// Without WebGL nothing can draw, so say so in the window rather than show a title screen that never starts.
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+} catch (error) {
+  for (const screen of document.querySelectorAll('.screen, #hud')) screen.remove();
+  document.body.insertAdjacentHTML('beforeend', '<div class="screen show"><div><h1>NO 3D</h1><p>This game needs WebGL, and the browser could not start it on this computer.</p><p class="dim"></p></div></div>');
+  document.querySelector('.screen .dim').textContent = error.message;
+  throw error;
+}
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;

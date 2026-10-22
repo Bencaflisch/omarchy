@@ -15,6 +15,8 @@ A game here is one file, `~/Games/<name>/index.html`: three.js from a pinned CDN
 
 Every game starts from `template.html` beside this file. It is a complete, working game (dodge the falling blocks) with the parts every game needs already done: title screen, pause, game over, restart, help, sound, saved best score, a fixed-step loop, and the hooks `check` uses to play it. You replace the game inside it, not the frame around it.
 
+Below, `SKILL_DIR` is the directory this SKILL.md is in, which also holds `template.html` and `check`. Use the path you read this file from (such as `~/.agents/skills/omarchy-game`), not a guess.
+
 ## 1. Settle the game
 
 If the user hasn't said what game they want, ask. Then decide, in one sentence each, before writing code:
@@ -31,13 +33,13 @@ Keep it small enough to finish: one mechanic done well beats three done badly. P
 
 ```bash
 mkdir -p ~/Games/<name>
-cp "$OMARCHY_PATH/default/agents/skills/omarchy-game/template.html" ~/Games/<name>/index.html
+cp "$SKILL_DIR/template.html" ~/Games/<name>/index.html
 omarchy-theme-color --all
 ```
 
 If `~/Games/<name>` already holds a game, ask before replacing it.
 
-Read the whole template once before changing it. Then edit `~/Games/<name>/index.html`:
+Read the whole template once before changing it. Then edit that copy in place, section by section — never write the file from scratch, and never rewrite the frame. Work in `~/Games/<name>/index.html` itself, not a copy elsewhere:
 
 1. **SETTINGS**: set `NAME` to the game's name, and fill `PALETTE` from `omarchy-theme-color --all` (same keys: `mode`, `background`, `foreground`, `accent`, `muted`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `orange`). The game takes the look of the theme it was made in. Themes can be nearly monochrome or light: tell things apart by brightness and size as well as hue, and check the screenshots.
 2. **THE GAME**: replace everything in that section with your game, keeping its five pieces: `build()` once for everything reused, `reset()` to start a round, `update(dt)` for every rule, `note(name)` when something worth testing happens, `endRound(won)` when the round ends. Set `score` as the game goes.
@@ -50,12 +52,12 @@ Leave the frame alone: the input, sound, screens, loop and `window.omarchyGame` 
 ## 3. Check it, then look at it
 
 ```bash
-"$OMARCHY_PATH/default/agents/skills/omarchy-game/check" ~/Games/<name>/index.html
+"$SKILL_DIR/check" ~/Games/<name>/index.html
 ```
 
 `check` opens the game headless, starts a round, pauses and resumes it, plays your `CHECK.play`, ends the round and restarts it. It fails on any page error, a round that won't start, a simulation that doesn't move, a pause that doesn't stop it, or a `CHECK.expect` event that never happened. Fix what it reports and run it again until it says PASSED. Never weaken `CHECK` to make it pass: if the mechanic doesn't happen, the game is broken.
 
-Then open `check-title.png`, `check-play.png` and `check-over.png` beside the game and look at them. A pass only proves the game runs. Ask of each picture:
+Then look at `check-title.png`, `check-play.png` and `check-over.png` beside the game, every time, with your harness's tool for viewing an image (`view_image` in Codex, Read in Claude Code). Reading the file names in the output is not looking. A pass only proves the game runs; only the pictures show whether it is any good. Ask of each:
 
 - Is the player obvious, and is everything the player needs on screen and not cut off at the edges?
 - Is it readable, with things told apart, in the theme's colours?
@@ -74,8 +76,8 @@ This adds the game to the app launcher (Super + Space) as a web app, with an ico
 ## Making it good
 
 - **Feel**: the player responds the moment a key goes down. Movement eases rather than snapping (`THREE.MathUtils.damp`). Every hit, pickup and death has a sound and something visible: a flash, a shake (`shake = 0.4`), a burst of particles, a squash.
-- **Fairness**: the first ten seconds are easy and it gets harder steadily. A loss is the player's mistake, never something they couldn't see coming: hazards appear far enough away to react.
-- **Clarity**: one player, obvious against everything else. The score is always visible. The camera shows the whole play area at 16:9 and 16:10.
+- **Fairness**: the first ten seconds are easy and it gets harder steadily. A loss is the player's mistake, never something they couldn't see coming: hazards appear far enough away to react, and no single key press ends the round by surprise (a snake ignores a turn straight back into itself; a ball starts on the paddle and leaves when the player launches it).
+- **Clarity**: one player, big enough to find at a glance and the most vivid thing on screen, never a dot. The score is always visible. The camera shows the whole play area at 16:9 and 16:10.
 - **Polish**: the title screen says the goal and the controls in two lines. Game over says the score and whether it was a new best.
 
 ## three.js traps
