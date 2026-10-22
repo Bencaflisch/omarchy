@@ -64,10 +64,12 @@ AGENT_ID = "deepseek"
 AGENT_NAME = "DeepSeek"
 API_BASE_URL = "https://api.deepseek.com"
 
-# DeepSeek Harness bills DeepSeek through these two provider routes: an API
-# key, and a DeepSeek account sign-in. Its other routes (pi-ai's providers)
-# belong to whoever bills them.
-DSH_PROVIDERS = ("deepseek-official", "deepseek-account")
+# DeepSeek Harness bills DeepSeek through these provider routes: an API key
+# and a DeepSeek account sign-in (its DeepSeek adapter), and its pi-ai
+# adapter's route for pi-ai's own `deepseek` provider, the id pi and opencode
+# name too. Its other pi-ai routes (OpenRouter, a hand-declared gateway)
+# belong to whoever bills them, and no collector reads dsh for those yet.
+DSH_PROVIDERS = ("deepseek-official", "deepseek-account", "deepseek")
 
 # One canonical session log generation: session.jsonl, session.v4.jsonl, and
 # their Zstandard twins.

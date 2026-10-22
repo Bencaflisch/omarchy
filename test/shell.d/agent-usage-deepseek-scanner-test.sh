@@ -170,6 +170,22 @@ expect("DeepSeek skips a dsh line nested too deep to parse, keeping the rest of 
 shutil.rmtree(project / "s5")
 shutil.rmtree(project / "s6")
 
+# dsh's pi-ai adapter names a route by its pi-ai provider id, as dsh 0.2 logs
+# it: pi-ai's `deepseek` provider is DeepSeek's API, and `openrouter` (or a
+# hand-declared gateway) is billed by whoever runs it.
+write_log(project / "s9" / ("session.v4" + suffix), [
+  header("s9"),
+  route("deepseek", "deepseek-chat"),
+  message(1, 1, {"inputTokens": 5234, "outputTokens": 55, "cacheReadTokens": 75, "totalTokens": 5364}),
+  route("openrouter", "z-ai/glm-4.6", seq=3),
+  message(2, 1, {"inputTokens": 7000, "outputTokens": 68, "cacheReadTokens": 300, "totalTokens": 7368}, seq=4),
+], compressed)
+record = deepseek()
+expect("DeepSeek counts dsh's pi-ai deepseek route, not its other pi-ai routes",
+       [record["todayTotalTokens"], record["modelUsage"].get("deepseek-chat", {}).get("inputTokens"), "z-ai/glm-4.6" in record["modelUsage"]],
+       [34153 + 5364, 30000 + 5234, False], record)
+shutil.rmtree(project / "s9")
+
 # A frame that inflates past the cap (64 MiB, far beyond any real log) is
 # never read in full: the log counts nothing, and the scan, incomplete, isn't
 # kept for the next run.
