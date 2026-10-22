@@ -271,7 +271,8 @@ write_json(home() / ".vibe" / "whoami_cache.json", {
   "new": {"stored_at_timestamp": 200, "payload": {"plan_type": "chat", "plan_name": "individual"}},
 })
 record = vibe()
-expect("Vibe names the newest cached plan as Vibe does", [record["ready"], record["tierLabel"]], [True, "Pro"], record)
+expect("Vibe names the newest cached plan as Vibe does, with no local stats while no session has run",
+       [record["ready"], record["tierLabel"], record["hasLocalStats"]], [True, "Pro", False], record)
 
 write_json(home() / ".vibe" / "whoami_cache.json", {"a": {"stored_at_timestamp": 1, "payload": {"plan_type": "chat", "plan_name": "MYSTERY"}}})
 record = vibe()

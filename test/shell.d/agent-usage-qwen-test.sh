@@ -56,6 +56,11 @@ def chats(project="p"):
   return home() / ".qwen" / "projects" / project / "chats"
 
 
+# A machine that never ran Qwen Code has no local stats to show.
+sandbox()
+record = qwen()
+expect("Qwen with no usage says it has no local stats", [record["ready"], record["hasLocalStats"]], [False, False], record)
+
 # ------------------------------------------------------------- transcripts
 
 sandbox()
