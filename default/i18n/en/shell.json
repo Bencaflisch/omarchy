@@ -405,7 +405,6 @@
   "network.wifiBandCurrent": "WI-FI BAND: %1",
   "network.wrongPassword": "Wrong password",
   "notifications.allowCodes": "Allow verification codes during snooze and Do Not Disturb",
-  "notifications.anHour": "an hour",
   "notifications.blockCodes": "Block verification codes during snooze and Do Not Disturb",
   "notifications.closePreferences": "Close preferences",
   "notifications.closeSnoozeOptions": "Close snooze options",
@@ -423,7 +422,6 @@
   "notifications.displaySelect": "Select a display",
   "notifications.displaySpecificHint": "Show notifications on %1.",
   "notifications.dndOn": "Do Not Disturb on",
-  "notifications.enableDnd": "Enable Do Not Disturb",
   "notifications.enabled": "Notifications enabled",
   "notifications.endSnooze": "End snooze",
   "notifications.extendSnooze": "Extend snooze",
@@ -438,16 +436,8 @@
   "notifications.hideHistory": "Hide notification history",
   "notifications.hideRecent": "Hide recent notifications",
   "notifications.historyHeader": "HISTORY · %1",
-  "notifications.hours": {
-    "one": "%1 hour",
-    "other": "%1 hours"
-  },
   "notifications.hoursShort": "%1h",
   "notifications.join": "Join",
-  "notifications.minutes": {
-    "one": "%1 minute",
-    "other": "%1 minutes"
-  },
   "notifications.minutesAgo": "%1m",
   "notifications.minutesShort": "%1m",
   "notifications.more": "More",
@@ -474,10 +464,9 @@
   "notifications.showHeld": "Show held notifications",
   "notifications.showHistory": "Show notification history",
   "notifications.showRecent": "Show recent notifications",
+  "notifications.snooze": "Snooze",
   "notifications.snoozeAll": "Snooze all notifications",
-  "notifications.snoozeFor": "Snooze for %1",
   "notifications.snoozeSource": "Snooze source",
-  "notifications.snoozeUntilTomorrow": "Snooze until tomorrow",
   "notifications.snoozedSources": "SNOOZED SOURCES",
   "notifications.snoozedUntil": "Snoozed until %1",
   "notifications.sourcesSnoozed": {

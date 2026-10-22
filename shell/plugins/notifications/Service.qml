@@ -302,13 +302,6 @@ Item {
   readonly property string globalKey: "*"
   readonly property double globalSnoozeUntil: { snoozeRevision; return snoozedUntil(globalKey) }
 
-  function durationWords(minutes) {
-    if (minutes < 60) return I18n.tn("notifications.minutes", minutes).arg(I18n.formatNumber(minutes))
-    var hours = Math.round(minutes / 60)
-    if (hours === 1) return I18n.t("notifications.anHour")
-    return I18n.tn("notifications.hours", hours).arg(I18n.formatNumber(hours))
-  }
-
   function shortWords(minutes) {
     if (minutes < 60) return I18n.t("notifications.minutesShort").arg(I18n.formatNumber(minutes))
     var hours = Math.round(minutes / 6) / 10
@@ -322,10 +315,8 @@ Item {
     var seconds = Settings.snoozeSeconds(value, preferences.wakeHour, Date.now())
     if (!(seconds > 0)) return null
     if (value === "tomorrow")
-      return { short: I18n.t("notifications.tomorrow"), menuLabel: I18n.t("notifications.snoozeUntilTomorrow"), seconds: seconds }
-    var minutes = Number(value)
-    return { short: shortWords(minutes), menuLabel: I18n.t("notifications.snoozeFor").arg(durationWords(minutes)),
-             seconds: seconds }
+      return { short: I18n.t("notifications.tomorrow"), seconds: seconds }
+    return { short: shortWords(Number(value)), seconds: seconds }
   }
 
   readonly property var snoozeOptions: {
@@ -1910,7 +1901,6 @@ Item {
                 service.snoozeSource(String(model.groupKey || ""),
                                      String(model.source || model.app || ""), seconds)
               }
-              onSilenceRequested: service.setDoNotDisturb(true)
             }
           }
         }

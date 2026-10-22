@@ -72,7 +72,6 @@ Item {
   signal activated()
   signal dismissed()
   signal snoozeRequested(int seconds)
-  signal silenceRequested()
   signal offerTaken(string kind, string value)
   signal actionInvoked(string identifier)
 
@@ -182,9 +181,8 @@ Item {
   readonly property var menuDeeds: {
     var out = []
     for (var i = 0; i < snoozeOptions.length; i++)
-      out.push({ kind: "snooze", label: String(snoozeOptions[i].menuLabel),
+      out.push({ kind: "snooze", label: String(snoozeOptions[i].short),
                  value: Number(snoozeOptions[i].seconds) })
-    out.push({ kind: "silence", label: I18n.t("notifications.enableDnd"), value: 0 })
     return out
   }
 
@@ -192,7 +190,6 @@ Item {
     var kind = String(deed.kind || "")
     if (kind === "more") { deedsOpen = !deedsOpen; return }
     if (kind === "snooze") { menuOpen = false; snoozeRequested(Number(deed.value)); return }
-    if (kind === "silence") { menuOpen = false; silenceRequested(); return }
     if (kind === "action") { actionInvoked(String(deed.value)); return }
     offerTaken(kind, String(deed.value))
     takenKind = kind + ":" + String(deed.value)
@@ -639,26 +636,36 @@ Item {
         // only under the pointer in an open deck.
         Item {
           id: deedArea
-          width: parent.width
+          // A glyph beside a one-line toast belongs to the headline, so the
+          // buttons under it start at the glyph's edge, not the title's.
+          readonly property real reach: thumb.compact ? thumb.width + layout.spacing : 0
+          x: card.LayoutMirroring.enabled ? 0 : -reach
+          width: parent.width + reach
+          // A one-line toast's padding is too tight under a button; open, the
+          // area makes up the difference to a bodied toast's.
+          readonly property real tail: Style.space(10) - card.contentPaddingY
 
           readonly property string mode: card.menuOpen ? "menu"
                                        : card.deedsOpen ? "list"
                                        : (card.hovered && card.expanded
                                           && card.allDeeds.length > 0) ? "row" : ""
 
-          readonly property real contentHeight: mode === "menu" ? menuColumn.implicitHeight
+          readonly property real contentHeight: mode === "menu" ? menuRow.implicitHeight
                                               : mode === "list" ? deedColumn.implicitHeight
                                               : mode === "row" ? deedRow.implicitHeight : 0
           // What the state asks for; the drawn height is whatever slack the
           // scene has given the card so far.
-          readonly property real wanted: mode === "" ? 0 : contentHeight + Style.space(7)
-          height: Math.max(0, card.drawnHeight - card.fixedHeight)
+          // The column's gap above this area is not in fixedHeight, so it is
+          // counted here rather than taken out of the bottom padding.
+          readonly property real wanted: mode === "" ? 0 : column.spacing + contentHeight + Style.space(7) + tail
+          height: Math.max(0, card.drawnHeight - card.fixedHeight - column.spacing)
           visible: height > 0
           clip: true
 
           Row {
             id: deedRow
             anchors.bottom: parent.bottom
+            anchors.bottomMargin: deedArea.tail
             anchors.right: card.actionsAlign === "right" ? parent.right : undefined
             anchors.left: card.actionsAlign === "right" ? undefined : parent.left
             spacing: Style.space(6)
@@ -685,13 +692,39 @@ Item {
           DeedList {
             id: deedColumn
             shown: deedArea.mode === "list"
+            bottomGap: deedArea.tail
             deedModel: card.deedsOpen ? card.allDeeds : []
           }
 
-          DeedList {
-            id: menuColumn
-            shown: deedArea.mode === "menu"
-            deedModel: card.menuOpen ? card.menuDeeds : []
+          // The right-click menu, on one line: "Snooze" and its choices.
+          Flow {
+            id: menuRow
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: deedArea.tail
+            width: parent.width
+            spacing: Style.space(6)
+            opacity: deedArea.mode === "menu" ? 1 : 0
+            visible: opacity > 0.01
+            Behavior on opacity { NumberAnimation { duration: card.fade } }
+
+            Text {
+              textFormat: Text.PlainText
+              height: moreMeasure.implicitHeight
+              verticalAlignment: Text.AlignVCenter
+              text: I18n.t("notifications.snooze")
+              color: card.bodyColor
+              font.family: Style.font.family
+              font.pixelSize: Style.font.body * card.fontScale
+            }
+
+            Repeater {
+              model: card.menuOpen ? card.menuDeeds : []
+              DeedButton {
+                required property var modelData
+                deed: modelData
+                toast: card
+              }
+            }
           }
         }
       }
@@ -737,7 +770,9 @@ Item {
     id: list
     property bool shown: false
     property var deedModel: []
+    property real bottomGap: 0
     anchors.bottom: parent.bottom
+    anchors.bottomMargin: bottomGap
     width: parent.width
     spacing: Style.space(4)
     opacity: list.shown ? 1 : 0

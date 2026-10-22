@@ -13,7 +13,7 @@ var DEFAULTS = {
   fontScale: 100,
   actionsAlign: "right",
   hideSettingsAction: true,
-  snoozeDurations: ["30", "60", "240", "tomorrow"],
+  snoozeDurations: ["15", "60", "tomorrow"],
   wakeHour: 8,
   smartRaise: true,
   codesBypassQuiet: null,

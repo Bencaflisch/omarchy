@@ -283,7 +283,7 @@ for (const body of ['Your verification code is 938271', 'Your code is 938 271', 
   assert.equal(d.edgeSpacing, null, 'unset edge spacing follows the theme gap')
   assert.equal(d.allowDefaultActionOnCardClick, true)
   assert.equal(d.codesBypassQuiet, null)
-  assert.deepEqual([...d.snoozeDurations], ['30', '60', '240', 'tomorrow'])
+  assert.deepEqual([...d.snoozeDurations], ['15', '60', 'tomorrow'])
   const r = Settings.resolve({ stacking: 'nope', fontScale: 500, edgeSpacing: '8', wakeHour: 0,
                                snoozeDurations: ['15', 'bogus', '15', 'tomorrow'], historyHours: 7,
                                clipboardTimeout: 90, codesBypassQuiet: false, displayName: 7 })
