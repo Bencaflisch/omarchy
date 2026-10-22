@@ -27,7 +27,7 @@ printf '%s\n' "${line#*:}"
 exit "${line%%:*}"
 EOF
 
-# Answers like geo.omacom.io, or fails like curl -f with no network.
+# Answers like geo.omarchy.org, or fails like curl -f with no network.
 cat >"$tmp_dir/curl" <<'EOF'
 #!/bin/bash
 printf '%s\n' "${@: -1}" >>"$GUM_DIR/curl-urls"
@@ -256,8 +256,8 @@ assert_status 0 "timezone prompt accepts the geo guess"
 [[ $(field timezone) == "Europe/Copenhagen" ]] || fail "timezone prompt keeps the chosen timezone"
 grep -qF -- '--selected Europe/Copenhagen' "$GUM_ARGS" || fail "timezone prompt preselects the geo guess"
 grep -qF UTC "$tmp_dir/stdin.1" || fail "timezone prompt offers the system timezone list"
-[[ $(sort -u "$tmp_dir/curl-urls") == "https://geo.omacom.io/" ]] || fail "timezone prompt asks only geo.omacom.io" "$(cat "$tmp_dir/curl-urls")"
-pass "timezone prompt preselects geo.omacom.io's timezone when it answers"
+[[ $(sort -u "$tmp_dir/curl-urls") == "https://geo.omarchy.org/" ]] || fail "timezone prompt asks only geo.omarchy.org" "$(cat "$tmp_dir/curl-urls")"
+pass "timezone prompt preselects geo.omarchy.org's timezone when it answers"
 
 # An unnetworked first boot has no guess, and the fallback has to survive `set -e`
 run_prompt omarchy_prompt_timezone "0:America/Chicago"
