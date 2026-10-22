@@ -103,12 +103,16 @@ pass "render rejects channels without pacman templates"
 # The China profile's mirrors are x86 repositories, so an ARM platform keeps its
 # own channel templates in that region.
 for platform in aarch64 aarch64-apple; do
-  REGION_TEST_PLATFORM=$platform apply edge
-  cmp "$ROOT/default/pacman/$platform/pacman-edge.conf" "$TARGET_ROOT/etc/pacman.conf"
-  cmp "$ROOT/default/pacman/$platform/mirrorlist-edge" "$TARGET_ROOT/etc/pacman.d/mirrorlist"
-  if REGION_TEST_PLATFORM=$platform apply stable > "$scratch/error" 2>&1; then
-    fail "$platform accepted a channel it has no templates for"
-  fi
+  for channel in stable rc edge; do
+    templates="$ROOT/default/pacman/$platform"
+    if [[ -f $templates/pacman-$channel.conf ]]; then
+      REGION_TEST_PLATFORM=$platform apply "$channel"
+      cmp "$templates/pacman-$channel.conf" "$TARGET_ROOT/etc/pacman.conf"
+      cmp "$templates/mirrorlist-$channel" "$TARGET_ROOT/etc/pacman.d/mirrorlist"
+    elif REGION_TEST_PLATFORM=$platform apply "$channel" > "$scratch/error" 2>&1; then
+      fail "$platform accepted the $channel channel it has no templates for"
+    fi
+  done
 done
 pass "ARM platforms apply their own templates and keep regional x86 mirrors out"
 
