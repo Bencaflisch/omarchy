@@ -2410,7 +2410,7 @@ def mcode_route_owner(provider: Any, routes: dict[str, str]) -> str | None:
 def mcode_scan_match() -> dict[str, Any]:
   """For a collector's cached_scan(match=...): which collector each custom
   provider bills, which the config can change without a session changing."""
-  return {"mcodeRoutes": sorted(mcode_routes().items())}
+  return {"mcodeRoutes": [list(item) for item in sorted(mcode_routes().items())]}
 
 
 def _mcode_tokens(usage: dict[str, Any]) -> tuple[int, int, int, int]:
