@@ -13,7 +13,7 @@ happened. Screenshots land beside the game as check-title.png, check-play.png,
 check-over.png and check-light.png (in a light theme): look at all four before calling the game done.
 """
 
-import base64, json, os, pathlib, queue, shutil, subprocess, sys, tempfile, threading, time, urllib.parse
+import base64, json, os, pathlib, queue, re, shutil, subprocess, sys, tempfile, threading, time, urllib.parse
 
 KEYS = {
   "Space": (" ", 32), "Enter": ("Enter", 13), "Escape": ("Escape", 27), "Tab": ("Tab", 9), "Backspace": ("Backspace", 8),
@@ -189,9 +189,20 @@ def renderer(page):
 
 
 def blank(png):
-  out = subprocess.run(["magick", png, "-scale", "64x40", "-colors", "16", "-unique-colors", "-format", "%w", "info:"],
-                       capture_output=True, text=True).stdout.strip()
-  return out.isdigit() and int(out) <= 2
+  # Nearly all one colour means nothing but text was drawn: a HUD alone is under 0.5%, the sparsest real scene about 1%.
+  histogram = subprocess.run(["magick", png, "-scale", "320x200", "-format", "%c", "histogram:info:-"],
+                             capture_output=True, text=True).stdout
+  counts = [int(line.split(":")[0]) for line in histogram.splitlines() if ":" in line and line.split(":")[0].strip().isdigit()]
+  if not counts:
+    return False
+  common = re.search(r"#[0-9A-Fa-f]{6}", max(histogram.splitlines(), key=lambda line: int(line.split(":")[0]) if line.split(":")[0].strip().isdigit() else 0)).group(0)
+  share = subprocess.run(["magick", png, "-scale", "320x200", "-fuzz", "6%", "-fill", "black", "-opaque", common,
+                          "-fill", "white", "+opaque", "black", "-colorspace", "gray", "-format", "%[fx:mean]", "info:"],
+                         capture_output=True, text=True).stdout.strip()
+  try:
+    return float(share) < 0.005
+  except ValueError:
+    return False
 
 
 def run(page, url, folder, problems, notes):
@@ -348,7 +359,7 @@ def main():
     if os.path.isfile(png):
       print(png)
       if blank(png):
-        problems.append(f"check-{name}.png is blank: nothing was drawn.")
+        problems.append(f"check-{name}.png is nearly blank: almost nothing but the background was drawn.")
 
   if errors:
     problems.insert(0, f"{len(errors)} page error(s), listed above.")
