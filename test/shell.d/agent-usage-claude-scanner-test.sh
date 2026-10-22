@@ -93,6 +93,24 @@ session.write_text(session.read_text().splitlines(keepends=True)[0])
 record = rescan()
 expect("Claude rereads a transcript that shrank", record["todayTotalTokens"], 29090, record)
 
+# --force reads every transcript again, even one rewritten to the same size
+# and time, and rebuilds the index in place rather than removing it, since the
+# other collectors reading Claude Code share it.
+stat = session.stat()
+session.write_text(session.read_text().replace('"output_tokens": 231', '"output_tokens": 232'))
+os.utime(session, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+replayed = rescan()
+index = next(iter(cache_root().glob("claude-index-*.json")))
+real_unlink = Path.unlink
+removed = []
+Path.unlink = lambda path, *args, **kwargs: removed.append(path.name) if path.name.startswith("claude-index-") else real_unlink(path, *args, **kwargs)
+try:
+  forced = claude()
+finally:
+  Path.unlink = real_unlink
+expect("Claude --force rereads a transcript the index would replay, rebuilding the index in place",
+       [replayed["todayTotalTokens"], forced["todayTotalTokens"], removed, index.exists()], [29090, 29091, [], True], forced)
+
 # Prompts are what a person typed, shaped as Claude Code 2.1 writes them: a
 # tool loop is one prompt however many API requests it makes, and a tool's
 # result, a background task reporting back, Claude Code's own meta lines, a

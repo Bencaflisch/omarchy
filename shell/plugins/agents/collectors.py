@@ -1576,6 +1576,7 @@ def scan_claude_code(
   projects: Path | None = None,
   index_file: Any = _DEFAULT_INDEX,
   base_url: str | None = None,
+  reread: bool = False,
 ) -> list[UsageRow]:
   """The Claude Code usage `owner` counts, as rows: each reply once (with no
   prompts of its own), each typed prompt once (no tokens), and a tokenless
@@ -1585,9 +1586,11 @@ def scan_claude_code(
 
   `projects` defaults to the Claude Code home's projects/, `index_file` to
   the index every collector shares there (None reads without one), and
-  `base_url` to where Claude Code is sent now. Every reply is deduplicated
-  across transcripts before claude_code_owner() splits them, so a reply a
-  fork copied lands once, under one owner.
+  `base_url` to where Claude Code is sent now. `reread` reads every
+  transcript from the start and replaces the index, which other collectors
+  keep reading meanwhile. Every reply is deduplicated across transcripts
+  before claude_code_owner() splits them, so a reply a fork copied lands
+  once, under one owner.
   """
   if projects is None:
     projects = claude_code_dir() / "projects"
@@ -1599,7 +1602,7 @@ def scan_claude_code(
     except OSError as exc:
       warn(f"scan index unavailable ({exc})")
       index_file = None
-  previous = _claude_code_load_index(index_file) if index_file else {}
+  previous = _claude_code_load_index(index_file) if index_file and not reread else {}
   current: dict[str, Any] = {}
 
   # Directory order, as before: when one API message shows up in several

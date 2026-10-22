@@ -89,9 +89,9 @@ def expand_path(value: str) -> Path:
 # rest to the collector that bills it.
 
 
-def scan_projects(projects_path: Path, index_file: Path | None = None, base_url: str = "") -> Stats:
+def scan_projects(projects_path: Path, index_file: Path | None = None, base_url: str = "", reread: bool = False) -> Stats:
   stats = Stats()
-  for row in scan_claude_code(AGENT_ID, projects_path, index_file, base_url):
+  for row in scan_claude_code(AGENT_ID, projects_path, index_file, base_url, reread):
     stats.add_row(row, row.model)
   return stats
 
@@ -220,12 +220,12 @@ def add_shared_rows(stats: Stats, pi_rows: list, db_rows: list) -> None:
     stats.add_row(row, opencode_model(row.model))
 
 
-def scan_local(claude_dir: Path, index_file: Path | None) -> tuple[dict[str, Any], bool]:
+def scan_local(claude_dir: Path, index_file: Path | None, reread: bool = False) -> tuple[dict[str, Any], bool]:
   """Local stats from every source, and whether every source was read in full
   (safe to cache). Transcripts come first; only a machine without any falls
   back on Claude Code's own aggregate counters."""
   base_url = claude_code_base_url(claude_dir)
-  stats = scan_projects(claude_dir / "projects", index_file, base_url)
+  stats = scan_projects(claude_dir / "projects", index_file, base_url, reread)
   pi_rows, pi_complete = scan_pi_sessions(PI_PATTERN, billed_here)
   # The closing quote makes the database's prefilter match the whole id.
   db_rows, db_complete = scan_opencode(['anthropic"'], billed_here)
@@ -251,10 +251,10 @@ def scan_local(claude_dir: Path, index_file: Path | None) -> tuple[dict[str, Any
 
 
 def local_stats(claude_dir: Path, max_age: float, use_index: bool = True) -> dict[str, Any]:
+  # Without the index every transcript is read again, and the index rebuilt
+  # in place: the other collectors reading Claude Code share it.
   try:
     index_file = claude_code_index_path(claude_dir / "projects")
-    if not use_index:
-      index_file.unlink(missing_ok=True)
   except Exception as exc:
     warn(f"scan index unavailable ({exc})")
     index_file = None
@@ -263,7 +263,7 @@ def local_stats(claude_dir: Path, max_age: float, use_index: bool = True) -> dic
   sources = [claude_dir / "projects", claude_dir, *pi_session_roots(), opencode_db()]
   # Where Claude Code is sent decides whose its turns are, so a scan only
   # answers for the endpoint it was made under.
-  return cached_scan(AGENT_ID, sources, max_age, lambda: scan_local(claude_dir, index_file), match=claude_code_scan_match(claude_dir))
+  return cached_scan(AGENT_ID, sources, max_age, lambda: scan_local(claude_dir, index_file, not use_index), match=claude_code_scan_match(claude_dir))
 
 
 def merge_stats(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
