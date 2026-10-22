@@ -742,10 +742,9 @@ def collect_limits(access_token: str, expires_at_ms: int, refresh_expires_at_ms:
   # per flick, so recent probe results are reused for a short window — and
   # kept as the answer of record when a later probe fails. Every account
   # keeps its own, so one account's allowance never stands in for another's.
-  # Elapsed windows come back at zero. The single-account cache has always
-  # been claude-limits.json, and an added account's is
-  # claude-limits-<subscription>.json, so a kept answer survives the upgrade
-  # and `omarchy agent account` homes keep theirs.
+  # Elapsed windows come back at zero. A home that says who it's signed in as
+  # keeps claude-limits-<subscription>.json, and one that doesn't the
+  # single-account claude-limits.json.
   cache = LimitsCache.at(cache_root() / cache_name)
   fallback, result["fetchedAtMs"] = cache.kept()
 
@@ -870,7 +869,12 @@ def main() -> int:
     stale, fetched_at = current["stale"], current["fetchedAt"]
   else:
     access_token, expires_at_ms, refresh_expires_at_ms, plan = oauth_login(claude_dir)
-    limits = collect_limits(access_token, expires_at_ms, refresh_expires_at_ms, args.force)
+    # Keyed by who the home is signed in as, as a registered primary is, so
+    # signing in to another subscription never shows the last one's numbers
+    # and registering the home later keeps its cache.
+    identity = re.sub(r"[^A-Za-z0-9_-]", "", current_account_id(claude_dir))
+    cache_name = f"claude-limits-{identity}.json" if identity else "claude-limits.json"
+    limits = collect_limits(access_token, expires_at_ms, refresh_expires_at_ms, args.force, cache_name)
     stale, fetched_at = not limits["live"], limits["fetchedAtMs"]
     # Asking for a sign-in only makes sense where Claude Code is in use: its
     # config home or profile exists, or there is local usage. A machine that

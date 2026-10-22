@@ -134,6 +134,20 @@ for ago, age, live in ((60, "a minute", True), (1800, "half an hour", False)):
          [record["limitsStale"], record["limits"][0]["percent"], record["limitsFetchedAt"] == fetched_at, record.get("retryAdvised", False)],
          [not live, 0.4, True, False], record)
 
+# The single home keeps its numbers under who it is signed in as, so signing
+# it in to another account never shows the last one's, stale or current.
+sandbox()
+signed_in()
+write_json(home() / ".claude.json", {"oauthAccount": {"accountUuid": "acct-A"}})
+record, _ = claude()
+expect("Claude's single home reads account A's limits", [entry["percent"] for entry in record["limits"]], [0.4, 0.1], record)
+signed_in(token="token-b")
+write_json(home() / ".claude.json", {"oauthAccount": {"accountUuid": "acct-B"}})
+for mode in ("down", 429):
+  record, _ = claude(mode=mode)
+  expect(f"account B signed in to the same home never shows account A's limits ({mode})",
+         [record["limits"], record["usageStatusText"]], [[], "Claude limits unavailable"], record)
+
 # ------------------------------------------------------------ the sign-in
 
 # An open window and one that already reset, cached long enough ago that a
