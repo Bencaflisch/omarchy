@@ -243,10 +243,11 @@ def extract_tier(data):
   return ""
 
 
-# How much of a bucket is spent, or None when its fraction isn't a number.
+# How much of a bucket is spent, or None when its fraction is missing or
+# isn't a number: a bucket without one has no figure, not an untouched one.
 def used(bucket):
-  remaining = bucket.get("remainingFraction", bucket.get("remaining_fraction", 1.0))
-  if isinstance(remaining, bool):
+  remaining = bucket.get("remainingFraction", bucket.get("remaining_fraction"))
+  if remaining is None or isinstance(remaining, bool):
     return None
   try:
     remaining = float(remaining)
@@ -262,19 +263,29 @@ def reset_of(bucket):
   return parsed.isoformat() if parsed else ""
 
 
+# Whether an answer's `key` is a list, or not there at all.
+def listed(data, key):
+  return data.get(key) is None or isinstance(data[key], list)
+
+
 # The Gemini group's 5-hour and weekly buckets are the plan's own limits; the
 # other groups (Claude and GPT models) are scoped allowances, shown once
 # they have been touched. An answer that lists its buckets without groups
-# lists the Gemini ones.
+# lists the Gemini ones. An answer of another shape (not an object, an error,
+# groups or the Gemini buckets that aren't a list) is None, a failed check
+# rather than a plan without quotas; another group's buckets of the wrong
+# shape skip that group.
 def extract_limits(data):
-  if not isinstance(data, dict):
-    return []
+  if not isinstance(data, dict) or "error" in data or not listed(data, "groups") or not listed(data, "buckets"):
+    return None
   groups = [g for g in data.get("groups") or [] if isinstance(g, dict)]
-  if not groups and isinstance(data.get("buckets"), list):
+  if not groups and data.get("buckets"):
     groups = [{"displayName": "Gemini", "buckets": data["buckets"]}]
   if not groups:
     return []
   gemini = next((g for g in groups if "gemini" in str(g.get("displayName") or "").lower()), groups[0])
+  if not listed(gemini, "buckets"):
+    return None
 
   limits = []
   session = weekly = None
@@ -298,7 +309,8 @@ def extract_limits(data):
       continue
     group_name = str(group.get("displayName") or "").strip()
     short = "Claude/GPT" if "claude" in group_name.lower() else (group_name or "3P")
-    for bucket in group.get("buckets") or []:
+    buckets = group.get("buckets")
+    for bucket in buckets if isinstance(buckets, list) else []:
       if isinstance(bucket, dict) and (used(bucket) or 0) > 0:
         title = f"{short} {'Weekly' if 'week' in str(bucket.get('window') or '').lower() else 'Session'}"
         limits.append({"label": title, "title": title, "percent": used(bucket), "resetsAt": reset_of(bucket)})
@@ -390,6 +402,8 @@ def collect_limits(entries, force):
     try:
       tier = extract_tier(post("loadCodeAssist", entry["accessToken"]))
       limits = extract_limits(post("retrieveUserQuotaSummary", entry["accessToken"]))
+      if limits is None:
+        raise HttpError()
     except HttpError as error:
       # A refused sign-in gives way to the next one; any other status is
       # Google answering for every sign-in alike.
@@ -441,10 +455,12 @@ def omp_usage(omp):
       [omp, "usage", "--json", "--provider", "google-antigravity"],
       stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=20, check=True,
     ).stdout
-    reports = [r for r in json.loads(output).get("reports") or [] if isinstance(r, dict) and r.get("provider") == "google-antigravity"]
+    reports = json.loads(output).get("reports")
   except (OSError, ValueError, AttributeError, subprocess.SubprocessError):
     return None
-  if not reports:
+  # A report of another shape is no answer, never one without limits.
+  reports = [r for r in reports if isinstance(r, dict) and r.get("provider") == "google-antigravity"] if isinstance(reports, list) else []
+  if not reports or not listed(reports[0], "limits"):
     return None
   groups, seen = {}, set()
   for limit in reports[0].get("limits") or []:

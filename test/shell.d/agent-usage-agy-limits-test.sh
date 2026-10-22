@@ -100,6 +100,18 @@ read = limits({"buckets": [
 expect("Antigravity collector reads snake_case buckets listed without groups and skips unreadable fractions",
        [(entry["label"], round(entry["percent"], 2), entry["resetsAt"]) for entry in read], [("Session (5-hour)", 0.6, "2026-09-15T19:31:46+00:00")], read)
 
+read = limits({"buckets": [{"window": "5h", "resetTime": "2026-09-15T19:31:46Z"}]})
+expect("Antigravity collector skips a bucket with no remaining fraction rather than read it as untouched", read, [], read)
+
+# An answer of another shape is no answer, not a plan without quotas; another
+# group's buckets of the wrong shape skip that group alone.
+gemini = {"displayName": "Gemini Models", "buckets": [{"window": "5h", "remainingFraction": 0.5}]}
+shapes = [None, [1], {"error": {"code": 500}}, {"groups": 5}, {"groups": "abc"}, {"buckets": 5},
+          {"groups": [{"displayName": "Gemini Models", "buckets": 5}]}]
+expect("Antigravity collector reads an answer of another shape as none", [limits(shape) for shape in shapes], [None] * len(shapes))
+read = limits({"groups": [gemini, {"displayName": "Claude and GPT models", "buckets": 5}]})
+expect("Antigravity collector skips another group's buckets of the wrong shape", [(entry["label"], entry["percent"]) for entry in read], [("Session (5-hour)", 0.5)], read)
+
 # ---------------------------------------------------------------- contract
 
 machine()
@@ -132,6 +144,15 @@ record, _ = agy("down")
 expect("Antigravity collector drops a damaged kept window and shows an elapsed one at zero",
        record["limits"], [{"label": "Session (5-hour)", "title": "Session", "percent": 0.0, "resetsAt": ""}], record)
 agy()
+
+# A quota answer of another shape is a failed check: the kept limits stand,
+# stale, and stay kept for the next failure.
+record, _ = agy(routes={TIER: ANSWER[TIER], QUOTA: {"groups": 5}})
+after, _ = agy("down")
+expect("Antigravity collector keeps the last limits over a quota answer of another shape",
+       [[entry["percent"] for entry in record["limits"]], record["limitsStale"], record["retryAdvised"], "couldn't be read" in record["authHelpText"],
+        [entry["percent"] for entry in after["limits"]], after["limitsStale"]],
+       [[0.25], True, False, True, [0.25], True], [record, after])
 
 # ------------------------------------------------------------ the sign-in
 
