@@ -133,18 +133,17 @@ def config_key(config: dict[str, Any]) -> str:
 
 
 def config_base_url(config: dict[str, Any]) -> str:
+  """The host mmx itself asks: its base_url, then the OAuth session's
+  resource_url, then the region (MINIMAX_REGION over the saved one)."""
   oauth = config.get("oauth")
-  if isinstance(oauth, dict):
-    resource_url = oauth.get("resource_url")
-    if isinstance(resource_url, str) and resource_url.strip():
-      return resource_url.strip()
-    if oauth.get("region") == "cn":
-      return CN_BASE_URL
-  value = config.get("base_url")
-  if isinstance(value, str) and value.strip():
-    return value.strip()
-  if config.get("region") == "cn" or os.environ.get("MINIMAX_REGION") == "cn":
-    return CN_BASE_URL
+  oauth = oauth if isinstance(oauth, dict) else {}
+  for value in (config.get("base_url"), oauth.get("resource_url")):
+    if isinstance(value, str) and value.strip():
+      return value.strip()
+  # mmx refuses a region it doesn't know; here one just doesn't decide.
+  for region in (os.environ.get("MINIMAX_REGION"), config.get("region"), oauth.get("region")):
+    if region in ("cn", "global"):
+      return CN_BASE_URL if region == "cn" else DEFAULT_BASE_URL
   return DEFAULT_BASE_URL
 
 

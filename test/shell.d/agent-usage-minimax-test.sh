@@ -145,6 +145,15 @@ expect("MiniMax credentials use the key mmx saved", credentials(), ["mmx_saved",
 write_json(home() / ".mmx" / "config.json", {"oauth": {"access_token": "mmx_oauth", "refresh_token": "refresh", "expires_at": "2099-01-01T00:00:00Z", "region": "cn"}})
 expect("MiniMax credentials use the OAuth session and region saved by mmx", credentials(), ["mmx_oauth", "https://api.minimaxi.com"])
 
+# mmx 1.0's own order: base_url, then the OAuth resource_url, then the region,
+# with MINIMAX_REGION over the saved one.
+write_json(home() / ".mmx" / "config.json", {"base_url": "https://mmx.example", "oauth": {"access_token": "mmx_oauth", "resource_url": "https://resource.example"}})
+expect("MiniMax asks mmx's base_url ahead of its OAuth resource_url", credentials(), ["mmx_oauth", "https://mmx.example"])
+write_json(home() / ".mmx" / "config.json", {"api_key": "mmx_saved", "region": "cn"})
+os.environ["MINIMAX_REGION"] = "global"
+expect("MiniMax lets MINIMAX_REGION move mmx's key off the region mmx saved", credentials(), ["mmx_saved", "https://api.minimax.io"])
+del os.environ["MINIMAX_REGION"]
+
 (home() / ".mmx" / "config.json").unlink()
 opencode = opencode_auth(None, "minimax", "mmx_opencode")
 expect("MiniMax credentials use opencode's login", credentials()[0], "mmx_opencode")
