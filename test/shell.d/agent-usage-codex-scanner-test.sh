@@ -246,24 +246,32 @@ expect("Codex counts a rollout line with a time of 0, false, or empty nowhere, n
 # Prompts are the ones typed, as Codex 0.163 records them: one prompt whose
 # tool call took two requests is one, as is a legacy rollout's user_message
 # event; the context Codex adds itself, and a subagent's or guardian's
-# messages, are none, though the tokens they spent count.
+# messages, are none, though the tokens they spent count. Those threads start
+# no session either, counting under the one that started them: its root in
+# session_id, as Codex 0.163 writes it, or else its parent_thread_id. A thread
+# of Codex's own that names no other, such as a memory consolidation, counts
+# under none.
 new_home()
-rollout("rollout-paginated.jsonl", meta(model_provider="openai", source="exec", thread_source="user"),
+rollout("rollout-paginated.jsonl", meta(model_provider="openai", source="exec", thread_source="user", id="t-exec", session_id="t-exec"),
         {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "turn1"}}, context("gpt-test"),
         {"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "<environment_context>"}]}},
         typed("run ls"), tokens(10, 1, total={"input_tokens": 10}),
         {"type": "event_msg", "payload": {"type": "item_completed", "item": {"type": "CommandExecution", "id": "c1"}}},
         tokens(20, 2, total={"input_tokens": 30}), {"type": "event_msg", "payload": {"type": "task_complete", "turn_id": "turn1"}})
-rollout("rollout-legacy.jsonl", meta(model_provider="openai", source="cli"), context("gpt-test"),
+rollout("rollout-legacy.jsonl", meta(model_provider="openai", source="cli", id="t-cli"), context("gpt-test"),
         {"type": "event_msg", "payload": {"type": "user_message", "message": "<user_instructions>", "kind": "user_instructions"}},
         {"type": "event_msg", "payload": {"type": "user_message", "message": "fix it", "kind": "plain"}},
         {"type": "event_msg", "payload": {"type": "user_message", "message": "and test it"}}, tokens(40, 4))
-rollout("rollout-review.jsonl", meta(model_provider="openai", source={"subagent": "review"}, thread_source="subagent"), context("gpt-test"), typed(), tokens(100, 10))
-rollout("rollout-guardian.jsonl", meta(model_provider="openai", source={"subagent": {"other": "guardian"}}, thread_source="guardian_review"),
+rollout("rollout-review.jsonl", meta(model_provider="openai", source={"subagent": "review"}, thread_source="subagent", id="t-review", session_id="t-exec",
+                                     parent_thread_id="t-exec"), context("gpt-test"), typed(), tokens(100, 10))
+rollout("rollout-memory.jsonl", meta(model_provider="openai", source={"internal": "memory_consolidation"}, thread_source="memory_consolidation", id="t-memory",
+                                     session_id="t-memory"), context("gpt-test"), tokens(300, 30))
+rollout("rollout-guardian.jsonl", meta(model_provider="openai", source={"subagent": {"other": "guardian"}}, thread_source="guardian_review", id="t-guardian",
+                                       parent_thread_id="t-cli"),
         context("gpt-test"), typed(), tokens(200, 20))
 record = codex()
-expect("Codex counts the prompts typed, not the requests answering them or a subagent's",
-       [record["todayTotalTokens"], record["todayPrompts"], record["totalSessions"]], [407, 3, 4], record)
+expect("Codex counts the prompts typed, not the requests answering them or a subagent's, and a subagent's thread as no session",
+       [record["todayTotalTokens"], record["todayPrompts"], record["todaySessions"], record["totalSessions"]], [737, 3, 2, 2], record)
 
 # Session history only grows, so a refresh reads the files that changed and
 # replays its per-file totals for the rest. pi sessions stay out of that
