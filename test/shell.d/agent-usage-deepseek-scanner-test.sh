@@ -188,6 +188,26 @@ if compressed:
 else:
   print("ok - DeepSeek stops a dsh log that inflates past its cap # SKIP no Zstandard support")
 
+# A session directory the walk can't list has logs the scan missed, so the
+# scan isn't kept: once it's readable again, the next plain run counts it.
+if os.geteuid() != 0:
+  locked = project / "s8"
+  write_log(locked / "session.v4.jsonl", [header("s8"), route("deepseek-official", "deepseek-locked"), message(1, 1, usage(80))], False)
+  for path in scan_cache_files("deepseek"):
+    path.unlink()
+  locked.chmod(0)
+  try:
+    record = deepseek()
+  finally:
+    locked.chmod(0o755)
+  expect("DeepSeek doesn't cache a dsh scan that couldn't list every session directory",
+         ["deepseek-locked" in record["modelUsage"], scan_cache_files("deepseek")], [False, []], record)
+  record = deepseek("--limits-only")
+  expect("DeepSeek counts the dsh session once its directory is readable again", record["modelUsage"].get("deepseek-locked", {}).get("inputTokens"), 80, record)
+  shutil.rmtree(locked)
+else:
+  print("ok - DeepSeek doesn't cache a dsh scan that couldn't list every session directory # SKIP root reads anything")
+
 # dsh keeps its key in its managed .credentials.yaml, or a .env beside it.
 (home() / "dsh" / ".credentials.yaml").write_text("""# managed by dsh
 version: 1
