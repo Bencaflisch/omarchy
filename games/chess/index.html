@@ -1,0 +1,1479 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chess</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--background); color: var(--foreground); font-family: ui-monospace, "JetBrainsMono Nerd Font", monospace; }
+  canvas { display: block; }
+  #hud { position: fixed; inset: 16px 20px auto 20px; display: flex; justify-content: space-between; align-items: flex-start; font-size: 20px; pointer-events: none; }
+  #hud .dim, #hint, #moves .n { color: color-mix(in srgb, var(--foreground) 55%, var(--background)); }
+  body:has(#title.show) :is(#hud, #hint, #moves), body:has(#help.show) :is(#hud, #hint, #moves) { visibility: hidden; }
+  #status { font-size: 24px; font-weight: bold; }
+  #status.alert { color: var(--red); }
+  #status.good { color: var(--accent); }
+  #sub { font-size: 16px; margin-top: 4px; }
+  #moves { position: fixed; right: 20px; top: 64px; width: 190px; max-height: calc(100% - 140px); overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; font-size: 15px; line-height: 1.5; pointer-events: none; }
+  #moves div { display: grid; grid-template-columns: 34px 1fr 1fr; }
+  #moves .last { color: var(--accent); font-weight: bold; }
+  #hint { position: fixed; left: 0; right: 0; bottom: 14px; text-align: center; font-size: 15px; pointer-events: none; }
+  #title .dim, #over .dim, #promo .dim { color: color-mix(in srgb, var(--foreground) 60%, var(--background)); }
+  #hint b { color: var(--foreground); font-weight: normal; }
+  #promo { position: fixed; inset: 0; display: none; place-items: center; pointer-events: none; }
+  #promo.show { display: grid; }
+  #promo > div { pointer-events: auto; background: color-mix(in srgb, var(--background) 92%, transparent); border: 2px solid var(--accent); border-radius: 16px; padding: 20px 28px; text-align: center; }
+  #promo p { margin: 0 0 14px; font-size: 18px; }
+  .choices { display: flex; gap: 12px; justify-content: center; }
+  .choice { min-width: 96px; padding: 12px 10px; border-radius: 10px; border: 2px solid var(--muted); cursor: pointer; font-size: 18px; }
+  .choice b { display: block; font-size: 34px; margin-bottom: 4px; }
+  .choice.on { border-color: var(--accent); background: var(--accent); color: var(--background); }
+  .levels { display: flex; gap: 10px; justify-content: center; margin: 22px 0 10px; }
+  .levels span { padding: 8px 16px; border-radius: 8px; border: 2px solid var(--muted); cursor: pointer; font-size: 18px; }
+  .levels span.on { border-color: var(--accent); background: var(--accent); color: var(--background); font-weight: bold; }
+  #over { background: color-mix(in srgb, var(--background) 30%, transparent); }
+  #title > div, #over > div { background: color-mix(in srgb, var(--background) 90%, transparent); border: 1px solid var(--muted); border-radius: 18px; padding: 28px 44px; }
+  #over h1 { font-size: 52px; }
+  .screen { position: fixed; inset: 0; display: none; place-items: center; text-align: center; background: color-mix(in srgb, var(--background) 75%, transparent); }
+  .screen.show { display: grid; }
+  .screen h1 { margin: 0 0 16px; font-size: 64px; letter-spacing: 4px; color: var(--accent); }
+  .screen p { margin: 8px 0; font-size: 18px; }
+  .key { color: var(--accent); }
+  .dim { color: var(--muted); }
+  #help table { margin: 12px auto; border-spacing: 20px 6px; font-size: 18px; text-align: left; }
+</style>
+<!-- One pinned three.js version. Addons, if any, come from the same version. -->
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.min.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="hud">
+  <div><div id="status">Your move</div><div id="sub" class="dim">Medium</div></div>
+  <div><span class="dim">POINTS</span> <span id="score">0</span> &nbsp;<span class="dim">BEST <span id="best">0</span></span></div>
+</div>
+<div id="moves"></div>
+<div id="hint"><b>Arrows</b> move &nbsp;·&nbsp; <b>Space</b> pick up and place &nbsp;·&nbsp; <b>U</b> take back &nbsp;·&nbsp; <b>Esc</b> pause &nbsp;·&nbsp; <b>?</b> help</div>
+
+<div id="promo"><div>
+  <p>Promote the pawn to</p>
+  <div class="choices">
+    <div class="choice" data-type="5"><b>Q</b>Queen</div>
+    <div class="choice" data-type="4"><b>R</b>Rook</div>
+    <div class="choice" data-type="3"><b>B</b>Bishop</div>
+    <div class="choice" data-type="2"><b>N</b>Knight</div>
+  </div>
+  <p class="dim" style="margin: 14px 0 0">← → and Space, or Q R B N</p>
+</div></div>
+
+<div id="title" class="screen show"><div>
+  <h1>CHESS</h1>
+  <p>Play White and checkmate the computer's king, or play a friend at the same desk.</p>
+  <div class="levels"><span>Easy</span><span>Medium</span><span>Hard</span><span>Two players</span></div>
+  <p class="dim">← → or 1–4 to choose the opponent</p>
+  <p><span class="key">Arrows</span> move the cursor, <span class="key">Space</span> picks up and places a piece, <span class="key">U</span> takes back</p>
+  <p>Press <span class="key">Space</span> to start</p>
+  <p class="dim">? for all controls</p>
+</div></div>
+
+<div id="paused" class="screen"><div>
+  <h1>PAUSED</h1>
+  <p>Press <span class="key">Esc</span> to resume</p>
+</div></div>
+
+<div id="over" class="screen"><div>
+  <h1 id="over-title">GAME OVER</h1>
+  <p id="over-reason"></p>
+  <p id="over-score"></p>
+  <p id="over-best" class="key"></p>
+  <div class="levels"><span>Easy</span><span>Medium</span><span>Hard</span><span>Two players</span></div>
+  <p>Press <span class="key">Space</span> to play again</p>
+</div></div>
+
+<div id="help" class="screen"><div>
+  <h1>CONTROLS</h1>
+  <table>
+    <tr><td class="key">Arrows / WASD</td><td>Move the cursor</td></tr>
+    <tr><td class="key">Space / Enter</td><td>Pick up a piece, place it; start, play again</td></tr>
+    <tr><td class="key">Mouse</td><td>Click a piece, then click where it goes</td></tr>
+    <tr><td class="key">U / Backspace</td><td>Take back your last move</td></tr>
+    <tr><td class="key">Q R B N</td><td>Choose a promotion</td></tr>
+    <tr><td class="key">1–4</td><td>Opponent, on the title and game over screens</td></tr>
+    <tr><td class="key">Esc / P</td><td>Pause, resume</td></tr>
+    <tr><td class="key">M</td><td>Sound on or off</td></tr>
+    <tr><td class="key">?</td><td>This help</td></tr>
+  </table>
+  <p class="dim">Press any key to close</p>
+</div></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+
+// =============================================================================
+// SETTINGS — change these.
+// NAME namespaces saved data. PALETTE is the Omarchy theme the game was made in, from
+// `omarchy-theme-color --all`. Launched from the app launcher, themed() swaps in the
+// desktop's current theme, so take every colour from PALETTE and keep themed() around it.
+// =============================================================================
+const NAME = 'chess';
+const PALETTE = themed({
+  mode: 'dark',
+  background: '#1a1b26', foreground: '#a9b1d6', accent: '#7aa2f7', muted: '#414868',
+  red: '#f7768e', green: '#9ece6a', yellow: '#e0af68', blue: '#7aa2f7', magenta: '#ad8ee6', cyan: '#449dab', orange: '#eb927b',
+});
+
+// The key presses `check` plays after starting a round, as [seconds after start, key code, milliseconds held],
+// and the note() events that must happen while it plays. Make both exercise THIS game's main mechanic.
+// The cursor starts on e2: pick the pawn up, push it to e4, wait for the computer, then play Ng1-f3 and take it back.
+const CHECK = {
+  start: 'Space',
+  pause: 'Escape',
+  play: [
+    [0.4, 'Space', 80], [0.8, 'ArrowUp', 80], [1.1, 'KeyW', 80], [1.5, 'Enter', 80],
+    [4.6, 'KeyD', 80], [4.85, 'ArrowRight', 80], [5.1, 'ArrowDown', 80], [5.35, 'KeyS', 80], [5.6, 'ArrowDown', 80],
+    [5.9, 'Space', 80], [6.2, 'ArrowUp', 80], [6.45, 'KeyW', 80], [6.7, 'KeyA', 80], [7.0, 'Enter', 80],
+    [10.0, 'KeyU', 80],
+  ],
+  expect: ['select', 'move', 'reply', 'undo'],
+};
+
+// =============================================================================
+// THE GAME
+// =============================================================================
+
+// ---- Rules engine. Squares are 0..63, a1 = 0, h8 = 63. A piece is its type, plus 8 when black.
+const P = 1, N = 2, B = 3, R = 4, Q = 5, K = 6;
+const DOUBLE = 1, EP = 2, CASTLE = 3;
+const VALUE = [0, 100, 320, 330, 500, 900, 0];
+const PHASE = [0, 0, 1, 1, 2, 4, 0];
+const FILES = 'abcdefgh';
+const sqName = sq => FILES[sq & 7] + ((sq >> 3) + 1);
+const moveFrom = m => m & 63, moveTo = m => (m >> 6) & 63, movePromo = m => (m >> 12) & 7, moveFlag = m => (m >> 15) & 7;
+const encode = (from, to, promo = 0, flag = 0) => from | (to << 6) | (promo << 12) | (flag << 15);
+
+const KNIGHT = [], KING = [], RAYS = [];
+const DIRS = [[0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [1, -1], [-1, 1], [-1, -1]];   // first four are rook lines
+for (let sq = 0; sq < 64; sq++) {
+  const f = sq & 7, r = sq >> 3, inside = (ff, rr) => ff >= 0 && ff < 8 && rr >= 0 && rr < 8;
+  KNIGHT[sq] = [[1, 2], [2, 1], [-1, 2], [-2, 1], [1, -2], [2, -1], [-1, -2], [-2, -1]]
+    .filter(([df, dr]) => inside(f + df, r + dr)).map(([df, dr]) => (r + dr) * 8 + f + df);
+  KING[sq] = DIRS.filter(([df, dr]) => inside(f + df, r + dr)).map(([df, dr]) => (r + dr) * 8 + f + df);
+  RAYS[sq] = DIRS.map(([df, dr]) => {
+    const ray = [];
+    for (let ff = f + df, rr = r + dr; inside(ff, rr); ff += df, rr += dr) ray.push(rr * 8 + ff);
+    return ray;
+  });
+}
+const CASTLE_MASK = new Array(64).fill(15);
+CASTLE_MASK[0] = 13; CASTLE_MASK[7] = 14; CASTLE_MASK[4] = 12; CASTLE_MASK[56] = 7; CASTLE_MASK[63] = 11; CASTLE_MASK[60] = 3;
+
+// Zobrist keys: two 32-bit halves, from a fixed generator so positions hash the same in every game.
+let zseed = 0x2545f491;
+const zrand = () => { zseed ^= zseed << 13; zseed ^= zseed >>> 17; zseed ^= zseed << 5; return zseed | 0; };
+const Z1 = Int32Array.from({ length: 16 * 64 }, zrand), Z2 = Int32Array.from({ length: 16 * 64 }, zrand);
+const ZC1 = Int32Array.from({ length: 16 }, zrand), ZC2 = Int32Array.from({ length: 16 }, zrand);
+const ZE1 = Int32Array.from({ length: 8 }, zrand), ZE2 = Int32Array.from({ length: 8 }, zrand);
+const ZS1 = zrand(), ZS2 = zrand();
+
+// Piece-square tables, drawn from White's side with rank 8 on top.
+const PST = [null,
+  [0,0,0,0,0,0,0,0, 50,50,50,50,50,50,50,50, 10,10,20,30,30,20,10,10, 5,5,10,25,25,10,5,5, 0,0,0,20,20,0,0,0, 5,-5,-10,0,0,-10,-5,5, 5,10,10,-20,-20,10,10,5, 0,0,0,0,0,0,0,0],
+  [-50,-40,-30,-30,-30,-30,-40,-50, -40,-20,0,0,0,0,-20,-40, -30,0,10,15,15,10,0,-30, -30,5,15,20,20,15,5,-30, -30,0,15,20,20,15,0,-30, -30,5,10,15,15,10,5,-30, -40,-20,0,5,5,0,-20,-40, -50,-40,-30,-30,-30,-30,-40,-50],
+  [-20,-10,-10,-10,-10,-10,-10,-20, -10,0,0,0,0,0,0,-10, -10,0,5,10,10,5,0,-10, -10,5,5,10,10,5,5,-10, -10,0,10,10,10,10,0,-10, -10,10,10,10,10,10,10,-10, -10,5,0,0,0,0,5,-10, -20,-10,-10,-10,-10,-10,-10,-20],
+  [0,0,0,0,0,0,0,0, 5,10,10,10,10,10,10,5, -5,0,0,0,0,0,0,-5, -5,0,0,0,0,0,0,-5, -5,0,0,0,0,0,0,-5, -5,0,0,0,0,0,0,-5, -5,0,0,0,0,0,0,-5, 0,0,0,5,5,0,0,0],
+  [-20,-10,-10,-5,-5,-10,-10,-20, -10,0,0,0,0,0,0,-10, -10,0,5,5,5,5,0,-10, -5,0,5,5,5,5,0,-5, 0,0,5,5,5,5,0,-5, -10,5,5,5,5,5,0,-10, -10,0,5,0,0,0,0,-10, -20,-10,-10,-5,-5,-10,-10,-20],
+  [-30,-40,-40,-50,-50,-40,-40,-30, -30,-40,-40,-50,-50,-40,-40,-30, -30,-40,-40,-50,-50,-40,-40,-30, -30,-40,-40,-50,-50,-40,-40,-30, -20,-30,-30,-40,-40,-30,-30,-20, -10,-20,-20,-20,-20,-20,-20,-10, 20,20,0,0,0,0,20,20, 20,30,10,0,0,10,30,20],
+];
+const KING_END = [-50,-40,-30,-20,-20,-30,-40,-50, -30,-20,-10,0,0,-10,-20,-30, -30,-10,20,30,30,20,-10,-30, -30,-10,30,40,40,30,-10,-30, -30,-10,30,40,40,30,-10,-30, -30,-10,20,30,30,20,-10,-30, -30,-30,0,0,0,0,-30,-30, -50,-30,-30,-30,-30,-30,-30,-50];
+
+class Position {
+  constructor() { this.board = new Int8Array(64); this.king = [4, 60]; this.setStart(); }
+
+  setStart() {
+    const back = [R, N, B, Q, K, B, N, R];
+    this.board.fill(0);
+    for (let f = 0; f < 8; f++) {
+      this.board[f] = back[f]; this.board[8 + f] = P; this.board[48 + f] = P | 8; this.board[56 + f] = back[f] | 8;
+    }
+    this.side = 0; this.castle = 15; this.ep = -1; this.half = 0; this.full = 1; this.king = [4, 60];
+    this.stack = []; this.hist1 = []; this.hist2 = [];
+    this.rehash();
+  }
+
+  rehash() {
+    let h1 = 0, h2 = 0;
+    for (let sq = 0; sq < 64; sq++) if (this.board[sq]) { h1 ^= Z1[this.board[sq] * 64 + sq]; h2 ^= Z2[this.board[sq] * 64 + sq]; }
+    if (this.side) { h1 ^= ZS1; h2 ^= ZS2; }
+    h1 ^= ZC1[this.castle]; h2 ^= ZC2[this.castle];
+    if (this.ep >= 0) { h1 ^= ZE1[this.ep & 7]; h2 ^= ZE2[this.ep & 7]; }
+    this.h1 = h1; this.h2 = h2;
+  }
+
+  clone() {
+    const p = Object.create(Position.prototype);
+    Object.assign(p, this);
+    p.board = this.board.slice(); p.king = this.king.slice();
+    p.stack = []; p.hist1 = this.hist1.slice(); p.hist2 = this.hist2.slice();
+    return p;
+  }
+
+  attacked(sq, by) {
+    const b = this.board, f = sq & 7, pawn = P | (by << 3);
+    if (by === 0) {
+      if (f < 7 && sq >= 7 && b[sq - 7] === pawn) return true;
+      if (f > 0 && sq >= 9 && b[sq - 9] === pawn) return true;
+    } else {
+      if (f > 0 && sq <= 56 && b[sq + 7] === pawn) return true;
+      if (f < 7 && sq <= 54 && b[sq + 9] === pawn) return true;
+    }
+    const knight = N | (by << 3), king = K | (by << 3);
+    for (const t of KNIGHT[sq]) if (b[t] === knight) return true;
+    for (const t of KING[sq]) if (b[t] === king) return true;
+    const rays = RAYS[sq];
+    for (let d = 0; d < 8; d++) {
+      const ray = rays[d];
+      for (let i = 0; i < ray.length; i++) {
+        const pc = b[ray[i]];
+        if (!pc) continue;
+        if (pc >> 3 === by) {
+          const t = pc & 7;
+          if (t === Q || (d < 4 ? t === R : t === B)) return true;
+        }
+        break;
+      }
+    }
+    return false;
+  }
+
+  inCheck(side = this.side) { return this.attacked(this.king[side], side ^ 1); }
+
+  // Pseudo-legal moves; make() then attacked() weeds out the ones that leave the king in check.
+  gen(moves, capturesOnly) {
+    const b = this.board, us = this.side, them = us ^ 1;
+    for (let sq = 0; sq < 64; sq++) {
+      const pc = b[sq];
+      if (!pc || pc >> 3 !== us) continue;
+      const t = pc & 7;
+      if (t === P) {
+        const dir = us ? -8 : 8, f = sq & 7, one = sq + dir, promoting = (one >> 3) === (us ? 0 : 7);
+        const add = to => {
+          if (promoting) for (const p of [Q, N, R, B]) moves.push(encode(sq, to, p));
+          else moves.push(encode(sq, to));
+        };
+        if (f > 0) { const to = one - 1, c = b[to]; if (c && c >> 3 === them) add(to); else if (to === this.ep) moves.push(encode(sq, to, 0, EP)); }
+        if (f < 7) { const to = one + 1, c = b[to]; if (c && c >> 3 === them) add(to); else if (to === this.ep) moves.push(encode(sq, to, 0, EP)); }
+        if (!b[one] && (!capturesOnly || promoting)) {
+          add(one);
+          if (!capturesOnly && (sq >> 3) === (us ? 6 : 1) && !b[one + dir]) moves.push(encode(sq, one + dir, 0, DOUBLE));
+        }
+      } else if (t === N || t === K) {
+        for (const to of (t === N ? KNIGHT : KING)[sq]) {
+          const c = b[to];
+          if (c ? c >> 3 === them : !capturesOnly) moves.push(encode(sq, to));
+        }
+        if (t === K && !capturesOnly) {
+          const home = us ? 60 : 4, rook = R | (us << 3);
+          if (sq === home && !this.attacked(home, them)) {
+            if ((this.castle & (us ? 4 : 1)) && !b[home + 1] && !b[home + 2] && b[home + 3] === rook && !this.attacked(home + 1, them))
+              moves.push(encode(home, home + 2, 0, CASTLE));
+            if ((this.castle & (us ? 8 : 2)) && !b[home - 1] && !b[home - 2] && !b[home - 3] && b[home - 4] === rook && !this.attacked(home - 1, them))
+              moves.push(encode(home, home - 2, 0, CASTLE));
+          }
+        }
+      } else {
+        const d0 = t === B ? 4 : 0, d1 = t === R ? 4 : 8, rays = RAYS[sq];
+        for (let d = d0; d < d1; d++) {
+          const ray = rays[d];
+          for (let i = 0; i < ray.length; i++) {
+            const to = ray[i], c = b[to];
+            if (!c) { if (!capturesOnly) moves.push(encode(sq, to)); continue; }
+            if (c >> 3 === them) moves.push(encode(sq, to));
+            break;
+          }
+        }
+      }
+    }
+    return moves;
+  }
+
+  make(m) {
+    const b = this.board, from = m & 63, to = (m >> 6) & 63, promo = (m >> 12) & 7, flag = (m >> 15) & 7;
+    const pc = b[from], us = this.side, them = us ^ 1;
+    let capSq = to;
+    if (flag === EP) capSq = us ? to + 8 : to - 8;
+    const cap = b[capSq];
+    this.stack.push(m, cap, this.castle, this.ep, this.half);
+    this.hist1.push(this.h1); this.hist2.push(this.h2);
+    let h1 = this.h1 ^ ZC1[this.castle] ^ ZS1, h2 = this.h2 ^ ZC2[this.castle] ^ ZS2;
+    if (this.ep >= 0) { h1 ^= ZE1[this.ep & 7]; h2 ^= ZE2[this.ep & 7]; }
+    if (cap) { b[capSq] = 0; h1 ^= Z1[cap * 64 + capSq]; h2 ^= Z2[cap * 64 + capSq]; }
+    const placed = promo ? promo | (us << 3) : pc;
+    b[from] = 0; h1 ^= Z1[pc * 64 + from]; h2 ^= Z2[pc * 64 + from];
+    b[to] = placed; h1 ^= Z1[placed * 64 + to]; h2 ^= Z2[placed * 64 + to];
+    if ((pc & 7) === K) {
+      this.king[us] = to;
+      if (flag === CASTLE) {
+        const rf = to > from ? to + 1 : to - 2, rt = to > from ? to - 1 : to + 1, rook = b[rf];
+        b[rf] = 0; b[rt] = rook;
+        h1 ^= Z1[rook * 64 + rf] ^ Z1[rook * 64 + rt]; h2 ^= Z2[rook * 64 + rf] ^ Z2[rook * 64 + rt];
+      }
+    }
+    this.castle &= CASTLE_MASK[from] & CASTLE_MASK[to];
+    h1 ^= ZC1[this.castle]; h2 ^= ZC2[this.castle];
+    this.ep = -1;
+    if (flag === DOUBLE) {
+      // Only a square a pawn could actually take on counts, so repeated positions hash alike.
+      const enemy = P | (them << 3), f = to & 7;
+      if ((f > 0 && b[to - 1] === enemy) || (f < 7 && b[to + 1] === enemy)) {
+        this.ep = (from + to) >> 1; h1 ^= ZE1[this.ep & 7]; h2 ^= ZE2[this.ep & 7];
+      }
+    }
+    this.half = cap || (pc & 7) === P ? 0 : this.half + 1;
+    if (us) this.full++;
+    this.side = them;
+    this.h1 = h1; this.h2 = h2;
+  }
+
+  unmake() {
+    const s = this.stack, half = s.pop(), ep = s.pop(), castle = s.pop(), cap = s.pop(), m = s.pop();
+    this.h1 = this.hist1.pop(); this.h2 = this.hist2.pop();
+    this.side ^= 1;
+    const us = this.side, b = this.board, from = m & 63, to = (m >> 6) & 63, promo = (m >> 12) & 7, flag = (m >> 15) & 7;
+    if (us) this.full--;
+    const pc = promo ? P | (us << 3) : b[to];
+    b[from] = pc; b[to] = 0;
+    if (flag === EP) b[us ? to + 8 : to - 8] = cap; else b[to] = cap;
+    if ((pc & 7) === K) {
+      this.king[us] = from;
+      if (flag === CASTLE) {
+        const rf = to > from ? to + 1 : to - 2, rt = to > from ? to - 1 : to + 1;
+        b[rf] = b[rt]; b[rt] = 0;
+      }
+    }
+    this.castle = castle; this.ep = ep; this.half = half;
+  }
+
+  legalMoves() {
+    const out = [], us = this.side;
+    for (const m of this.gen([], false)) {
+      this.make(m);
+      if (!this.attacked(this.king[us], us ^ 1)) out.push(m);
+      this.unmake();
+    }
+    return out;
+  }
+
+  // How many times the current position stood before, since the last capture or pawn move.
+  repetitions() {
+    let count = 0;
+    const n = this.hist1.length;
+    for (let i = n - 2; i >= Math.max(0, n - this.half); i -= 2) if (this.hist1[i] === this.h1 && this.hist2[i] === this.h2) count++;
+    return count;
+  }
+
+  insufficient() {
+    let minors = 0;
+    for (let sq = 0; sq < 64; sq++) {
+      const t = this.board[sq] & 7;
+      if (t === P || t === R || t === Q) return false;
+      if (t === N || t === B) minors++;
+    }
+    return minors <= 1;
+  }
+
+  // Centipawns, from the side to move's point of view.
+  evaluate() {
+    const b = this.board;
+    let mg = 0, eg = 0, phase = 0, bishops0 = 0, bishops1 = 0, material0 = 0, material1 = 0;
+    for (let sq = 0; sq < 64; sq++) {
+      const pc = b[sq];
+      if (!pc) continue;
+      const t = pc & 7, black = pc >> 3, r = sq >> 3, idx = black ? r * 8 + (sq & 7) : (7 - r) * 8 + (sq & 7), sign = black ? -1 : 1;
+      phase += PHASE[t];
+      if (t === K) { mg += sign * PST[K][idx]; eg += sign * KING_END[idx]; continue; }
+      const v = VALUE[t] + PST[t][idx];
+      mg += sign * v;
+      eg += sign * (t === P ? v + (black ? 6 - r : r - 1) * 12 : v);
+      if (t === B) black ? bishops1++ : bishops0++;
+      if (t !== P) black ? (material1 += VALUE[t]) : (material0 += VALUE[t]);
+    }
+    if (bishops0 >= 2) { mg += 30; eg += 40; }
+    if (bishops1 >= 2) { mg -= 30; eg -= 40; }
+    // Mop-up: with a winning edge and little left, drive the lone king to the side and walk your own up to it.
+    if (phase < 8 && Math.abs(material0 - material1) >= 300) {
+      const winner = material0 > material1 ? 0 : 1, lk = this.king[winner ^ 1], wk = this.king[winner];
+      const centre = Math.max(3 - (lk & 7), (lk & 7) - 4) + Math.max(3 - (lk >> 3), (lk >> 3) - 4);
+      const near = 14 - Math.abs((lk & 7) - (wk & 7)) - Math.abs((lk >> 3) - (wk >> 3));
+      eg += (winner ? -1 : 1) * (centre * 12 + near * 5);
+    }
+    phase = Math.min(24, phase);
+    const score = (mg * phase + eg * (24 - phase)) / 24 | 0;
+    return this.side ? -score : score;
+  }
+}
+
+// ---- The computer: iterative deepening alpha-beta with quiescence, a transposition table, killers and history.
+// The upper plies are generators that yield whenever the frame's slice is used up, so a search spreads across
+// frames and the window never freezes; it stops when its thinking time is spent.
+const MATE = 100000, INF = 1000000;
+const TT_BITS = 18, TT_MASK = (1 << TT_BITS) - 1;
+const ttKey = new Int32Array(1 << TT_BITS), ttMove = new Int32Array(1 << TT_BITS), ttScore = new Int32Array(1 << TT_BITS);
+const ttDepth = new Int8Array(1 << TT_BITS), ttFlag = new Uint8Array(1 << TT_BITS);
+const EXACT = 1, LOWER = 2, UPPER = 3;
+const LEVELS = [
+  { name: 'Easy', depth: 2, time: 0.6, noise: 90 },
+  { name: 'Medium', depth: 5, time: 1.2, noise: 12 },
+  { name: 'Hard', depth: 40, time: 2.5, noise: 0 },
+  { name: 'Two players' },
+];
+
+class Search {
+  constructor(position, settings) {
+    this.pos = position.clone();
+    this.maxDepth = settings.depth;
+    this.noise = settings.noise;
+    this.best = 0; this.depth = 0; this.nodes = 0;
+    this.timeUp = false; this.canStop = false; this.stop = false; this.done = false;
+    this.killers = new Int32Array(256); this.history = new Int32Array(4096);
+    this.sliceEnd = 0;
+    this.run = this.root();
+  }
+
+  step(ms) {
+    if (this.done) return;
+    this.sliceEnd = performance.now() + ms;
+    if (this.run.next().done) this.done = true;
+  }
+
+  pause() { return performance.now() > this.sliceEnd; }
+  resumed() { if (this.timeUp && this.canStop) this.stop = true; }
+
+  probe(depth, alpha, beta, ply) {
+    const pos = this.pos;
+    this.hint = 0;
+    if (ply > 0 && (pos.half >= 100 || pos.repetitions() > 0)) return 0;
+    const i = pos.h1 & TT_MASK;
+    if (ttKey[i] === pos.h2 && ttFlag[i]) {
+      this.hint = ttMove[i];
+      if (ply > 0 && ttDepth[i] >= depth) {
+        let s = ttScore[i];
+        if (s > MATE - 1000) s -= ply; else if (s < -MATE + 1000) s += ply;
+        const flag = ttFlag[i];
+        if (flag === EXACT || (flag === LOWER && s >= beta) || (flag === UPPER && s <= alpha)) return s;
+      }
+    }
+    return NaN;
+  }
+
+  store(depth, score, flag, move, ply) {
+    const i = this.pos.h1 & TT_MASK;
+    if (score > MATE - 1000) score += ply; else if (score < -MATE + 1000) score -= ply;
+    ttKey[i] = this.pos.h2; ttMove[i] = move; ttScore[i] = score; ttDepth[i] = depth; ttFlag[i] = flag;
+  }
+
+  scores(moves, hint, ply) {
+    const b = this.pos.board, out = new Int32Array(moves.length);
+    for (let i = 0; i < moves.length; i++) {
+      const m = moves[i], from = m & 63, to = (m >> 6) & 63, promo = (m >> 12) & 7;
+      const victim = ((m >> 15) & 7) === EP ? P : b[to] & 7;
+      if (m === hint) out[i] = 1 << 28;
+      else if (victim) out[i] = (1 << 24) + VALUE[victim] * 16 - VALUE[b[from] & 7] / 16;
+      else if (promo) out[i] = (1 << 24) + VALUE[promo];
+      else if (m === this.killers[ply * 2]) out[i] = 1 << 23;
+      else if (m === this.killers[ply * 2 + 1]) out[i] = (1 << 23) - 1;
+      else out[i] = Math.min(this.history[from * 64 + to], (1 << 22));
+    }
+    return out;
+  }
+
+  // Bring the best remaining move to position i: cheap, and most nodes cut off after the first few.
+  pick(moves, scores, i) {
+    let best = i;
+    for (let j = i + 1; j < moves.length; j++) if (scores[j] > scores[best]) best = j;
+    if (best !== i) {
+      [moves[i], moves[best]] = [moves[best], moves[i]];
+      [scores[i], scores[best]] = [scores[best], scores[i]];
+    }
+    return moves[i];
+  }
+
+  cutoff(m, depth, ply) {
+    if (this.pos.board[(m >> 6) & 63] || ((m >> 15) & 7) === EP || ((m >> 12) & 7)) return;
+    if (this.killers[ply * 2] !== m) { this.killers[ply * 2 + 1] = this.killers[ply * 2]; this.killers[ply * 2] = m; }
+    this.history[(m & 63) * 64 + ((m >> 6) & 63)] += depth * depth;
+  }
+
+  quiesce(alpha, beta, ply) {
+    this.nodes++;
+    const pos = this.pos, stand = pos.evaluate();
+    if (stand >= beta) return stand;
+    if (stand > alpha) alpha = stand;
+    if (ply > 60) return stand;
+    const moves = pos.gen([], true), scores = this.scores(moves, 0, Math.min(ply, 127)), us = pos.side;
+    for (let i = 0; i < moves.length; i++) {
+      const m = this.pick(moves, scores, i);
+      pos.make(m);
+      if (pos.attacked(pos.king[us], us ^ 1)) { pos.unmake(); continue; }
+      const s = -this.quiesce(-beta, -alpha, ply + 1);
+      pos.unmake();
+      if (s >= beta) return s;
+      if (s > alpha) alpha = s;
+    }
+    return alpha;
+  }
+
+  // The lower plies: plain recursion, small enough to finish inside one slice.
+  search(depth, alpha, beta, ply) {
+    const pos = this.pos, us = pos.side, check = pos.inCheck();
+    if (check && ply < 30) depth++;
+    if (depth <= 0) return this.quiesce(alpha, beta, ply);
+    this.nodes++;
+    const probed = this.probe(depth, alpha, beta, ply);
+    if (probed === probed) return probed;
+    const moves = pos.gen([], false), scores = this.scores(moves, this.hint, ply), alpha0 = alpha;
+    let best = -INF, bestMove = 0, legal = 0;
+    for (let i = 0; i < moves.length; i++) {
+      const m = this.pick(moves, scores, i);
+      pos.make(m);
+      if (pos.attacked(pos.king[us], us ^ 1)) { pos.unmake(); continue; }
+      legal++;
+      const s = -this.search(depth - 1, -beta, -alpha, ply + 1);
+      pos.unmake();
+      if (s > best) {
+        best = s; bestMove = m;
+        if (s > alpha) { alpha = s; if (s >= beta) { this.cutoff(m, depth, ply); break; } }
+      }
+    }
+    if (!legal) return check ? -MATE + ply : 0;
+    this.store(depth, best, best <= alpha0 ? UPPER : best >= beta ? LOWER : EXACT, bestMove, ply);
+    return best;
+  }
+
+  // The upper plies: the same search as a generator, so it can pause between frames.
+  *searchSliced(depth, alpha, beta, ply) {
+    if (this.pause()) { yield; this.resumed(); }
+    if (this.stop) return 0;
+    const pos = this.pos, us = pos.side, check = pos.inCheck();
+    if (check && ply < 30) depth++;
+    this.nodes++;
+    const probed = this.probe(depth, alpha, beta, ply);
+    if (probed === probed) return probed;
+    const moves = pos.gen([], false), scores = this.scores(moves, this.hint, ply), alpha0 = alpha;
+    let best = -INF, bestMove = 0, legal = 0;
+    for (let i = 0; i < moves.length; i++) {
+      const m = this.pick(moves, scores, i);
+      pos.make(m);
+      if (pos.attacked(pos.king[us], us ^ 1)) { pos.unmake(); continue; }
+      legal++;
+      const s = -(depth - 1 >= 3 ? yield* this.searchSliced(depth - 1, -beta, -alpha, ply + 1) : this.search(depth - 1, -beta, -alpha, ply + 1));
+      pos.unmake();
+      if (this.stop) return 0;
+      if (s > best) {
+        best = s; bestMove = m;
+        if (s > alpha) { alpha = s; if (s >= beta) { this.cutoff(m, depth, ply); break; } }
+      }
+    }
+    if (!legal) return check ? -MATE + ply : 0;
+    this.store(depth, best, best <= alpha0 ? UPPER : best >= beta ? LOWER : EXACT, bestMove, ply);
+    return best;
+  }
+
+  *root() {
+    const pos = this.pos, moves = pos.legalMoves();
+    if (!moves.length) return;
+    this.best = moves[0];
+    if (moves.length === 1) return;
+    // Weaker levels see each move a little wrongly, and differently every game.
+    const noise = new Map(moves.map(m => [m, Math.round((random() * 2 - 1) * this.noise)]));
+    const scores = this.scores(moves, 0, 0), first = new Map(moves.map((m, i) => [m, scores[i]]));
+    moves.sort((a, b) => first.get(b) - first.get(a));
+    for (let depth = 1; depth <= this.maxDepth; depth++) {
+      let alpha = -INF, bestMove = 0, bestScore = -INF;
+      for (const m of moves) {
+        if (this.pause()) { yield; this.resumed(); }
+        if (this.stop) break;
+        pos.make(m);
+        let s;
+        if (depth - 1 >= 3) s = -(yield* this.searchSliced(depth - 1, -INF, -alpha, 1));
+        else s = -this.search(depth - 1, -INF, -alpha, 1);
+        pos.unmake();
+        if (this.stop) break;
+        if (Math.abs(s) < MATE - 1000) s += noise.get(m);
+        if (s > bestScore) { bestScore = s; bestMove = m; if (s > alpha) alpha = s; }
+      }
+      if (bestMove) { this.best = bestMove; this.score = bestScore; this.depth = depth; }
+      if (this.stop) break;
+      this.canStop = true;
+      if (this.timeUp) break;
+      moves.splice(moves.indexOf(this.best), 1);
+      moves.unshift(this.best);
+      if (Math.abs(bestScore) > MATE - 1000) break;
+    }
+  }
+}
+
+function clearMemory() { ttFlag.fill(0); }
+
+// ---- Notation
+function sanOf(pos, m) {
+  const from = moveFrom(m), to = moveTo(m), promo = movePromo(m), flag = moveFlag(m), pc = pos.board[from], t = pc & 7;
+  let s;
+  if (flag === CASTLE) s = to > from ? 'O-O' : 'O-O-O';
+  else {
+    const capture = pos.board[to] || flag === EP;
+    if (t === P) s = (capture ? FILES[from & 7] + 'x' : '') + sqName(to) + (promo ? '=' + ' PNBRQK'[promo] : '');
+    else {
+      const rivals = pos.legalMoves().filter(o => o !== m && moveTo(o) === to && pos.board[moveFrom(o)] === pc);
+      let which = '';
+      if (rivals.length) {
+        const sameFile = rivals.some(o => (moveFrom(o) & 7) === (from & 7)), sameRank = rivals.some(o => (moveFrom(o) >> 3) === (from >> 3));
+        which = !sameFile ? FILES[from & 7] : !sameRank ? String((from >> 3) + 1) : sqName(from);
+      }
+      s = ' PNBRQK'[t] + which + (capture ? 'x' : '') + sqName(to);
+    }
+  }
+  pos.make(m);
+  const check = pos.inCheck(), mate = check && pos.legalMoves().length === 0;
+  pos.unmake();
+  return s + (mate ? '#' : check ? '+' : '');
+}
+
+// ---- Colours, all mixed from the theme. Pieces take its lightest and darkest ends, squares sit between.
+const mix = (a, b, t) => new THREE.Color(a).lerp(new THREE.Color(b), t);
+const luminance = hex => { const c = new THREE.Color(hex); return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b; };
+const LIGHT_END = luminance(PALETTE.foreground) > luminance(PALETTE.background) ? PALETTE.foreground : PALETTE.background;
+const DARK_END = LIGHT_END === PALETTE.foreground ? PALETTE.background : PALETTE.foreground;
+const LIGHT_MODE = PALETTE.mode === 'light';
+const COLORS = {
+  whitePiece: mix(LIGHT_END, PALETTE.yellow, 0.08),
+  blackPiece: mix(DARK_END, LIGHT_END, LIGHT_MODE ? 0.1 : 0.06),
+  lightSquare: mix(mix(DARK_END, LIGHT_END, LIGHT_MODE ? 0.82 : 0.64), PALETTE.yellow, 0.16),
+  darkSquare: mix(mix(DARK_END, LIGHT_END, LIGHT_MODE ? 0.4 : 0.36), PALETTE.muted, 0.35),
+  frame: mix(PALETTE.background, PALETTE.foreground, LIGHT_MODE ? 0.28 : 0.1),
+  table: mix(PALETTE.background, PALETTE.foreground, 0.03),
+  label: mix(PALETTE.background, PALETTE.foreground, 0.62),
+};
+
+// ---- Pieces from lathe profiles, with a few boxes and an extruded head where turning alone won't do.
+const BASE = [[0, 0], [0.4, 0], [0.4, 0.05], [0.37, 0.08], [0.37, 0.11], [0.31, 0.14], [0.28, 0.17]];
+const arc = (cx, cy, r, a0, a1, n = 10) => Array.from({ length: n + 1 }, (_, i) => {
+  const a = a0 + (a1 - a0) * i / n;
+  return [Math.max(0.0001, cx + Math.cos(a) * r), cy + Math.sin(a) * r];
+});
+const lathe = points => new THREE.LatheGeometry(points.map(([x, y]) => new THREE.Vector2(x, y)), 48).toNonIndexed();
+const box = (w, h, d, x, y, z, ry = 0) => new THREE.BoxGeometry(w, h, d).rotateY(ry).translate(x, y, z).toNonIndexed();
+const ball = (r, x, y, z) => new THREE.SphereGeometry(r, 16, 10).translate(x, y, z).toNonIndexed();
+const merge = parts => { const g = mergeGeometries(parts); g.computeBoundingSphere(); return g; };
+
+function pieceGeometries() {
+  const geo = [];
+  geo[P] = merge([lathe([...BASE, [0.2, 0.2], [0.15, 0.28], [0.12, 0.42], [0.2, 0.45], [0.2, 0.48], [0.12, 0.51], ...arc(0, 0.63, 0.15, -0.6, Math.PI / 2)])]);
+
+  const rookParts = [lathe([...BASE, [0.27, 0.2], [0.24, 0.26], [0.21, 0.6], [0.28, 0.64], [0.29, 0.68], [0.29, 0.8], [0.2, 0.8], [0.2, 0.75], [0, 0.75]])];
+  for (let i = 0; i < 4; i++) {
+    const a = Math.PI / 4 + i * Math.PI / 2;
+    rookParts.push(box(0.17, 0.13, 0.09, Math.cos(a) * 0.245, 0.86, Math.sin(a) * 0.245, -a + Math.PI / 2));
+  }
+  geo[R] = merge(rookParts);
+
+  const head = new THREE.Shape();
+  head.moveTo(-0.2, 0);
+  head.lineTo(0.19, 0);
+  head.quadraticCurveTo(0.17, 0.17, 0.08, 0.25);
+  head.lineTo(0.25, 0.32);
+  head.quadraticCurveTo(0.34, 0.36, 0.31, 0.45);
+  head.lineTo(0.07, 0.6);
+  head.lineTo(0.06, 0.73);
+  head.lineTo(-0.04, 0.63);
+  head.quadraticCurveTo(-0.2, 0.56, -0.23, 0.3);
+  head.quadraticCurveTo(-0.25, 0.12, -0.2, 0);
+  const headGeo = new THREE.ExtrudeGeometry(head, { depth: 0.2, bevelEnabled: true, bevelThickness: 0.04, bevelSize: 0.03, bevelSegments: 3, curveSegments: 10 })
+    .translate(0, 0.34, -0.1);
+  geo[N] = merge([lathe([...BASE, [0.27, 0.2], [0.24, 0.24], [0.22, 0.3], [0.26, 0.33], [0.26, 0.37], [0, 0.37]]), headGeo]);
+
+  const mitre = Array.from({ length: 12 }, (_, i) => { const a = -0.9 + (Math.PI / 2 + 0.9) * i / 11; return [Math.max(0.02, Math.cos(a) * 0.16), 0.82 + Math.sin(a) * 0.2]; });
+  geo[B] = merge([lathe([...BASE, [0.24, 0.2], [0.19, 0.26], [0.13, 0.56], [0.22, 0.6], [0.22, 0.64], [0.12, 0.67], ...mitre, ...arc(0, 1.07, 0.055, -Math.PI / 2, Math.PI / 2, 8)])]);
+
+  const queenParts = [lathe([...BASE, [0.27, 0.2], [0.21, 0.27], [0.14, 0.7], [0.23, 0.74], [0.23, 0.78], [0.15, 0.8], [0.16, 0.86], [0.26, 1.02], [0.22, 1.03], [0.14, 1.05], ...arc(0, 1.05, 0.14, 0, Math.PI / 2, 8), ...arc(0, 1.245, 0.06, -Math.PI / 2, Math.PI / 2, 8)])];
+  for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4; queenParts.push(ball(0.045, Math.cos(a) * 0.245, 1.04, Math.sin(a) * 0.245)); }
+  geo[Q] = merge(queenParts);
+
+  geo[K] = merge([
+    lathe([...BASE, [0.28, 0.2], [0.22, 0.27], [0.15, 0.78], [0.25, 0.82], [0.25, 0.86], [0.16, 0.88], [0.17, 0.92], [0.25, 1.08], [0.21, 1.11], [0, 1.13]]),
+    box(0.075, 0.3, 0.075, 0, 1.27, 0), box(0.22, 0.075, 0.075, 0, 1.3, 0),
+  ]);
+  return geo;
+}
+
+// ---- Scene objects and round state
+const S = 1;   // one square
+const squareX = sq => ((sq & 7) - 3.5) * S, squareZ = sq => (3.5 - (sq >> 3)) * S;
+let pieceGeo, whiteMat, blackMat;
+let pos, moveLog, cursor, selected, selMoves, anim, search, thinkTime, pendingEnd, promo, gameClock = 0, viewAngle = 0;
+let level = 1, pendingClick = -1, pendingHover = -1, lastHover = -1, repeat = {};
+const pools = {}, meshAt = new Array(64).fill(null), trayMeshes = [];
+let labelSets, cursorMesh, cursorFill, selectMesh, lastFrom, lastTo, checkGlow, dots = [], rings = [], particles, sparks = [];
+let shownStatus = '', shownMoves = '';
+const raycaster = new THREE.Raycaster(), pointer = new THREE.Vector2(), boardPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const vsComputer = () => level < 3;
+const humanTurn = () => !vsComputer() || pos.side === 0;
+
+function glowTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d'), grad = g.createRadialGradient(64, 64, 4, 64, 64, 64);
+  grad.addColorStop(0, 'rgba(255,255,255,1)'); grad.addColorStop(0.45, 'rgba(255,255,255,0.55)'); grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(c);
+}
+
+function labelTexture(black) {
+  const c = document.createElement('canvas'), size = 1024, unit = size / 9.2;
+  c.width = c.height = size;
+  const g = c.getContext('2d');
+  g.fillStyle = '#' + COLORS.label.getHexString();
+  g.font = `bold ${Math.round(unit * 0.34)}px ui-monospace, monospace`;
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  const at = (text, x, y) => g.fillText(text, x, y);
+  for (let i = 0; i < 8; i++) {
+    const centre = (0.6 + i + 0.5) * unit;
+    at(FILES[black ? 7 - i : i], centre, size - unit * 0.3);
+    at(String(black ? i + 1 : 8 - i), unit * 0.3, centre);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  return tex;
+}
+
+function build() {
+  level = saved.get('level', 1);
+  if (![0, 1, 2, 3].includes(level)) level = 1;
+
+  const table = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshStandardMaterial({ color: COLORS.table, roughness: 1 }));
+  table.rotation.x = -Math.PI / 2;
+  table.position.y = -0.6;
+  table.receiveShadow = true;
+  scene.add(table);
+
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(11.9, 0.6, 9.3), new THREE.MeshStandardMaterial({ color: COLORS.frame, roughness: 0.55 }));
+  frame.position.y = -0.3;
+  frame.receiveShadow = frame.castShadow = true;
+  scene.add(frame);
+  for (const side of [-1, 1]) {
+    const tray = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 8.6), new THREE.MeshStandardMaterial({ color: mix(COLORS.frame, PALETTE.background, 0.45), roughness: 0.8 }));
+    tray.rotation.x = -Math.PI / 2;
+    tray.position.set(side * 5.15, 0.002, 0);
+    tray.receiveShadow = true;
+    scene.add(tray);
+  }
+  // Coordinates along the near and left edges, one set read from White's side and one from Black's.
+  labelSets = [0, Math.PI].map(turn => {
+    const labels = new THREE.Mesh(new THREE.PlaneGeometry(9.2, 9.2), new THREE.MeshBasicMaterial({ map: labelTexture(turn > 0), transparent: true, depthWrite: false }));
+    labels.rotation.set(-Math.PI / 2, 0, turn);
+    labels.position.y = 0.003;
+    scene.add(labels);
+    return labels;
+  });
+  labelSets[1].visible = false;
+
+  const squareGeo = new THREE.BoxGeometry(S, 0.06, S);
+  const lightSquares = new THREE.InstancedMesh(squareGeo, new THREE.MeshStandardMaterial({ color: COLORS.lightSquare, roughness: 0.45 }), 32);
+  const darkSquares = new THREE.InstancedMesh(squareGeo, new THREE.MeshStandardMaterial({ color: COLORS.darkSquare, roughness: 0.45 }), 32);
+  const m = new THREE.Matrix4();
+  let li = 0, di = 0;
+  for (let sq = 0; sq < 64; sq++) {
+    m.makeTranslation(squareX(sq), -0.01, squareZ(sq));
+    if (((sq & 7) + (sq >> 3)) % 2) lightSquares.setMatrixAt(li++, m); else darkSquares.setMatrixAt(di++, m);
+  }
+  for (const mesh of [lightSquares, darkSquares]) { mesh.receiveShadow = true; scene.add(mesh); }
+
+  pieceGeo = pieceGeometries();
+  whiteMat = new THREE.MeshPhysicalMaterial({ color: COLORS.whitePiece, roughness: 0.38, clearcoat: 0.5, clearcoatRoughness: 0.3 });
+  blackMat = new THREE.MeshPhysicalMaterial({ color: COLORS.blackPiece, roughness: 0.32, clearcoat: 0.8, clearcoatRoughness: 0.2, sheen: 0.4, sheenColor: new THREE.Color(PALETTE.accent) });
+
+  const flat = (geometry, color, opacity, y) => {
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false }));
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.y = y;
+    mesh.visible = false;
+    scene.add(mesh);
+    return mesh;
+  };
+  const squarePlane = new THREE.PlaneGeometry(S, S);
+  lastFrom = flat(squarePlane, PALETTE.yellow, 0.42, 0.024);
+  lastTo = flat(squarePlane, PALETTE.yellow, 0.55, 0.024);
+  selectMesh = flat(squarePlane, PALETTE.accent, 0.6, 0.026);
+  checkGlow = flat(new THREE.PlaneGeometry(2.1, 2.1), PALETTE.red, 0.9, 0.03);
+  checkGlow.material.map = glowTexture();
+  const dotGeo = new THREE.CircleGeometry(0.17, 32), ringGeo = new THREE.RingGeometry(0.36, 0.46, 40);
+  for (let i = 0; i < 28; i++) { dots.push(flat(dotGeo, PALETTE.accent, 0.85, 0.03)); rings.push(flat(ringGeo, PALETTE.accent, 0.85, 0.03)); }
+  // The cursor: a thick square outline (a four-sided ring turned square-on), the brightest thing on the board.
+  cursorMesh = flat(new THREE.RingGeometry(0.6, 0.74, 4, 1, Math.PI / 4), PALETTE.accent, 1, 0.035);
+  cursorFill = flat(squarePlane, PALETTE.accent, 0.22, 0.028);
+
+  particles = new THREE.InstancedMesh(new THREE.OctahedronGeometry(0.06), new THREE.MeshBasicMaterial({ color: '#ffffff' }), 240);
+  particles.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  for (let i = 0; i < 240; i++) particles.setColorAt(i, new THREE.Color(PALETTE.foreground));
+  particles.count = 0;
+  particles.frustumCulled = false;
+  scene.add(particles);
+
+  pos = new Position();
+
+  // Mouse: a ray through the pointer, against the pieces first and then the board's plane.
+  const pick = event => {
+    pointer.set(event.clientX / innerWidth * 2 - 1, -(event.clientY / innerHeight) * 2 + 1);
+    raycaster.setFromCamera(pointer, camera);
+    const point = raycaster.ray.intersectPlane(boardPlane, new THREE.Vector3());
+    const f = point ? Math.floor(point.x / S + 4) : -1, r = point ? Math.floor(4 - point.z / S) : -1;
+    const floor = f >= 0 && f < 8 && r >= 0 && r < 8 ? r * 8 + f : -1;
+    // A square the picked-up piece can go to wins over whatever piece stands in front of it.
+    if (floor >= 0 && selMoves.some(m => moveTo(m) === floor)) return floor;
+    const hit = raycaster.intersectObjects(meshAt.filter(Boolean), false)[0];
+    return hit ? hit.object.userData.sq : floor;
+  };
+  renderer.domElement.addEventListener('pointermove', event => { const sq = pick(event); if (sq !== lastHover) { lastHover = sq; if (sq >= 0) pendingHover = sq; } });
+  renderer.domElement.addEventListener('pointerdown', event => { if (event.button === 0) { unlockSound(); const sq = pick(event); if (sq >= 0) pendingClick = sq; } });
+  for (const el of document.querySelectorAll('.choice')) el.addEventListener('click', () => { if (promo) { promo.index = promo.order.indexOf(Number(el.dataset.type)); promo.confirm = true; } });
+
+  // Choosing the opponent on the title and game over screens.
+  const choose = n => { level = n; saved.set('level', level); showLevels(); sound(660, 0.05, 'triangle', 760, 0.06); };
+  for (const group of document.querySelectorAll('.levels'))
+    group.querySelectorAll('span').forEach((el, i) => el.addEventListener('click', () => { unlockSound(); choose(i); }));
+  addEventListener('keydown', event => {
+    if (event.repeat || !['title', 'over', 'won'].includes(state)) return;
+    const step = { ArrowLeft: -1, KeyA: -1, ArrowRight: 1, KeyD: 1 }[event.code];
+    if (step) choose((level + step + 4) % 4);
+    const digit = /^Digit([1-4])$/.exec(event.code);
+    if (digit) choose(Number(digit[1]) - 1);
+  });
+  addEventListener('resize', placeCamera);
+  showLevels();
+  placeCamera();
+}
+
+function showLevels() {
+  for (const group of document.querySelectorAll('.levels'))
+    group.querySelectorAll('span').forEach((el, i) => el.classList.toggle('on', i === level));
+}
+
+// The camera sits behind the side to move: always White against the computer, turning with the turn for two players.
+function placeCamera() {
+  const aspect = innerWidth / innerHeight, back = Math.max(1, 1.62 / aspect);
+  const a = viewAngle, dist = 10.4 * back, height = 9.6 * back;
+  camera.fov = 40;
+  camera.position.set(Math.sin(a) * dist, height, Math.cos(a) * dist);
+  camera.up.set(0, 1, 0);
+  camera.lookAt(Math.sin(a) * 0.75, -0.2, Math.cos(a) * 0.75);
+  camera.updateProjectionMatrix();
+  if (labelSets) { labelSets[0].visible = a < Math.PI / 2; labelSets[1].visible = !labelSets[0].visible; }
+}
+
+function takeMesh(code) {
+  const list = pools[code] ??= [];
+  let mesh = list.pop();
+  if (!mesh) {
+    mesh = new THREE.Mesh(pieceGeo[code & 7], code >> 3 ? blackMat : whiteMat);
+    mesh.castShadow = mesh.receiveShadow = true;
+    mesh.userData.code = code;
+    scene.add(mesh);
+  }
+  mesh.visible = true;
+  mesh.material = code >> 3 ? blackMat : whiteMat;
+  mesh.scale.setScalar(1);
+  mesh.rotation.set(0, (code & 7) === N ? (code >> 3 ? -0.35 : Math.PI - 0.35) : 0, 0);
+  return mesh;
+}
+
+function giveMesh(mesh) { mesh.visible = false; pools[mesh.userData.code].push(mesh); }
+
+function syncBoard() {
+  for (let sq = 0; sq < 64; sq++) if (meshAt[sq]) { giveMesh(meshAt[sq]); meshAt[sq] = null; }
+  for (let sq = 0; sq < 64; sq++) {
+    const code = pos.board[sq];
+    if (!code) continue;
+    const mesh = takeMesh(code);
+    mesh.position.set(squareX(sq), 0.02, squareZ(sq));
+    mesh.userData.sq = sq;
+    meshAt[sq] = mesh;
+  }
+  for (const mesh of trayMeshes) giveMesh(mesh);
+  trayMeshes.length = 0;
+  // Captured pieces stand in the trays beside the board: White's catch on the right, Black's on the left.
+  for (const side of [0, 1]) {
+    const caught = moveLog.filter(e => e.captured && e.side === side).map(e => e.captured).sort((a, b) => VALUE[b & 7] - VALUE[a & 7]);
+    caught.forEach((code, i) => {
+      const mesh = takeMesh(code), dir = side ? -1 : 1;
+      mesh.scale.setScalar(0.62);
+      mesh.position.set(dir * (4.92 + (i % 2) * 0.46), 0.005, dir * (3.75 - Math.floor(i / 2) * 0.62 - (i % 2) * 0.31));
+      mesh.userData.sq = -1;
+      trayMeshes.push(mesh);
+    });
+  }
+}
+
+function reset() {
+  search = null; anim = null; pendingEnd = null; promo = null; selected = -1; selMoves = [];
+  for (const spark of sparks) spark.life = 0;
+  pos.setStart();
+  moveLog = [];
+  cursor = 12;
+  thinkTime = 0;
+  viewAngle = 0;
+  freshRound = true;
+  clearMemory();
+  syncBoard();
+  placeCamera();
+  score = 0;
+  $('promo').classList.remove('show');
+  $('over-reason').textContent = '';
+  shownMoves = null;
+  refreshText();
+}
+
+// ---- Effects
+function burst(x, z, color, count, power = 1) {
+  const c = new THREE.Color(color);
+  for (let i = 0; i < count; i++) {
+    const a = random() * Math.PI * 2, speed = (1 + random() * 2.5) * power;
+    sparks.push({ x, y: 0.35, z, vx: Math.cos(a) * speed, vy: 2 + random() * 3 * power, vz: Math.sin(a) * speed, life: 0.7 + random() * 0.5, spin: random() * 6, color: c });
+  }
+  if (sparks.length > 240) sparks.splice(0, sparks.length - 240);
+}
+
+const dummy = new THREE.Object3D();
+function updateSparks(dt) {
+  let n = 0;
+  for (const s of sparks) {
+    if (s.life <= 0) continue;
+    s.life -= dt;
+    s.vy -= 9 * dt;
+    s.x += s.vx * dt; s.y += s.vy * dt; s.z += s.vz * dt;
+    if (s.y < 0.04) { s.y = 0.04; s.vy *= -0.35; s.vx *= 0.7; s.vz *= 0.7; }
+    dummy.position.set(s.x, s.y, s.z);
+    dummy.rotation.set(s.spin * s.life, s.spin * s.life * 0.7, 0);
+    dummy.scale.setScalar(Math.min(1, s.life * 2));
+    dummy.updateMatrix();
+    particles.setMatrixAt(n, dummy.matrix);
+    particles.setColorAt(n, s.color);
+    n++;
+  }
+  sparks = sparks.filter(s => s.life > 0);
+  particles.count = n;
+  particles.instanceMatrix.needsUpdate = true;
+  if (particles.instanceColor) particles.instanceColor.needsUpdate = true;
+}
+
+function knock() { sound(190, 0.09, 'triangle', 80, 0.22); sound(1400, 0.025, 'square', 700, 0.03); }
+
+// ---- Moves
+function applyMove(m) {
+  const from = moveFrom(m), to = moveTo(m), flag = moveFlag(m);
+  const side = pos.side, capSq = flag === EP ? (side ? to + 8 : to - 8) : to, captured = pos.board[capSq];
+  const san = sanOf(pos, m);
+  const distance = Math.hypot((to & 7) - (from & 7), (to >> 3) - (from >> 3));
+  anim = { m, t: 0, dur: 0.22 + distance * 0.045, mesh: meshAt[from], from, to, capMesh: captured ? meshAt[capSq] : null, capSq, jump: (pos.board[from] & 7) === N, rook: null };
+  if (flag === CASTLE) {
+    const rf = to > from ? to + 1 : to - 2, rt = to > from ? to - 1 : to + 1;
+    anim.rook = { mesh: meshAt[rf], from: rf, to: rt };
+  }
+  pos.make(m);
+  moveLog.push({ m, san, captured, side });
+  selected = -1; selMoves = [];
+  if (captured) note('capture');
+  if (pos.inCheck()) note('check');
+  if (vsComputer()) score = moveLog.filter(e => e.side === 0 && e.captured).reduce((sum, e) => sum + VALUE[e.captured & 7] / 100 | 0, 0);
+  const end = outcome();
+  if (end) pendingEnd = { ...end, wait: 1.4 };
+  refreshText();
+}
+
+function finishAnim() {
+  if (!anim) return;
+  const { to, capMesh } = anim;
+  anim = null;
+  if (capMesh) {
+    const code = capMesh.userData.code;
+    burst(squareX(to), squareZ(to), code >> 3 ? COLORS.blackPiece : COLORS.whitePiece, 26);
+    burst(squareX(to), squareZ(to), PALETTE.orange, 10, 1.2);
+    shake = 0.18;
+    sound(130, 0.18, 'sawtooth', 50, 0.16);
+  }
+  knock();
+  if (pos.inCheck()) { sound(880, 0.12, 'square', 660, 0.07); setTimeout(() => sound(880, 0.14, 'square', 590, 0.07), 140); }
+  syncBoard();
+  const landed = meshAt[to];
+  if (landed) landed.scale.set(1.12, 0.86, 1.12);   // a little squash as it lands
+}
+
+function updateAnim(dt) {
+  if (!anim) return;
+  anim.t += dt / anim.dur;
+  const t = Math.min(1, anim.t), e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+  const slide = (mesh, from, to, lift) => {
+    mesh.position.x = THREE.MathUtils.lerp(squareX(from), squareX(to), e);
+    mesh.position.z = THREE.MathUtils.lerp(squareZ(from), squareZ(to), e);
+    mesh.position.y = 0.02 + Math.sin(Math.PI * t) * lift;
+  };
+  if (anim.mesh) slide(anim.mesh, anim.from, anim.to, anim.jump ? 0.75 : 0.2);
+  if (anim.rook?.mesh) slide(anim.rook.mesh, anim.rook.from, anim.rook.to, 0.12);
+  if (anim.capMesh && t > 0.55) {
+    const k = 1 - (t - 0.55) / 0.45;
+    anim.capMesh.scale.setScalar(Math.max(0.01, k));
+    anim.capMesh.position.y = 0.02 - (1 - k) * 0.3;
+  }
+  if (anim.t >= 1) finishAnim();
+}
+
+function outcome() {
+  const legal = pos.legalMoves();
+  if (!legal.length) return pos.inCheck() ? { type: 'mate', winner: pos.side ^ 1 } : { type: 'stalemate' };
+  if (pos.half >= 100) return { type: 'fifty' };
+  if (pos.repetitions() >= 2) return { type: 'repetition' };
+  if (pos.insufficient()) return { type: 'material' };
+  return null;
+}
+
+const DRAW_REASON = {
+  stalemate: 'Stalemate: no legal move, and no check.',
+  fifty: 'Fifty moves without a capture or a pawn move.',
+  repetition: 'The same position came up three times.',
+  material: 'Neither side has enough left to checkmate.',
+};
+const WIN_BONUS = [100, 300, 600];
+
+function finishGame(end) {
+  const sideName = s => s ? 'Black' : 'White';
+  let title, reason;
+  if (end.type === 'mate') {
+    note('mate');
+    reason = `${sideName(end.winner)} mates in ${Math.ceil(moveLog.length / 2)} moves.`;
+    if (vsComputer()) {
+      const won = end.winner === 0;
+      if (won) score += WIN_BONUS[level];
+      title = won ? 'CHECKMATE' : 'CHECKMATED';
+      const notes = won ? [523, 659, 784, 1047] : [392, 330, 262, 196];
+      notes.forEach((f, i) => setTimeout(() => sound(f, 0.25, 'triangle', f, 0.12), i * 150));
+      endRound(won);
+    } else {
+      title = `${sideName(end.winner).toUpperCase()} WINS`;
+      [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => sound(f, 0.25, 'triangle', f, 0.12), i * 150));
+      endRound(true);
+    }
+  } else {
+    note('draw');
+    title = 'DRAW';
+    reason = DRAW_REASON[end.type];
+    sound(392, 0.4, 'triangle', 330, 0.12);
+    endRound(false);
+  }
+  $('over-title').textContent = title;
+  $('over-reason').textContent = reason;
+  if (!vsComputer()) $('over-score').textContent = '';
+  else $('over-score').textContent = `Points ${Math.floor(score)}`;
+}
+
+function undo() {
+  finishAnim();
+  if (promo) { promo = null; $('promo').classList.remove('show'); sound(330, 0.06, 'triangle', 260, 0.06); return; }
+  const plies = vsComputer() ? (pos.side === 1 ? 1 : 2) : 1;
+  if (moveLog.length < plies) { sound(120, 0.08, 'square', 100, 0.06); return; }
+  search = null; thinkTime = 0; pendingEnd = null; selected = -1; selMoves = [];
+  for (let i = 0; i < plies; i++) { pos.unmake(); moveLog.pop(); }
+  if (vsComputer()) score = moveLog.filter(e => e.side === 0 && e.captured).reduce((sum, e) => sum + VALUE[e.captured & 7] / 100 | 0, 0);
+  syncBoard();
+  note('undo');
+  sound(520, 0.08, 'triangle', 300, 0.08);
+  refreshText();
+}
+
+function act(sq) {
+  if (!humanTurn() || anim || pendingEnd || promo) { sound(120, 0.07, 'square', 100, 0.05); return; }
+  const pc = pos.board[sq];
+  if (selected >= 0) {
+    const options = selMoves.filter(m => moveTo(m) === sq);
+    if (options.length > 1) { openPromo(options); return; }
+    if (options.length === 1) { applyMove(options[0]); note('move'); return; }
+    if (sq === selected) { selected = -1; selMoves = []; sound(400, 0.05, 'triangle', 300, 0.05); return; }
+  }
+  if (pc && pc >> 3 === pos.side) {
+    selected = sq;
+    selMoves = pos.legalMoves().filter(m => moveFrom(m) === sq);
+    note('select');
+    if (selMoves.length) sound(520, 0.06, 'triangle', 780, 0.07);
+    else sound(200, 0.08, 'square', 160, 0.05);
+    return;
+  }
+  selected = -1; selMoves = [];
+  sound(120, 0.07, 'square', 100, 0.05);
+}
+
+function openPromo(options) {
+  promo = { options, order: [Q, R, B, N], index: 0, confirm: false };
+  $('promo').classList.add('show');
+  sound(660, 0.08, 'triangle', 990, 0.08);
+}
+
+function updatePromo() {
+  if (wasPressed('left')) promo.index = (promo.index + 3) % 4;
+  if (wasPressed('right')) promo.index = (promo.index + 1) % 4;
+  for (const [action, type] of [['queen', Q], ['rook', R], ['bishop', B], ['knight', N]])
+    if (wasPressed(action)) { promo.index = promo.order.indexOf(type); promo.confirm = true; }
+  if (wasPressed('action')) promo.confirm = true;
+  document.querySelectorAll('.choice').forEach((el, i) => el.classList.toggle('on', i === promo.index));
+  if (promo.confirm) {
+    const type = promo.order[promo.index], m = promo.options.find(o => movePromo(o) === type);
+    promo = null;
+    $('promo').classList.remove('show');
+    applyMove(m);
+    note('move');
+    note('promote');
+  }
+}
+
+// ---- Text around the board
+function refreshText() {
+  let status, cls = '';
+  const mover = pos.side ? 'Black' : 'White';
+  if (pendingEnd) {
+    status = pendingEnd.type === 'mate' ? 'Checkmate!' : 'Draw';
+    cls = pendingEnd.type === 'mate' ? (vsComputer() && pendingEnd.winner === 1 ? 'alert' : 'good') : '';
+  } else if (promo) status = 'Choose a piece';
+  else if (!humanTurn()) status = 'Black is thinking' + '.'.repeat(1 + Math.floor(gameClock * 3) % 3);
+  else {
+    status = vsComputer() ? 'Your move' : `${mover} to move`;
+    if (pos.inCheck()) { status += ' · check!'; cls = 'alert'; }
+  }
+  const sub = vsComputer() ? `Playing White against ${LEVELS[level].name}` : 'Two players at one desk';
+  const key = status + cls + sub;
+  if (key !== shownStatus) {
+    shownStatus = key;
+    $('status').textContent = status;
+    $('status').className = cls;
+    $('sub').textContent = sub;
+  }
+  const list = moveLog.map(e => e.san).join(' ');
+  if (list !== shownMoves) {
+    shownMoves = list;
+    const rows = [];
+    for (let i = 0; i < moveLog.length; i += 2) {
+      const last = j => j === moveLog.length - 1 ? ' class="last"' : '';
+      rows.push(`<div><span class="n">${i / 2 + 1}.</span><span${last(i)}>${moveLog[i].san}</span><span${last(i + 1)}>${moveLog[i + 1]?.san ?? ''}</span></div>`);
+    }
+    $('moves').innerHTML = rows.slice(-24).join('');
+  }
+}
+
+// ---- The step
+function moveCursor(dir) {
+  const flip = viewAngle > Math.PI / 2 ? -1 : 1;
+  let f = cursor & 7, r = cursor >> 3;
+  if (dir === 'left') f -= flip; if (dir === 'right') f += flip;
+  if (dir === 'up') r += flip; if (dir === 'down') r -= flip;
+  if (f < 0 || f > 7 || r < 0 || r > 7) { sound(140, 0.04, 'square', 120, 0.03); return; }
+  cursor = r * 8 + f;
+  sound(720, 0.025, 'triangle', 760, 0.035);
+}
+
+let lastSliceFrame = -1, freshRound = false;
+function update(dt) {
+  gameClock += dt;
+  // The Space that started the round is still pressed in the first step; it must not pick up a pawn.
+  if (freshRound) { freshRound = false; for (const action of ['action', 'up', 'down', 'left', 'right', 'undo']) wasPressed(action); return; }
+
+  // Thinking: one slice of search per drawn frame, well inside a 60 Hz frame.
+  if (search && frames !== lastSliceFrame) {
+    lastSliceFrame = frames;
+    search.step(6);
+  }
+
+  if (promo) updatePromo();
+  else {
+    if (wasPressed('undo')) undo();
+    for (const dir of ['left', 'right', 'up', 'down']) {
+      if (wasPressed(dir)) { moveCursor(dir); repeat[dir] = 0.32; }
+      else if (isHeld(dir)) { repeat[dir] -= dt; if (repeat[dir] <= 0) { moveCursor(dir); repeat[dir] = 0.085; } }
+    }
+    if (pendingHover >= 0) { cursor = pendingHover; pendingHover = -1; }
+    if (pendingClick >= 0) { cursor = pendingClick; act(pendingClick); pendingClick = -1; }
+    else if (wasPressed('action')) act(cursor);
+  }
+  pendingClick = -1;
+
+  updateAnim(dt);
+
+  if (pendingEnd && !anim) {
+    pendingEnd.wait -= dt;
+    if (pendingEnd.wait <= 0) { const end = pendingEnd; pendingEnd = null; return finishGame(end); }
+  }
+
+  // The computer's turn.
+  if (!humanTurn() && !anim && !pendingEnd) {
+    if (!search) { search = new Search(pos, LEVELS[level]); thinkTime = 0; }
+    thinkTime += dt;
+    if (thinkTime >= LEVELS[level].time) search.timeUp = true;
+    if (search.done && thinkTime >= 0.45) {
+      const m = search.best;
+      search = null;
+      if (m) { applyMove(m); note('reply'); }
+    }
+  }
+
+  // Camera: two players face the side to move once the last move has landed.
+  const facing = !vsComputer() && pos.side === 1 && !anim ? Math.PI : 0;
+  if (Math.abs(viewAngle - facing) > 0.0005) { viewAngle = THREE.MathUtils.damp(viewAngle, facing, 3.2, dt); placeCamera(); }
+
+  // Pieces settle, lift when picked up, and rise a touch under the cursor.
+  for (let sq = 0; sq < 64; sq++) {
+    const mesh = meshAt[sq];
+    if (!mesh || (anim && (mesh === anim.mesh || mesh === anim.capMesh || mesh === anim.rook?.mesh))) continue;
+    const target = sq === selected ? 0.34 + Math.sin(gameClock * 5) * 0.04 : sq === cursor && humanTurn() && pos.board[sq] && pos.board[sq] >> 3 === pos.side ? 0.1 : 0.02;
+    mesh.position.y = THREE.MathUtils.damp(mesh.position.y, target, 14, dt);
+    mesh.scale.x = mesh.scale.z = THREE.MathUtils.damp(mesh.scale.x, 1, 10, dt);
+    mesh.scale.y = THREE.MathUtils.damp(mesh.scale.y, 1, 10, dt);
+  }
+
+  // Board marks.
+  const last = moveLog[moveLog.length - 1];
+  for (const [mesh, sq] of [[lastFrom, last && moveFrom(last.m)], [lastTo, last && moveTo(last.m)], [selectMesh, selected]]) {
+    mesh.visible = sq !== undefined && sq >= 0;
+    if (mesh.visible) mesh.position.set(squareX(sq), mesh.position.y, squareZ(sq));
+  }
+  let d = 0, r = 0;
+  const targets = new Set(selMoves.map(moveTo));
+  for (const to of targets) {
+    const capture = pos.board[to] || selMoves.some(m => moveTo(m) === to && moveFlag(m) === EP);
+    const mark = capture ? rings[r++] : dots[d++];
+    mark.visible = true;
+    mark.position.set(squareX(to), mark.position.y, squareZ(to));
+    mark.scale.setScalar(1 + Math.sin(gameClock * 6) * 0.06);
+  }
+  for (; d < dots.length; d++) dots[d].visible = false;
+  for (; r < rings.length; r++) rings[r].visible = false;
+  const inCheck = pos.inCheck() && !anim;
+  checkGlow.visible = inCheck;
+  if (inCheck) {
+    checkGlow.position.set(squareX(pos.king[pos.side]), checkGlow.position.y, squareZ(pos.king[pos.side]));
+    checkGlow.material.opacity = 0.8 + Math.sin(gameClock * 7) * 0.2;
+  }
+  cursorMesh.visible = humanTurn() && !pendingEnd;
+  cursorMesh.position.set(squareX(cursor), cursorMesh.position.y, squareZ(cursor));
+  cursorFill.visible = cursorMesh.visible && cursor !== selected;
+  cursorFill.position.set(squareX(cursor), cursorFill.position.y, squareZ(cursor));
+  cursorMesh.scale.setScalar(1 + Math.sin(gameClock * 6) * 0.035);
+  cursorMesh.material.opacity = 0.8 + Math.sin(gameClock * 6) * 0.2;
+
+  updateSparks(dt);
+  refreshText();
+}
+
+// =============================================================================
+// EVERYTHING BELOW IS THE FRAME AROUND THE GAME. Keep it. Change it only to add
+// controls to ACTIONS, or to adjust the camera, lights and fog to suit the game.
+// =============================================================================
+
+// omarchy-games-launch opens the game as index.html#palette=<the current theme as JSON>; check adds seed=1.
+function launchParam(name) {
+  return new URLSearchParams(location.hash.slice(1)).get(name);
+}
+
+function themed(fallback) {
+  let current = {};
+  try { current = JSON.parse(launchParam('palette') ?? '{}'); } catch {}
+  const palette = { ...fallback };
+  for (const key of Object.keys(fallback)) {
+    const value = current[key];
+    if (key === 'mode' ? value === 'light' || value === 'dark' : /^#[0-9a-f]{6}$/i.test(value ?? '')) palette[key] = value;
+  }
+  return palette;
+}
+
+for (const [key, value] of Object.entries(PALETTE)) document.documentElement.style.setProperty(`--${key}`, value);
+
+// Saved data. Storage can fail or hold junk; the game must still run.
+const saved = {
+  get(key, fallback) { try { const v = JSON.parse(localStorage.getItem(`omarchy-game:${NAME}:${key}`)); return v ?? fallback; } catch { return fallback; } },
+  set(key, value) { try { localStorage.setItem(`omarchy-game:${NAME}:${key}`, JSON.stringify(value)); } catch {} },
+};
+
+// Renderer, scene, camera and lights, tuned for three r180: these intensities light a scene well.
+// Without WebGL nothing can draw, so say so in the window rather than show a title screen that never starts.
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+} catch (error) {
+  for (const screen of document.querySelectorAll('.screen, #hud')) screen.remove();
+  document.body.insertAdjacentHTML('beforeend', '<div class="screen show"><div><h1>NO 3D</h1><p>This game needs WebGL, and the browser could not start it on this computer.</p><p class="dim"></p></div></div>');
+  document.querySelector('.screen .dim').textContent = error.message;
+  throw error;
+}
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(PALETTE.background);
+scene.fog = new THREE.Fog(PALETTE.background, 30, 70);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 200);
+camera.position.set(0, 9, 15);
+camera.lookAt(0, 0, -3);
+
+scene.add(new THREE.HemisphereLight('#ffffff', PALETTE.background, 1.5));
+const sun = new THREE.DirectionalLight('#ffffff', 2.5);
+sun.position.set(6, 15, 8);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.bias = -0.0004;
+Object.assign(sun.shadow.camera, { left: -9, right: 9, top: 9, bottom: -9, near: 1, far: 50 });
+scene.add(sun);
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// Input. isHeld() is what is down now. wasPressed() is what went down since it was last asked: once per frame
+// for the screens, and once per simulation step inside update(), so a press is never lost or counted twice.
+const ACTIONS = {
+  left: ['ArrowLeft', 'KeyA'], right: ['ArrowRight', 'KeyD'], up: ['ArrowUp', 'KeyW'], down: ['ArrowDown', 'KeyS'],
+  action: ['Space', 'Enter'], pause: ['Escape', 'KeyP'], mute: ['KeyM'], help: ['Slash'],
+  undo: ['KeyU', 'Backspace'], queen: ['KeyQ'], rook: ['KeyR'], bishop: ['KeyB'], knight: ['KeyN'],
+};
+const held = new Set(), pressed = new Set();
+const isHeld = action => ACTIONS[action].some(code => held.has(code));
+const stepPressed = new Set();
+let inStep = false;
+const wasPressed = action => ACTIONS[action].some(code => (inStep ? stepPressed : pressed).has(code));
+addEventListener('keydown', event => {
+  if (Object.values(ACTIONS).flat().includes(event.code)) event.preventDefault();
+  if (!event.repeat) { pressed.add(event.code); stepPressed.add(event.code); }
+  held.add(event.code);
+  unlockSound();
+});
+addEventListener('keyup', event => held.delete(event.code));
+addEventListener('blur', () => { held.clear(); if (state === 'playing') show('paused'); });
+
+// Sound, synthesized so the game stays one file. Browsers allow it only after a key press.
+let audio = null, muted = saved.get('muted', false);
+function unlockSound() {
+  try { audio ??= new AudioContext(); audio.resume(); } catch {}
+}
+function sound(freq = 440, seconds = 0.1, type = 'square', slideTo = freq, volume = 0.15) {
+  if (muted || audio?.state !== 'running') return;
+  const t = audio.currentTime, osc = audio.createOscillator(), gain = audio.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, t);
+  osc.frequency.exponentialRampToValueAtTime(Math.max(1, slideTo), t + seconds);
+  gain.gain.setValueAtTime(volume, t);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + seconds);
+  osc.connect(gain).connect(audio.destination);
+  osc.start(t);
+  osc.stop(t + seconds);
+}
+
+// Screens and rounds: title → playing ⇄ paused → over (or won) → playing ...
+const $ = id => document.getElementById(id);
+let state = 'title', helpFrom = 'title', score = 0, best = saved.get('best', 0), shake = 0;
+let ticks = 0, frames = 0, ready = false;
+const events = {};
+const note = name => { events[name] = (events[name] ?? 0) + 1; };
+$('best').textContent = best;
+
+function show(next) {
+  state = next;
+  for (const id of ['title', 'paused', 'over', 'help']) $(id).classList.toggle('show', id === next || (id === 'over' && next === 'won'));
+}
+
+function startRound() {
+  reset();
+  show('playing');
+  sound(440, 0.12, 'square', 880);
+}
+
+function endRound(won) {
+  if (state !== 'playing') return;
+  const final = Math.floor(score), isBest = final > best;
+  if (isBest) { best = final; saved.set('best', best); $('best').textContent = best; }
+  $('over-title').textContent = won ? 'YOU WIN' : 'GAME OVER';
+  $('over-score').textContent = `Score ${final}`;
+  $('over-best').textContent = isBest ? 'New best!' : '';
+  show(won ? 'won' : 'over');
+}
+
+// The loop: keys → fixed-step simulation → render. Game rules never run in render.
+// Seeded randomness: `check` passes seed=1 and gets the same round on every run.
+let seed = Number(launchParam('seed') ?? Date.now()) >>> 0;
+function random() {
+  seed = (seed + 0x6d2b79f5) >>> 0;
+  let t = Math.imul(seed ^ (seed >>> 15), seed | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+
+const STEP = 1 / 120, clock = new THREE.Clock();
+let accumulator = 0;
+
+function frame() {
+  frames++;
+  const dt = Math.min(clock.getDelta(), 0.1);       // a hidden window must not leap ahead
+
+  if (wasPressed('mute')) { muted = !muted; saved.set('muted', muted); }
+  if (state === 'help') {
+    if (pressed.size) show(helpFrom);
+  } else if (wasPressed('help') && state !== 'playing') {
+    helpFrom = state;
+    show('help');
+  } else if (state === 'title' || state === 'over' || state === 'won') {
+    if (wasPressed('action')) startRound();
+  } else if (state === 'paused') {
+    if (wasPressed('pause')) show('playing');
+  } else if (wasPressed('pause')) {
+    show('paused');
+  } else {
+    accumulator += dt;
+    for (let steps = 0; accumulator >= STEP && steps < 12 && state === 'playing'; steps++) {
+      inStep = true;
+      update(STEP);
+      inStep = false;
+      stepPressed.clear();
+      ticks++;
+      accumulator -= STEP;
+    }
+  }
+  if (state !== 'playing') { accumulator = 0; stepPressed.clear(); }
+  pressed.clear();
+
+  $('score').textContent = Math.floor(score);
+  shake = Math.max(0, shake - dt);
+  const shakeX = (Math.random() - 0.5) * shake, shakeY = (Math.random() - 0.5) * shake;
+  camera.position.x += shakeX;
+  camera.position.y += shakeY;
+  renderer.render(scene, camera);
+  camera.position.x -= shakeX;
+  camera.position.y -= shakeY;
+  ready = true;
+}
+
+// What `check` reads and drives. Keep it.
+window.omarchyGame = {
+  get ready() { return ready; }, get state() { return state; }, get score() { return score; },
+  get ticks() { return ticks; }, get frames() { return frames; }, events, check: CHECK,
+  end: () => endRound(false),
+};
+
+build();
+reset();
+renderer.setAnimationLoop(frame);
+</script>
+</body>
+</html>

@@ -1,0 +1,1306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pinball</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--background); color: var(--foreground); font-family: ui-monospace, "JetBrainsMono Nerd Font", monospace; }
+  canvas { display: block; }
+  #hud { position: fixed; inset: 0; pointer-events: none; }
+  #hud .panel { position: absolute; top: 28px; width: min(24vw, 320px); display: flex; flex-direction: column; gap: 6px; }
+  #hud .left { left: 28px; }
+  #hud .right { right: 28px; text-align: right; align-items: flex-end; }
+  #hud .label { font-size: 13px; letter-spacing: 3px; color: var(--muted); }
+  #score { font-size: clamp(30px, 3.6vw, 52px); font-weight: bold; color: var(--foreground); line-height: 1; font-variant-numeric: tabular-nums; }
+  #hud .big { font-size: clamp(22px, 2.4vw, 34px); font-weight: bold; line-height: 1.1; }
+  #message { margin-top: 18px; min-height: 2.6em; font-size: clamp(20px, 2.2vw, 30px); font-weight: bold; color: var(--accent); letter-spacing: 2px; line-height: 1.25; }
+  #message.flash { animation: flash 0.18s steps(2) 6; }
+  #message small { display: block; font-size: 0.6em; color: var(--foreground); letter-spacing: 1px; font-weight: normal; }
+  @keyframes flash { 50% { opacity: 0.25; } }
+  #balls { display: flex; gap: 8px; justify-content: flex-end; }
+  #balls i { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--foreground); }
+  #balls i.on { background: var(--foreground); }
+  #features { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; align-items: flex-end; }
+  #features span { font-size: 14px; letter-spacing: 2px; padding: 3px 8px; border-radius: 4px; border: 1px solid var(--muted); color: var(--muted); }
+  #features span.on { color: var(--background); background: var(--accent); border-color: var(--accent); font-weight: bold; }
+  #features span.blink { animation: flash 0.5s steps(2) infinite; }
+  @media (max-aspect-ratio: 5/4) { #hud .panel { width: 40vw; } #message { display: none; } }
+  .screen { position: fixed; inset: 0; display: none; place-items: center; text-align: center; background: color-mix(in srgb, var(--background) 75%, transparent); }
+  .screen.show { display: grid; }
+  .screen h1 { margin: 0 0 16px; font-size: 64px; letter-spacing: 4px; color: var(--accent); }
+  .screen p { margin: 8px 0; font-size: 18px; }
+  .key { color: var(--accent); }
+  .dim { color: var(--muted); }
+  #help table { margin: 12px auto; border-spacing: 20px 6px; font-size: 18px; text-align: left; }
+</style>
+<!-- One pinned three.js version. Addons, if any, come from the same version. -->
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.min.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="hud">
+  <div class="panel left">
+    <span class="label">SCORE</span>
+    <span id="score">0</span>
+    <span class="label">BEST <span id="best">0</span></span>
+    <div id="message"></div>
+  </div>
+  <div class="panel right">
+    <span class="label">BALL</span>
+    <div id="balls"><i></i><i></i><i></i></div>
+    <span class="label" style="margin-top:10px">BONUS</span>
+    <span class="big" id="bonus">0 × 1</span>
+    <div id="features">
+      <span id="f-save">BALL SAVE</span>
+      <span id="f-kick">KICKBACK</span>
+      <span id="f-lock">LOCK LIT</span>
+      <span id="f-multi">MULTIBALL</span>
+    </div>
+  </div>
+</div>
+
+<div id="title" class="screen show"><div>
+  <h1>PINBALL</h1>
+  <p>Keep the ball alive, light the lanes and targets, and lock a ball for multiball.</p>
+  <p>Flippers <span class="key">← →</span> or <span class="key">Z /</span> or <span class="key">Shift</span> · hold <span class="key">Space</span> and release to launch</p>
+  <p>Press <span class="key">Space</span> to start</p>
+  <p class="dim">? for all controls</p>
+</div></div>
+
+<div id="paused" class="screen"><div>
+  <h1>PAUSED</h1>
+  <p>Press <span class="key">Esc</span> to resume</p>
+</div></div>
+
+<div id="over" class="screen"><div>
+  <h1 id="over-title">GAME OVER</h1>
+  <p id="over-score"></p>
+  <p id="over-best" class="key"></p>
+  <p>Press <span class="key">Space</span> to play again</p>
+</div></div>
+
+<div id="help" class="screen"><div>
+  <h1>CONTROLS</h1>
+  <table>
+    <tr><td class="key">← / Z / Left Shift</td><td>Left flipper</td></tr>
+    <tr><td class="key">→ / / / Right Shift</td><td>Right flipper</td></tr>
+    <tr><td class="key">Space / ↓ (hold)</td><td>Pull the plunger, release to launch</td></tr>
+    <tr><td class="key">Space</td><td>Start, play again</td></tr>
+    <tr><td class="key">Esc / P</td><td>Pause, resume</td></tr>
+    <tr><td class="key">M</td><td>Sound on or off</td></tr>
+    <tr><td class="key">?</td><td>This help</td></tr>
+  </table>
+  <p class="dim">Press any key to close</p>
+</div></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+// =============================================================================
+// SETTINGS — change these.
+// NAME namespaces saved data. PALETTE is the Omarchy theme the game was made in, from
+// `omarchy-theme-color --all`. Launched from the app launcher, themed() swaps in the
+// desktop's current theme, so take every colour from PALETTE and keep themed() around it.
+// =============================================================================
+const NAME = 'pinball';
+const PALETTE = themed({
+  mode: 'dark',
+  background: '#1a1b26', foreground: '#a9b1d6', accent: '#7aa2f7', muted: '#414868',
+  red: '#f7768e', green: '#9ece6a', yellow: '#e0af68', blue: '#7aa2f7', magenta: '#ad8ee6', cyan: '#449dab', orange: '#eb927b',
+});
+
+// The key presses `check` plays after starting a round, as [seconds after start, key code, milliseconds held],
+// and the note() events that must happen while it plays. Make both exercise THIS game's main mechanic.
+const CHECK = {
+  start: 'Space',
+  pause: 'Escape',
+  // Pull the plunger all the way and launch, then work both flippers with every key that drives them.
+  play: [[0.4, 'Space', 1300], ...Array.from({ length: 22 }, (_, i) => [2.2 + i * 0.36, ['ArrowLeft', 'ArrowRight', 'KeyZ', 'Slash', 'ShiftLeft', 'ShiftRight'][i % 6], 220])],
+  expect: ['launch', 'flip', 'flipperHit'],
+};
+
+// =============================================================================
+// THE GAME — replace this whole section with your game, keeping its shape:
+//   build()        once, at load: meshes, materials, lights, anything reused
+//   reset()        before every round: put everything back to the start
+//   update(dt)     every fixed step while playing: input, movement, rules
+//   score          what the HUD shows; best is saved automatically
+//   note(name)     call when something worth testing happens (named in CHECK.expect)
+//   random()       use instead of Math.random(), so `check` plays the same round every time
+//   endRound(won)  call when the round is lost (false) or won (true)
+// =============================================================================
+// The table is laid out on the playfield plane in table units: x across, y up the table, away from the player.
+// at() turns a table point into the 3D scene, where the playfield is the y = 0 plane and up the table is -z.
+const R = 0.5, GRAVITY = 30, SUBSTEPS = 8, MAX_SPEED = 80;
+const LEFT = -9, LANE = 9, RIGHT = 10.6, BOTTOM = -23, ARC = { x: 0.8, y: 12, r: 9.8 };
+const PLUNGER_Y = -20.4, PLUNGER_TRAVEL = 2.2;
+const BOUNDS = { x0: -10.4, x1: 12, y0: -25.2, y1: 23.4 };
+const at = (x, y, h = 0) => new THREE.Vector3(x, h, -y);
+const tint = (a, b, t) => new THREE.Color(a).lerp(new THREE.Color(b), t);
+const arcPoint = deg => [ARC.x + ARC.r * Math.cos(deg * Math.PI / 180), ARC.y + ARC.r * Math.sin(deg * Math.PI / 180)];
+const rad = deg => deg * Math.PI / 180;
+
+let C, M, G;
+const segs = [], circles = [], sensors = [], inserts = [];
+let flippers, bumpers, slings, targets, lanes, spinner, saucer, plunger, ballMeshes, sparks, kickback, bonusLights, shootAgain, lockLight, jackpotLight, orbitLights, apron;
+let balls = [], time = 0;
+let ballNum, bonus, bonusX, kickbackLit, lockLit, multiball, jackpot, saveTimer, skillLane, skillLive, combo, comboTimer;
+let phase, phaseTimer, showTimer, serveQueue, targetsTimer, lanesTimer, hudDirty;
+
+// ---- Sound: every element has its own voice.
+let noiseBuffer = null;
+function tone(freq, seconds, type = 'square', slideTo = freq, volume = 0.1, delay = 0) {
+  if (muted || audio?.state !== 'running') return;
+  const t = audio.currentTime + delay, osc = audio.createOscillator(), gain = audio.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, t);
+  osc.frequency.exponentialRampToValueAtTime(Math.max(1, slideTo), t + seconds);
+  gain.gain.setValueAtTime(volume, t);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + seconds);
+  osc.connect(gain).connect(audio.destination);
+  osc.start(t);
+  osc.stop(t + seconds);
+}
+function noise(seconds, volume = 0.2, freq = 1200, q = 1, delay = 0) {
+  if (muted || audio?.state !== 'running') return;
+  if (!noiseBuffer) {
+    noiseBuffer = audio.createBuffer(1, audio.sampleRate / 2, audio.sampleRate);
+    const data = noiseBuffer.getChannelData(0);
+    let n = 12345;
+    for (let i = 0; i < data.length; i++) { n = (n * 1103515245 + 12345) >>> 0; data[i] = n / 2147483648 - 1; }
+  }
+  const t = audio.currentTime + delay, src = audio.createBufferSource(), filter = audio.createBiquadFilter(), gain = audio.createGain();
+  src.buffer = noiseBuffer;
+  filter.type = 'bandpass';
+  filter.frequency.value = freq;
+  filter.Q.value = q;
+  gain.gain.setValueAtTime(volume, t);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + seconds);
+  src.connect(filter).connect(gain).connect(audio.destination);
+  src.start(t, (time * 7.3) % 0.4);
+  src.stop(t + seconds);
+}
+const arpeggio = (notes, gap, type = 'square', volume = 0.07, length = 0.14) =>
+  notes.forEach((f, i) => tone(f, length, type, f, volume, i * gap));
+const sfx = {
+  flip: () => { noise(0.05, 0.22, 500, 0.8); tone(80, 0.06, 'square', 45, 0.07); },
+  unflip: () => noise(0.035, 0.07, 380, 0.8),
+  flipperHit: speed => noise(0.04, Math.min(0.25, speed / 200), 900, 1),
+  wall: speed => noise(0.03, Math.min(0.18, speed / 260), 1400, 1.2),
+  bumper: () => { tone(300, 0.09, 'square', 110, 0.09); noise(0.08, 0.3, 1800, 1.5); },
+  sling: () => { tone(450, 0.05, 'square', 170, 0.08); noise(0.05, 0.25, 2600, 1.2); },
+  target: () => { tone(1320, 0.14, 'triangle', 990, 0.12); noise(0.03, 0.12, 3200); },
+  bank: () => arpeggio([660, 880, 1100, 1320, 1760], 0.06),
+  lane: () => { tone(1760, 0.3, 'sine', 1760, 0.1); tone(2637, 0.2, 'sine', 2637, 0.05, 0.03); },
+  lanes: () => arpeggio([784, 988, 1175, 1568], 0.07, 'triangle', 0.1, 0.2),
+  spin: () => tone(2400, 0.02, 'square', 1800, 0.035),
+  orbit: () => { tone(330, 0.35, 'sawtooth', 990, 0.06); tone(660, 0.3, 'triangle', 1320, 0.06, 0.08); },
+  saucer: () => { tone(120, 0.25, 'sine', 60, 0.2); noise(0.12, 0.2, 300); },
+  eject: () => { noise(0.1, 0.3, 700, 0.9); tone(160, 0.08, 'square', 80, 0.08); },
+  kickback: () => { noise(0.18, 0.35, 500, 0.7); tone(90, 0.2, 'sawtooth', 300, 0.1); },
+  pull: () => tone(140, 0.08, 'triangle', 120, 0.03),
+  launch: power => { noise(0.25, 0.1 + power * 0.2, 900, 0.6); tone(200, 0.2, 'sawtooth', 200 + power * 500, 0.05); },
+  drain: () => { tone(400, 0.7, 'sawtooth', 70, 0.09); tone(300, 0.7, 'square', 50, 0.04, 0.1); },
+  save: () => arpeggio([523, 659, 784, 1047], 0.08, 'triangle', 0.1),
+  multiball: () => { arpeggio([392, 523, 659, 784, 1047, 1319, 1568], 0.07, 'square', 0.07, 0.2); noise(0.4, 0.15, 600, 0.5); },
+  jackpot: () => { arpeggio([1047, 1319, 1568, 2093], 0.05, 'square', 0.08, 0.3); arpeggio([523, 659, 784, 1047], 0.05, 'triangle', 0.08, 0.5); },
+  skill: () => arpeggio([1568, 1976, 2349, 3136], 0.05, 'sine', 0.1, 0.25),
+  bonus: () => arpeggio([262, 330, 392, 523, 659, 784], 0.1, 'triangle', 0.09, 0.18),
+  serve: () => tone(220, 0.1, 'triangle', 330, 0.06),
+};
+
+// ---- Collision: the ball is a circle, everything it meets is a capsule (a segment with a radius, tapered for flippers).
+function capsuleHit(b, ax, ay, bx, by, ra, rb) {
+  const dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+  const t = len2 ? THREE.MathUtils.clamp(((b.x - ax) * dx + (b.y - ay) * dy) / len2, 0, 1) : 0;
+  const cx = ax + dx * t, cy = ay + dy * t, min = R + ra + (rb - ra) * t;
+  let nx = b.x - cx, ny = b.y - cy;
+  const d = Math.hypot(nx, ny);
+  if (d >= min) return null;
+  if (d < 1e-6) { const l = Math.hypot(dx, dy) || 1; nx = -dy / l; ny = dx / l; } else { nx /= d; ny /= d; }
+  return { nx, ny, depth: min - d, cx, cy };
+}
+
+// Push the ball out and bounce it off a surface moving at (svx, svy); returns how hard it hit.
+function respond(b, h, e, svx = 0, svy = 0) {
+  b.x += h.nx * h.depth;
+  b.y += h.ny * h.depth;
+  let rvx = b.vx - svx, rvy = b.vy - svy;
+  const vn = rvx * h.nx + rvy * h.ny;
+  if (vn >= 0) return 0;
+  const friction = -vn > 2 ? 0.04 : 0;
+  const tx = rvx - vn * h.nx, ty = rvy - vn * h.ny;
+  rvx = tx * (1 - friction) - e * vn * h.nx;
+  rvy = ty * (1 - friction) - e * vn * h.ny;
+  b.vx = rvx + svx;
+  b.vy = rvy + svy;
+  return -vn;
+}
+
+function seg(ax, ay, bx, by, opt = {}) {
+  const s = { ax, ay, bx, by, r: opt.r ?? 0.14, e: opt.e ?? 0.45, on: opt.on ?? null, active: true, oneWay: !!opt.oneWay };
+  if (s.oneWay) { const l = Math.hypot(bx - ax, by - ay); s.nx = -(by - ay) / l; s.ny = (bx - ax) / l; }
+  segs.push(s);
+  return s;
+}
+function circle(x, y, r, opt = {}) {
+  const c = { x, y, r, e: opt.e ?? 0.5, on: opt.on ?? null };
+  circles.push(c);
+  return c;
+}
+function sensor(test, enter) { sensors.push({ test, enter }); }
+
+// ---- Meshes
+function bar(ax, ay, bx, by, thick, h, material, lift = 0) {
+  const mesh = new THREE.Mesh(G.box, material);
+  const len = Math.hypot(bx - ax, by - ay);
+  mesh.scale.set(len, h, thick);
+  mesh.position.copy(at((ax + bx) / 2, (ay + by) / 2, lift + h / 2));
+  mesh.rotation.y = Math.atan2(by - ay, bx - ax);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+  return mesh;
+}
+function post(x, y, r, h, material) {
+  const mesh = new THREE.Mesh(G.cyl, material);
+  mesh.scale.set(r, h, r);
+  mesh.position.copy(at(x, y, h / 2));
+  mesh.castShadow = true;
+  scene.add(mesh);
+  return mesh;
+}
+function wall(points, { r = 0.14, h = 0.9, e = 0.45, material = M.guide } = {}) {
+  for (let i = 0; i < points.length - 1; i++) {
+    const [ax, ay] = points[i], [bx, by] = points[i + 1];
+    seg(ax, ay, bx, by, { r, e, on: wallSound });
+    bar(ax, ay, bx, by, r * 2, h, material);
+  }
+  for (const [x, y] of points) post(x, y, r, h, material);
+}
+function insert(x, y, color, { size = 0.45, arrow = 0 } = {}) {
+  const material = new THREE.MeshBasicMaterial({ color });
+  const mesh = new THREE.Mesh(arrow ? G.arrow : G.circle, material);
+  mesh.position.copy(at(x, y, 0.02));
+  mesh.scale.setScalar(size);
+  if (arrow) mesh.rotation.y = rad(arrow - 90);
+  scene.add(mesh);
+  const light = { mesh, material, on: false, blink: 0, lit: new THREE.Color(color), dim: tint(color, C.playfield, 0.72), index: inserts.length };
+  inserts.push(light);
+  return light;
+}
+
+function wallSound(b, h, hit) { if (hit > 6) sfx.wall(hit); }
+
+function build() {
+  const bg = PALETTE.background, fg = PALETTE.foreground, light = PALETTE.mode === 'light';
+  C = {
+    playfield: tint(bg, fg, light ? 0.05 : 0.07),
+    cabinet: tint(PALETTE.muted, bg, light ? 0.1 : 0.35),
+    rail: tint(PALETTE.muted, fg, 0.25),
+    guide: tint(fg, bg, light ? 0.25 : 0.4),
+    ink: tint(bg, fg, light ? 0.45 : 0.3),
+  };
+  const std = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.5, ...extra });
+  M = {
+    cabinet: std(C.cabinet, { roughness: 0.8 }),
+    rail: std(C.rail, { roughness: 0.6 }),
+    guide: std(C.guide),
+    post: std(PALETTE.yellow, { roughness: 0.35 }),
+    gate: std(PALETTE.foreground, { metalness: 0.4, roughness: 0.3 }),
+    flipper: std(PALETTE.accent, { emissive: PALETTE.accent, emissiveIntensity: 0.25, roughness: 0.35 }),
+    flipperRubber: std(PALETTE.red, { roughness: 0.6 }),
+    target: std(PALETTE.yellow, { emissive: PALETTE.yellow, emissiveIntensity: 0.15 }),
+    saucer: std(tint(bg, fg, 0.02), { roughness: 0.9 }),
+    plunger: std(PALETTE.foreground, { metalness: 0.6, roughness: 0.25 }),
+    spinner: std(PALETTE.foreground, { metalness: 0.5, roughness: 0.3, side: THREE.DoubleSide }),
+  };
+  const arrowShape = new THREE.Shape([new THREE.Vector2(0, 1.3), new THREE.Vector2(0.9, -0.6), new THREE.Vector2(0, -0.2), new THREE.Vector2(-0.9, -0.6)]);
+  G = {
+    box: new THREE.BoxGeometry(1, 1, 1),
+    cyl: new THREE.CylinderGeometry(1, 1, 1, 24),
+    circle: new THREE.CircleGeometry(1, 28).rotateX(-Math.PI / 2),
+    arrow: new THREE.ShapeGeometry(arrowShape).rotateX(-Math.PI / 2),
+    ball: new THREE.SphereGeometry(R, 32, 20),
+  };
+
+  // Sun and shadows sized for the whole table; a studio environment so the ball reads as chrome.
+  Object.assign(sun.shadow.camera, { left: -30, right: 30, top: 30, bottom: -30, near: 1, far: 90 });
+  sun.position.set(-8, 40, 18);
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.updateProjectionMatrix();
+  // The template's lights are tuned for dark tables; a light table under them burns out to white.
+  scene.traverse(o => { if (o.isHemisphereLight) o.intensity = light ? 0.7 : 1.5; });
+  sun.intensity = light ? 1.2 : 2.5;
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+  // Cabinet and playfield.
+  const W = BOUNDS.x1 - BOUNDS.x0, H = BOUNDS.y1 - BOUNDS.y0;
+  const cabinet = new THREE.Mesh(G.box, M.cabinet);
+  cabinet.scale.set(W + 1.6, 2, H + 1.6);
+  cabinet.position.copy(at((BOUNDS.x0 + BOUNDS.x1) / 2, (BOUNDS.y0 + BOUNDS.y1) / 2, -1.01));
+  cabinet.receiveShadow = true;
+  scene.add(cabinet);
+  const playfield = new THREE.Mesh(new THREE.PlaneGeometry(W, H), new THREE.MeshStandardMaterial({ map: playfieldTexture(), roughness: 0.55 }));
+  playfield.rotation.x = -Math.PI / 2;
+  playfield.position.copy(at((BOUNDS.x0 + BOUNDS.x1) / 2, (BOUNDS.y0 + BOUNDS.y1) / 2, 0));
+  playfield.receiveShadow = true;
+  scene.add(playfield);
+  // Side rails of the cabinet, so the table has an edge against the window.
+  for (const [ax, ay, bx, by] of [[BOUNDS.x0, BOUNDS.y0, BOUNDS.x0, BOUNDS.y1], [BOUNDS.x1, BOUNDS.y0, BOUNDS.x1, BOUNDS.y1], [BOUNDS.x0, BOUNDS.y1, BOUNDS.x1, BOUNDS.y1], [BOUNDS.x0, BOUNDS.y0, BOUNDS.x1, BOUNDS.y0]])
+    bar(ax, ay, bx, by, 0.8, 1.6, M.cabinet);
+
+  // Outer wall with the arched top, the shooter lane and its one-way gates.
+  const arc = [];
+  for (let deg = 180; deg >= 0; deg -= 7.5) arc.push(arcPoint(deg));
+  wall([[LEFT, BOTTOM - 1.5], ...arc, [RIGHT, BOTTOM - 1.5]], { r: 0.2, h: 1.3, material: M.rail });
+  wall([[LANE, BOTTOM - 1.5], [LANE, 11.2]], { h: 1.1 });
+  const leftGate = [...arcPoint(170), -7.4, 12.4], rightGate = [LANE, 11.2, ...arcPoint(10)];
+  for (const [ax, ay, bx, by] of [leftGate, rightGate]) {
+    seg(ax, ay, bx, by, { r: 0.08, e: 0.3, oneWay: true });
+    bar(ax, ay, bx, by, 0.12, 0.12, M.gate, 0.75);
+  }
+
+  // Left orbit lane with its spinner.
+  wall([[-7.4, -3], [-7.4, 12.4]]);
+  spinner = { y: 3, angle: 0, speed: 0, turns: 0, group: new THREE.Group() };
+  const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 0.9), M.spinner);
+  flag.position.y = -0.45;
+  spinner.group.add(flag);
+  spinner.group.position.copy(at(-8.2, 3, 1.15));
+  scene.add(spinner.group);
+  bar(-9, 3, -7.4, 3, 0.08, 0.08, M.gate, 1.15);
+
+  // Top rollover lanes.
+  lanes = [-2.0, 0.8, 3.6].map(x => ({ x, lit: false, light: null }));
+  for (const x of [-3.4, -0.6, 2.2, 5.0]) {
+    seg(x, 14.8, x, 16.8, { r: 0.2, e: 0.55 });
+    bar(x, 14.8, x, 16.8, 0.4, 0.8, M.guide);
+    post(x, 14.8, 0.22, 0.85, M.post);
+    post(x, 16.8, 0.22, 0.85, M.post);
+  }
+
+  // Inlane guides, and the slingshots above them.
+  for (const s of [1, -1]) {
+    wall([[-7.6 * s, -9.6], [-7.6 * s, -13.2], [-4.0 * s, -15.6]]);
+    post(-7.6 * s, -9.6, 0.3, 0.95, M.post);
+    circle(-7.6 * s, -9.6, 0.3, { e: 0.6 });
+  }
+  slings = [1, -1].map(s => {
+    const A = [-6.2 * s, -8.4], B = [-6.2 * s, -12.0], Cp = [-4.4 * s, -13.2];
+    const sling = { s, cool: 0, flash: 0, material: new THREE.MeshStandardMaterial({ color: PALETTE.cyan, emissive: PALETTE.cyan, emissiveIntensity: 0.2, roughness: 0.4 }) };
+    seg(...A, ...B, { r: 0.15, e: 0.35 });
+    seg(...B, ...Cp, { r: 0.15, e: 0.35 });
+    seg(...A, ...Cp, { r: 0.18, e: 0.5, on: (b, h, hit) => slingHit(sling, b, h, hit) });
+    const shape = new THREE.Shape([new THREE.Vector2(A[0], A[1]), new THREE.Vector2(B[0], B[1]), new THREE.Vector2(Cp[0], Cp[1])]);
+    const body = new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { depth: 0.75, bevelEnabled: false }), M.guide);
+    body.rotation.x = -Math.PI / 2;
+    body.castShadow = true;
+    scene.add(body);
+    sling.band = bar(...A, ...Cp, 0.3, 0.55, sling.material, 0.1);
+    sling.rest = sling.band.position.clone();
+    const l = Math.hypot(Cp[0] - A[0], Cp[1] - A[1]);
+    sling.normal = at(-(Cp[1] - A[1]) / l * s, (Cp[0] - A[0]) / l * s);
+    for (const p of [A, B, Cp]) post(...p, 0.2, 0.9, M.post);
+    return sling;
+  });
+
+  // Pop bumpers.
+  bumpers = [[-1.4, 11.2, PALETTE.red], [3.0, 11.2, PALETTE.magenta], [0.8, 7.6, PALETTE.orange]].map(([x, y, color]) => {
+    const bumper = { x, y, cool: 0, flash: 0, group: new THREE.Group(), cap: new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.3, roughness: 0.35 }) };
+    const base = new THREE.Mesh(G.cyl, M.guide);
+    base.scale.set(1.15, 0.3, 1.15);
+    base.position.y = 0.15;
+    const body = new THREE.Mesh(G.cyl, std(PALETTE.foreground, { metalness: 0.3, roughness: 0.3 }));
+    body.scale.set(0.8, 0.75, 0.8);
+    body.position.y = 0.6;
+    const cap = new THREE.Mesh(G.cyl, bumper.cap);
+    cap.scale.set(1.05, 0.28, 1.05);
+    cap.position.y = 1.05;
+    for (const m of [base, body, cap]) { m.castShadow = true; bumper.group.add(m); }
+    bumper.capMesh = cap;
+    bumper.group.position.copy(at(x, y));
+    scene.add(bumper.group);
+    circle(x, y, 1.1, { e: 0.5, on: (b, h) => bumperHit(bumper, b, h) });
+    return bumper;
+  });
+
+  // Drop targets on the right.
+  targets = [-2.6, -1.2, 0.2].map(y => {
+    const target = { y, down: false, drop: 0, seg: null, mesh: bar(8.45, y - 0.55, 8.45, y + 0.55, 0.35, 0.95, M.target) };
+    target.seg = seg(8.45, y - 0.55, 8.45, y + 0.55, { r: 0.18, e: 0.35, on: (b, h, hit) => targetHit(target, hit) });
+    target.light = insert(7.3, y, PALETTE.yellow, { size: 0.32 });
+    return target;
+  });
+  post(8.45, -3.45, 0.22, 0.9, M.post);
+  circle(8.45, -3.45, 0.22, { e: 0.5 });
+
+  // Saucer: holds the ball, and starts multiball when the lock is lit.
+  saucer = { x: -5.3, y: 9.8, glow: 0 };
+  const hole = new THREE.Mesh(G.circle, M.saucer);
+  hole.scale.setScalar(0.75);
+  hole.position.copy(at(saucer.x, saucer.y, 0.025));
+  scene.add(hole);
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.8, 0.1, 10, 32), M.rail);
+  rim.rotation.x = -Math.PI / 2;
+  rim.position.copy(at(saucer.x, saucer.y, 0.06));
+  scene.add(rim);
+
+  // Flippers: a tapered outline extruded upward, turning about the pivot.
+  const L = 2.9, rb = 0.42, rt = 0.22, alpha = Math.acos((rb - rt) / L);
+  const outline = [];
+  for (let i = 0; i <= 16; i++) { const a = alpha + (2 * Math.PI - 2 * alpha) * i / 16; outline.push(new THREE.Vector2(rb * Math.cos(a), rb * Math.sin(a))); }
+  for (let i = 0; i <= 12; i++) { const a = -alpha + 2 * alpha * i / 12; outline.push(new THREE.Vector2(L + rt * Math.cos(a), rt * Math.sin(a))); }
+  const flipperGeometry = new THREE.ExtrudeGeometry(new THREE.Shape(outline), { depth: 0.65, bevelEnabled: true, bevelSize: 0.05, bevelThickness: 0.05, bevelSegments: 2 });
+  flippers = [
+    { px: -3.5, py: -16.2, rest: rad(-28), up: rad(30), action: 'flipL' },
+    { px: 3.5, py: -16.2, rest: rad(208), up: rad(150), action: 'flipR' },
+  ].map(f => {
+    const group = new THREE.Group(), mesh = new THREE.Mesh(flipperGeometry, M.flipper);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.y = 0.05;
+    mesh.castShadow = true;
+    group.add(mesh);
+    const cap = new THREE.Mesh(G.cyl, M.flipperRubber);
+    cap.scale.set(0.24, 0.12, 0.24);
+    cap.position.y = 0.8;
+    group.add(cap);
+    group.position.copy(at(f.px, f.py));
+    scene.add(group);
+    return { ...f, len: L, rb, rt, angle: f.rest, omega: 0, group, wasHeld: false };
+  });
+
+  // Plunger.
+  plunger = { pull: 0, speed: 0, releasing: false, armed: false, auto: 0, group: new THREE.Group() };
+  const rod = new THREE.Mesh(G.cyl, M.plunger);
+  rod.rotation.x = Math.PI / 2;
+  rod.scale.set(0.22, 3.2, 0.22);
+  rod.position.set(0, 0.45, 1.6);
+  const tip = new THREE.Mesh(G.cyl, M.flipperRubber);
+  tip.rotation.x = Math.PI / 2;
+  tip.scale.set(0.55, 0.3, 0.55);
+  tip.position.set(0, 0.45, 0.15);
+  plunger.group.add(rod, tip);
+  scene.add(plunger.group);
+
+  // Apron: the ball drains under it.
+  apron = new THREE.Mesh(G.box, [M.rail, M.rail, new THREE.MeshStandardMaterial({ map: apronTexture(), roughness: 0.6 }), M.rail, M.rail, M.rail]);
+  apron.scale.set(LANE - LEFT, 0.25, 3.6);
+  apron.position.copy(at((LANE + LEFT) / 2, -23.2, 1.2));
+  apron.castShadow = true;
+  scene.add(apron);
+
+  // Insert lights painted into the playfield.
+  for (const lane of lanes) lane.light = insert(lane.x, 13.9, PALETTE.cyan, { size: 0.42 });
+  bonusLights = [-2.1, -0.7, 0.7, 2.1].map(x => insert(x, -8.6, PALETTE.orange, { size: 0.42 }));
+  shootAgain = insert(0, -19.6, PALETTE.red, { size: 0.55 });
+  kickback = insert(-8.3, -12.4, PALETTE.green, { size: 0.45, arrow: 90 });
+  lockLight = insert(-5.3, 7.9, PALETTE.magenta, { size: 0.5, arrow: 90 });
+  jackpotLight = insert(-8.2, -2.0, PALETTE.yellow, { size: 0.5, arrow: 90 });
+  orbitLights = [insert(-8.2, 5.0, PALETTE.blue, { size: 0.42, arrow: 90 }), insert(-8.2, 10.4, PALETTE.blue, { size: 0.42, arrow: 90 })];
+
+  // The ball: chrome in the theme's foreground, the most vivid thing on the table.
+  const ballMaterial = new THREE.MeshStandardMaterial({ color: tint(PALETTE.foreground, '#ffffff', light ? 0 : 0.35), metalness: 0.85, roughness: 0.12, envMap: environment, envMapIntensity: light ? 0.5 : 1.3 });
+  ballMeshes = Array.from({ length: 5 }, () => {
+    const mesh = new THREE.Mesh(G.ball, ballMaterial);
+    mesh.castShadow = true;
+    mesh.visible = false;
+    scene.add(mesh);
+    return mesh;
+  });
+
+  // Sparks for every hit.
+  const N = 400;
+  sparks = { n: N, next: 0, pos: new Float32Array(N * 3).fill(-100), col: new Float32Array(N * 3), vel: new Float32Array(N * 3), life: new Float32Array(N) };
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(sparks.pos, 3));
+  geometry.setAttribute('color', new THREE.BufferAttribute(sparks.col, 3));
+  sparks.points = new THREE.Points(geometry, new THREE.PointsMaterial({ size: 0.32, vertexColors: true, transparent: true, depthWrite: false }));
+  sparks.points.frustumCulled = false;
+  scene.add(sparks.points);
+
+  // Sensors: rollovers, the orbit, the spinner, the saucer, the kickback and the shooter lane exit.
+  lanes.forEach((lane, i) => sensor(b => Math.hypot(b.x - lane.x, b.y - 15.8) < 0.8, () => rollover(i)));
+  sensor(b => b.x < -7.4 && b.y > 9 && b.y < 11.5 && b.vy > 0, () => orbitShot());
+  sensor(b => b.x < -7.4 && Math.abs(b.y - spinner.y) < 0.5, b => { spinner.speed = Math.min(60, Math.abs(b.vy) * 1.4); });
+  sensor(b => Math.hypot(b.x - saucer.x, b.y - saucer.y) < 0.45 && Math.hypot(b.vx, b.vy) < 26, b => capture(b));
+  sensor(b => b.x < -7.6 && b.y < -11 && b.y > -13.5, b => kick(b));
+  sensor(b => b.state === 'lane' && b.y > 10.5 && b.x < LANE + 0.3, b => leftLane(b));
+
+  fitCamera();
+}
+
+// The camera looks down the table from behind the flippers, backed off until the whole table fits the window.
+// It is centred by sliding the point it looks at, so the near end and the far end get equal room.
+function fitCamera() {
+  const pitch = rad(47), dir = new THREE.Vector3(0, Math.sin(pitch), Math.cos(pitch)), target = at(0.8, -2);
+  const corners = [];
+  for (const x of [BOUNDS.x0 - 0.8, BOUNDS.x1 + 0.8]) for (const y of [BOUNDS.y0 - 0.8, BOUNDS.y1 + 0.8]) corners.push(at(x, y, -2.1), at(x, y, 1.6));
+  camera.fov = 34;
+  camera.updateProjectionMatrix();
+  const place = dist => {
+    camera.position.copy(target).addScaledVector(dir, dist);
+    camera.lookAt(target);
+    camera.updateMatrixWorld();
+    let x = 0, y0 = Infinity, y1 = -Infinity;
+    for (const p of corners) { const v = p.clone().project(camera); x = Math.max(x, Math.abs(v.x)); y0 = Math.min(y0, v.y); y1 = Math.max(y1, v.y); }
+    return { x, y0, y1 };
+  };
+  for (let round = 0; round < 5; round++) {
+    let lo = 15, hi = 300;
+    for (let i = 0; i < 30; i++) { const mid = (lo + hi) / 2, b = place(mid); if (b.x < 0.97 && b.y0 > -0.97 && b.y1 < 0.97) hi = mid; else lo = mid; }
+    const b = place(hi);
+    target.z -= (b.y1 + b.y0) / 2 * hi * Math.tan(rad(camera.fov / 2)) / Math.sin(pitch);
+  }
+}
+
+// The apron carries the rules card, as on a real table.
+function apronTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1800;
+  canvas.height = 360;
+  const g = canvas.getContext('2d'), css = c => '#' + new THREE.Color(c).getHexString();
+  g.fillStyle = css(C.rail);
+  g.fillRect(0, 0, 1800, 360);
+  const card = (x, w, title, lines) => {
+    g.fillStyle = css(tint(C.rail, PALETTE.background, 0.55));
+    g.beginPath();
+    g.roundRect(x, 34, w, 250, 22);
+    g.fill();
+    g.fillStyle = css(PALETTE.accent);
+    g.font = 'bold 50px ui-monospace, monospace';
+    g.fillText(title, x + 30, 92);
+    g.fillStyle = css(PALETTE.foreground);
+    g.font = 'bold 36px ui-monospace, monospace';
+    lines.forEach((line, i) => g.fillText(line, x + 30, 150 + i * 48));
+  };
+  card(40, 700, 'LANES', ['3 lanes: bonus +1X', 'flippers move lit lanes', 'all 3 relight kickback']);
+  card(1060, 700, 'MULTIBALL', ['3 targets light lock', 'saucer starts multiball', 'orbit scores jackpot']);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 8;
+  return texture;
+}
+
+function playfieldTexture() {
+  const W = BOUNDS.x1 - BOUNDS.x0, H = BOUNDS.y1 - BOUNDS.y0, scale = 44;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(W * scale);
+  canvas.height = Math.round(H * scale);
+  const g = canvas.getContext('2d');
+  const px = x => (x - BOUNDS.x0) * scale, py = y => (BOUNDS.y1 - y) * scale;
+  const css = c => '#' + new THREE.Color(c).getHexString();
+  g.fillStyle = css(C.cabinet);
+  g.fillRect(0, 0, canvas.width, canvas.height);
+  // The playfield inside the outer wall.
+  g.fillStyle = css(C.playfield);
+  g.beginPath();
+  g.moveTo(px(LEFT), py(BOTTOM - 2));
+  g.lineTo(px(LEFT), py(ARC.y));
+  g.arc(px(ARC.x), py(ARC.y), ARC.r * scale, Math.PI, 0);
+  g.lineTo(px(RIGHT), py(BOTTOM - 2));
+  g.fill();
+  g.save();
+  g.clip();
+  // A soft glow under the bumpers, and rays fanning out from the flippers.
+  const glow = g.createRadialGradient(px(0.8), py(10), 10, px(0.8), py(10), 8 * scale);
+  glow.addColorStop(0, css(tint(C.playfield, PALETTE.accent, 0.22)));
+  glow.addColorStop(1, css(C.playfield));
+  g.fillStyle = glow;
+  g.fillRect(0, 0, canvas.width, canvas.height);
+  g.globalAlpha = 0.07;
+  g.fillStyle = css(PALETTE.accent);
+  for (let i = 0; i < 9; i++) {
+    const a0 = Math.PI * (0.18 + i * 0.075), a1 = a0 + Math.PI * 0.035;
+    g.beginPath();
+    g.moveTo(px(0), py(-14));
+    g.lineTo(px(0) + Math.cos(a0) * 1800, py(-14) - Math.sin(a0) * 1800);
+    g.lineTo(px(0) + Math.cos(a1) * 1800, py(-14) - Math.sin(a1) * 1800);
+    g.fill();
+  }
+  g.globalAlpha = 1;
+  // Shooter lane and orbit lane floors.
+  g.fillStyle = css(tint(C.playfield, PALETTE.background, 0.6));
+  g.fillRect(px(LANE), py(12), (RIGHT - LANE) * scale, (12 - BOTTOM + 2) * scale);
+  g.fillStyle = css(tint(C.playfield, PALETTE.blue, 0.1));
+  g.fillRect(px(LEFT), py(12.4), 1.6 * scale, 15.4 * scale);
+  // Rings around the insert lights, and their labels.
+  g.strokeStyle = css(C.ink);
+  g.lineWidth = 3;
+  const ring = (x, y, r) => { g.beginPath(); g.arc(px(x), py(y), r * scale, 0, Math.PI * 2); g.stroke(); };
+  for (const x of [-2.0, 0.8, 3.6]) ring(x, 13.9, 0.62);
+  for (const x of [-2.1, -0.7, 0.7, 2.1]) ring(x, -8.6, 0.62);
+  ring(0, -19.6, 0.78);
+  g.fillStyle = css(C.ink);
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  const label = (text, x, y, size, angle = 0) => {
+    g.save();
+    g.translate(px(x), py(y));
+    g.rotate(angle);
+    g.font = `bold ${size * scale}px ui-monospace, monospace`;
+    g.fillText(text, 0, 0);
+    g.restore();
+  };
+  ['2X', '3X', '4X', '5X'].forEach((t, i) => label(t, -2.1 + i * 1.4, -9.75, 0.5));
+  label('BONUS', 0, -7.4, 0.5);
+  label('SHOOT AGAIN', 0, -20.8, 0.48);
+  label('KICKBACK', -8.3, -10.5, 0.5, -Math.PI / 2);
+  label('LOCK', -5.3, 6.75, 0.6);
+  label('JACKPOT', -8.2, 0.4, 0.5, -Math.PI / 2);
+  label('ORBIT', -8.2, 7.7, 0.55, -Math.PI / 2);
+  label('MULTIBALL', 6.4, -1.2, 0.5, -Math.PI / 2);
+  // A big wordmark in the open middle of the table.
+  g.globalAlpha = 0.5;
+  label('OMARCHY', 0.4, -2.2, 1.35);
+  g.globalAlpha = 1;
+  g.restore();
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 8;
+  return texture;
+}
+
+// ---- Scoring and the rules of the table
+const mult = () => multiball ? 2 : 1;
+function add(points, toBonus = 0) { score += points * mult(); bonus += toBonus; hudDirty = true; }
+function say(text, sub = '', seconds = 2.2) {
+  const el = $('message'), small = document.createElement('small');
+  small.textContent = sub;
+  el.replaceChildren(text, small);
+  el.classList.remove('flash');
+  void el.offsetWidth;
+  el.classList.add('flash');
+  messageTimer = seconds;
+}
+let messageTimer = 0, intro = false;
+const fmt = n => Math.floor(n).toLocaleString('en-US');
+
+function burst(x, y, color, count = 14, speed = 6, h = 0.6) {
+  const c = new THREE.Color(color), s = sparks;
+  for (let k = 0; k < count; k++) {
+    const i = s.next = (s.next + 1) % s.n, a = random() * Math.PI * 2, v = speed * (0.4 + random() * 0.8);
+    s.pos.set([x, h, -y], i * 3);
+    s.vel.set([Math.cos(a) * v, 3 + random() * 5, -Math.sin(a) * v], i * 3);
+    s.col.set([c.r, c.g, c.b], i * 3);
+    s.life[i] = 0.35 + random() * 0.35;
+  }
+}
+
+function bumperHit(bumper, b, h) {
+  if (bumper.cool > 0) return;
+  bumper.cool = 0.06;
+  bumper.flash = 1;
+  b.vx += h.nx * 15;
+  b.vy += h.ny * 15;
+  add(500, 100);
+  skillLive = false;
+  burst(bumper.x + h.nx * 1.1, bumper.y + h.ny * 1.1, bumper.cap.color, 16, 7, 0.9);
+  shake = Math.max(shake, 0.12);
+  sfx.bumper();
+  note('bumper');
+}
+
+function slingHit(sling, b, h, hit) {
+  if (hit < 4 || sling.cool > 0) return;
+  sling.cool = 0.1;
+  sling.flash = 1;
+  b.vx += h.nx * 14;
+  b.vy += h.ny * 14;
+  add(110, 50);
+  burst(b.x - h.nx * 0.5, b.y - h.ny * 0.5, PALETTE.cyan, 10, 5);
+  sfx.sling();
+  note('sling');
+}
+
+function targetHit(target, hit) {
+  if (target.down || hit < 1.5) return;
+  target.down = true;
+  target.seg.active = false;
+  add(750, 500);
+  burst(8.3, target.y, PALETTE.yellow, 12, 5);
+  sfx.target();
+  note('target');
+  if (targets.every(t => t.down)) {
+    targetsTimer = 1.2;
+    add(5000, 2000);
+    sfx.bank();
+    showTimer = 1;
+    if (multiball) { jackpot += 10000; say('JACKPOT UP', fmt(jackpot * 2)); }
+    else if (!lockLit) { lockLit = true; say('LOCK IS LIT', 'shoot the saucer for multiball'); }
+    else say('TARGETS', '5,000');
+  }
+}
+
+function rollover(i) {
+  const lane = lanes[i];
+  if (skillLive) {
+    skillLive = false;
+    if (i === skillLane) { add(15000, 5000); say('SKILL SHOT', '15,000'); sfx.skill(); showTimer = 1; burst(lane.x, 15.8, PALETTE.cyan, 30, 8); }
+  }
+  note('rollover');
+  if (lane.lit) { add(100); tone(1200, 0.06, 'sine', 1200, 0.05); return; }
+  lane.lit = true;
+  add(1000, 1000);
+  burst(lane.x, 15.8, PALETTE.cyan, 10, 4);
+  sfx.lane();
+  if (lanes.every(l => l.lit)) {
+    lanesTimer = 0.8;
+    bonusX = Math.min(5, bonusX + 1);
+    kickbackLit = true;
+    add(5000);
+    say(`BONUS ${bonusX}X`, 'kickback relit');
+    sfx.lanes();
+    showTimer = 0.8;
+  }
+}
+
+function orbitShot() {
+  combo = comboTimer > 0 ? combo + 1 : 1;
+  comboTimer = 5;
+  add(2500 * combo, 2000);
+  note('orbit');
+  sfx.orbit();
+  if (multiball) {
+    add(jackpot);
+    say('JACKPOT', fmt(jackpot * 2));
+    jackpot += 5000;
+    sfx.jackpot();
+    showTimer = 1.5;
+    shake = 0.5;
+    burst(-8.2, 10, PALETTE.yellow, 40, 9);
+  } else say(combo > 1 ? `ORBIT COMBO ×${combo}` : 'ORBIT', fmt(2500 * combo));
+}
+
+function capture(b) {
+  b.state = 'held';
+  b.hold = 1.3;
+  b.x = saucer.x;
+  b.y = saucer.y;
+  b.vx = b.vy = 0;
+  add(3000, 1000);
+  saucer.glow = 1;
+  sfx.saucer();
+  note('saucer');
+  if (lockLit && !multiball) {
+    lockLit = false;
+    multiball = true;
+    jackpot = 25000;
+    b.hold = 2.2;
+    serveQueue++;
+    saveTimer = Math.max(saveTimer, 12);
+    add(10000);
+    say('MULTIBALL', 'orbit for jackpots · 2X scoring');
+    sfx.multiball();
+    showTimer = 2.2;
+    shake = 0.5;
+    note('multiball');
+  } else if (!multiball) say('SAUCER', '3,000 · targets light lock');
+  hudDirty = true;
+}
+
+function kick(b) {
+  if (!kickbackLit) return;
+  kickbackLit = false;
+  b.vx = 0.6;
+  b.vy = 46;
+  add(1000);
+  say('KICKBACK');
+  sfx.kickback();
+  shake = 0.35;
+  burst(b.x, b.y, PALETTE.green, 20, 6);
+  hudDirty = true;
+}
+
+function leftLane(b) {
+  b.state = 'play';
+  note('launch');
+  if (!b.saved && phase === 'play' && saveTimer <= 0 && !b.multi) saveTimer = 10;
+  hudDirty = true;
+}
+
+function serveBall(auto, saved = false) {
+  const mesh = ballMeshes.find(m => !m.visible);
+  if (!mesh) return;
+  mesh.visible = true;
+  balls.push({ x: 9.8, y: PLUNGER_Y + 0.15 + R + 0.01, vx: 0, vy: 0, state: 'lane', inside: new Set(), mesh, still: 0, saved, multi: multiball });
+  if (auto) plunger.auto = 0.7;
+  sfx.serve();
+}
+
+function startBall() {
+  bonus = 0;
+  bonusX = 1;
+  kickbackLit = true;
+  saveTimer = 0;
+  for (const lane of lanes) lane.lit = false;
+  skillLane = Math.floor(random() * 3);
+  skillLive = true;
+  phase = 'play';
+  serveBall(false);
+  intro = true;
+  hudDirty = true;
+}
+
+function drained(b) {
+  b.mesh.visible = false;
+  balls.splice(balls.indexOf(b), 1);
+  note('drain');
+  if (saveTimer > 0 && phase === 'play') {
+    serveQueue++;
+    say('BALL SAVED');
+    sfx.save();
+    note('save');
+    return;
+  }
+  if (balls.length + serveQueue > 0) {
+    if (multiball && balls.length + serveQueue === 1) { multiball = false; say('MULTIBALL OVER'); hudDirty = true; }
+    return;
+  }
+  multiball = false;
+  sfx.drain();
+  shake = 0.3;
+  const total = bonus * bonusX;
+  phase = 'bonus';
+  phaseTimer = 2.8;
+  say('BONUS', `${fmt(bonus)} × ${bonusX} = ${fmt(total)}`, 2.8);
+  setTimeout(() => sfx.bonus(), 600);
+  score += total;
+  hudDirty = true;
+}
+
+function reset() {
+  for (const b of balls) b.mesh.visible = false;
+  balls = [];
+  score = 0;
+  ballNum = 1;
+  lockLit = false;
+  multiball = false;
+  jackpot = 25000;
+  combo = 0;
+  comboTimer = 0;
+  showTimer = 0;
+  serveQueue = 0;
+  targetsTimer = 0;
+  lanesTimer = 0;
+  phaseTimer = 0;
+  for (const t of targets) { t.down = false; t.seg.active = true; }
+  for (const f of flippers) { f.angle = f.rest; f.omega = 0; f.wasHeld = false; }
+  Object.assign(plunger, { pull: 0, speed: 0, releasing: false, armed: false, auto: 0 });
+  startBall();
+}
+
+// ---- One physics substep: flippers and plunger move, then every ball moves and is pushed out of what it touches.
+function physics(dt) {
+  for (const f of flippers) {
+    const held = isHeld(f.action) && (phase === 'play' || phase === 'bonus');
+    const target = held ? f.up : f.rest, prev = f.angle, maxStep = (held ? 19 : 12) * dt;
+    f.angle += THREE.MathUtils.clamp(target - f.angle, -maxStep, maxStep);
+    f.omega = (f.angle - prev) / dt;
+  }
+  let plungerV = 0;
+  if (plunger.releasing) {
+    plunger.pull -= plunger.speed / PLUNGER_TRAVEL * dt;
+    plungerV = plunger.speed;
+    if (plunger.pull <= 0) { plunger.pull = 0; plunger.releasing = false; }
+  }
+  const plungerY = PLUNGER_Y - plunger.pull * PLUNGER_TRAVEL;
+
+  for (const b of balls) {
+    if (b.state === 'held') continue;
+    b.vy -= GRAVITY * dt;
+    b.x += b.vx * dt;
+    b.y += b.vy * dt;
+    for (let pass = 0; pass < 2; pass++) {
+      for (const s of segs) {
+        if (!s.active || (s.oneWay && (b.x - s.ax) * s.nx + (b.y - s.ay) * s.ny < 0)) continue;
+        const h = capsuleHit(b, s.ax, s.ay, s.bx, s.by, s.r, s.r);
+        if (h) { const hit = respond(b, h, s.e); if (s.on && pass === 0) s.on(b, h, hit); }
+      }
+      for (const c of circles) {
+        const h = capsuleHit(b, c.x, c.y, c.x, c.y, c.r, c.r);
+        if (h) { const hit = respond(b, h, c.e); if (c.on && pass === 0) c.on(b, h, hit); }
+      }
+      for (const f of flippers) {
+        const tx = f.px + f.len * Math.cos(f.angle), ty = f.py + f.len * Math.sin(f.angle);
+        const h = capsuleHit(b, f.px, f.py, tx, ty, f.rb, f.rt);
+        if (!h) continue;
+        const hit = respond(b, h, 0.3, -f.omega * (h.cy - f.py), f.omega * (h.cx - f.px));
+        if (hit > 4 && Math.abs(f.omega) > 2 && pass === 0) { note('flipperHit'); sfx.flipperHit(hit); }
+      }
+      if (b.x > LANE) {
+        const h = capsuleHit(b, LANE + 0.1, plungerY, RIGHT - 0.1, plungerY, 0.15, 0.15);
+        if (h) respond(b, h, 0.05, 0, plungerV);
+      }
+    }
+    const speed = Math.hypot(b.vx, b.vy);
+    if (speed > MAX_SPEED) { b.vx *= MAX_SPEED / speed; b.vy *= MAX_SPEED / speed; }
+    for (const s of sensors) {
+      const inside = s.test(b);
+      if (inside && !b.inside.has(s)) { b.inside.add(s); s.enter(b); } else if (!inside) b.inside.delete(s);
+      if (b.state === 'held') break;
+    }
+    if (b.y < BOTTOM - 0.5) b.gone = true;
+  }
+
+  // Balls bounce off each other in multiball.
+  for (let i = 0; i < balls.length; i++) for (let j = i + 1; j < balls.length; j++) {
+    const a = balls[i], c = balls[j];
+    if (a.state === 'held' || c.state === 'held') continue;
+    let nx = c.x - a.x, ny = c.y - a.y;
+    const d = Math.hypot(nx, ny);
+    if (d >= 2 * R || d < 1e-6) continue;
+    nx /= d; ny /= d;
+    const push = (2 * R - d) / 2;
+    a.x -= nx * push; a.y -= ny * push; c.x += nx * push; c.y += ny * push;
+    const vn = (c.vx - a.vx) * nx + (c.vy - a.vy) * ny;
+    if (vn < 0) { const j2 = -0.95 * vn; a.vx -= nx * j2; a.vy -= ny * j2; c.vx += nx * j2; c.vy += ny * j2; }
+  }
+}
+
+function update(dt) {
+  time += dt;
+  if (intro) { intro = false; say(`BALL ${ballNum}`, 'skill shot: a soft launch through the flashing lane', 3); }
+
+  // Flippers: a click on every press, and the lit lanes shift with them.
+  for (const f of flippers) {
+    const held = isHeld(f.action);
+    if (held && !f.wasHeld) {
+      sfx.flip();
+      note('flip');
+      if (phase === 'play' && lanes.some(l => l.lit) && !lanes.every(l => l.lit)) {
+        const lit = lanes.map(l => l.lit);
+        lanes.forEach((l, i) => { l.lit = f.action === 'flipL' ? lit[(i + 1) % 3] : lit[(i + 2) % 3]; });
+      }
+    } else if (!held && f.wasHeld) sfx.unflip();
+    f.wasHeld = held;
+  }
+
+  // Plunger: hold to pull back, release to launch. A press that started the round doesn't count.
+  const pulling = isHeld('plunger') && phase === 'play';
+  if (!isHeld('plunger')) plunger.armed = true;
+  if (plunger.auto > 0) {
+    plunger.auto -= dt;
+    if (!plunger.releasing) plunger.pull = Math.min(0.9, plunger.pull + dt * 2.5);
+    if (plunger.auto <= 0) { plunger.releasing = true; plunger.speed = 30 + 38 * plunger.pull; sfx.launch(plunger.pull); }
+  } else if (pulling && plunger.armed && !plunger.releasing) {
+    const before = plunger.pull;
+    plunger.pull = Math.min(1, plunger.pull + dt * 1.1);
+    if (Math.floor(before * 8) !== Math.floor(plunger.pull * 8)) sfx.pull();
+  } else if (!pulling && plunger.pull > 0 && !plunger.releasing) {
+    plunger.releasing = true;
+    plunger.speed = 30 + 38 * plunger.pull;
+    sfx.launch(plunger.pull);
+  }
+
+  for (let i = 0; i < SUBSTEPS; i++) physics(dt / SUBSTEPS);
+
+  // Balls: drains, the saucer's hold, and a nudge for a ball that has come to rest somewhere it can't leave.
+  for (const b of [...balls]) {
+    if (b.gone) { drained(b); continue; }
+    if (b.state === 'held') {
+      b.hold -= dt;
+      if (b.hold <= 0) { b.state = 'play'; b.vx = 9; b.vy = -14; b.y -= 0.05; saucer.glow = 1; sfx.eject(); burst(saucer.x, saucer.y, PALETTE.magenta, 16, 5); }
+    }
+    const resting = b.state === 'play' && Math.hypot(b.vx, b.vy) < 0.6 && b.y > -13;
+    b.still = resting ? b.still + dt : 0;
+    if (b.still > 3) { b.still = 0; b.vx = (random() - 0.5) * 12; b.vy = 8; }
+  }
+  const laneBusy = balls.some(b => b.state === 'lane');
+  if (serveQueue > 0 && !laneBusy && phase === 'play') { serveQueue--; serveBall(true, true); }
+
+  // Timers.
+  if (saveTimer > 0) { saveTimer -= dt; if (saveTimer <= 0) hudDirty = true; }
+  comboTimer -= dt;
+  showTimer -= dt;
+  messageTimer -= dt;
+  if (messageTimer < 0 && messageTimer > -dt * 1.5) $('message').replaceChildren();
+  if (targetsTimer > 0 && (targetsTimer -= dt) <= 0) for (const t of targets) { t.down = false; t.seg.active = true; }
+  if (lanesTimer > 0 && (lanesTimer -= dt) <= 0) for (const l of lanes) l.lit = false;
+  if (phase === 'bonus' && (phaseTimer -= dt) <= 0) {
+    if (ballNum >= 3) return endRound(false);
+    ballNum++;
+    startBall();
+  }
+
+  // Everything that moves, and every light.
+  for (const b of balls) b.mesh.position.copy(at(b.x, b.y, R));
+  for (const f of flippers) f.group.rotation.y = f.angle;
+  plunger.group.position.copy(at(9.8, PLUNGER_Y - plunger.pull * PLUNGER_TRAVEL));
+  spinner.angle += spinner.speed * dt;
+  spinner.speed *= Math.exp(-dt * 1.3);
+  const turns = Math.floor(spinner.angle / Math.PI);
+  if (turns !== spinner.turns) { spinner.turns = turns; if (spinner.speed > 1) { add(100, 20); sfx.spin(); note('spin'); } }
+  spinner.group.rotation.x = spinner.angle;
+  for (const bumper of bumpers) {
+    bumper.cool -= dt;
+    bumper.flash = Math.max(0, bumper.flash - dt * 5);
+    bumper.cap.emissiveIntensity = 0.3 + bumper.flash * 2.5;
+    bumper.capMesh.position.y = 1.05 - bumper.flash * 0.25;
+  }
+  for (const sling of slings) {
+    sling.cool -= dt;
+    sling.flash = Math.max(0, sling.flash - dt * 6);
+    sling.material.emissiveIntensity = 0.2 + sling.flash * 2.5;
+    sling.band.position.copy(sling.rest).addScaledVector(sling.normal, sling.flash * 0.25);
+  }
+  for (const t of targets) {
+    t.drop = THREE.MathUtils.damp(t.drop, t.down ? 1 : 0, 18, dt);
+    t.mesh.position.y = 0.475 - t.drop * 0.9;
+  }
+  saucer.glow = Math.max(0, saucer.glow - dt * 1.5);
+
+  const blinkFast = Math.floor(time * 8) % 2 === 0, blinkSlow = Math.floor(time * 3) % 2 === 0;
+  lanes.forEach((l, i) => { l.light.on = l.lit; l.light.blink = (skillLive && i === skillLane && !l.lit) || (lanesTimer > 0) ? 2 : 0; });
+  bonusLights.forEach((light, i) => { light.on = bonusX >= i + 2; light.blink = bonusX === i + 1 && lanes.some(l => l.lit) ? 1 : 0; });
+  shootAgain.on = saveTimer > 0;
+  shootAgain.blink = saveTimer > 0 ? (saveTimer < 3 ? 2 : 1) : 0;
+  kickback.on = kickbackLit;
+  lockLight.on = lockLit;
+  lockLight.blink = lockLit ? 1 : 0;
+  jackpotLight.on = multiball;
+  jackpotLight.blink = multiball ? 2 : 0;
+  orbitLights.forEach((light, i) => { light.on = comboTimer > 0; light.blink = comboTimer > 0 ? 1 : 0; });
+  targets.forEach(t => { t.light.on = t.down; t.light.blink = targetsTimer > 0 ? 2 : 0; });
+  for (const light of inserts) {
+    let on = light.blink === 2 ? blinkFast : light.blink === 1 ? blinkSlow : light.on;
+    if (showTimer > 0) on = (light.index + Math.floor(time * 18)) % 3 === 0;
+    light.material.color.copy(on ? light.lit : light.dim);
+  }
+
+  // Sparks fly and fall.
+  const s = sparks;
+  for (let i = 0; i < s.n; i++) {
+    if (s.life[i] <= 0) continue;
+    s.life[i] -= dt;
+    s.vel[i * 3 + 1] -= 25 * dt;
+    for (let k = 0; k < 3; k++) s.pos[i * 3 + k] += s.vel[i * 3 + k] * dt;
+    if (s.life[i] <= 0) s.pos[i * 3 + 1] = -100;
+  }
+  s.points.geometry.attributes.position.needsUpdate = true;
+  s.points.geometry.attributes.color.needsUpdate = true;
+
+  if (hudDirty) {
+    hudDirty = false;
+    [...$('balls').children].forEach((dot, i) => dot.classList.toggle('on', i < 4 - ballNum));
+    $('bonus').textContent = `${fmt(bonus)} × ${bonusX}`;
+    $('f-save').classList.toggle('on', saveTimer > 0);
+    $('f-kick').classList.toggle('on', kickbackLit);
+    $('f-lock').classList.toggle('on', lockLit);
+    $('f-multi').classList.toggle('on', multiball);
+  }
+  $('f-save').classList.toggle('blink', saveTimer > 0 && saveTimer < 3);
+}
+
+// =============================================================================
+// EVERYTHING BELOW IS THE FRAME AROUND THE GAME. Keep it. Change it only to add
+// controls to ACTIONS, or to adjust the camera, lights and fog to suit the game.
+// =============================================================================
+
+// omarchy-games-launch opens the game as index.html#palette=<the current theme as JSON>; check adds seed=1.
+function launchParam(name) {
+  return new URLSearchParams(location.hash.slice(1)).get(name);
+}
+
+function themed(fallback) {
+  let current = {};
+  try { current = JSON.parse(launchParam('palette') ?? '{}'); } catch {}
+  const palette = { ...fallback };
+  for (const key of Object.keys(fallback)) {
+    const value = current[key];
+    if (key === 'mode' ? value === 'light' || value === 'dark' : /^#[0-9a-f]{6}$/i.test(value ?? '')) palette[key] = value;
+  }
+  return palette;
+}
+
+for (const [key, value] of Object.entries(PALETTE)) document.documentElement.style.setProperty(`--${key}`, value);
+
+// Saved data. Storage can fail or hold junk; the game must still run.
+const saved = {
+  get(key, fallback) { try { const v = JSON.parse(localStorage.getItem(`omarchy-game:${NAME}:${key}`)); return v ?? fallback; } catch { return fallback; } },
+  set(key, value) { try { localStorage.setItem(`omarchy-game:${NAME}:${key}`, JSON.stringify(value)); } catch {} },
+};
+
+// Renderer, scene, camera and lights, tuned for three r180: these intensities light a scene well.
+// Without WebGL nothing can draw, so say so in the window rather than show a title screen that never starts.
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+} catch (error) {
+  for (const screen of document.querySelectorAll('.screen, #hud')) screen.remove();
+  document.body.insertAdjacentHTML('beforeend', '<div class="screen show"><div><h1>NO 3D</h1><p>This game needs WebGL, and the browser could not start it on this computer.</p><p class="dim"></p></div></div>');
+  document.querySelector('.screen .dim').textContent = error.message;
+  throw error;
+}
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(PALETTE.background);
+scene.fog = new THREE.Fog(PALETTE.background, 150, 300);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 200);
+camera.position.set(0, 9, 15);
+camera.lookAt(0, 0, -3);
+
+scene.add(new THREE.HemisphereLight('#ffffff', PALETTE.background, 1.5));
+const sun = new THREE.DirectionalLight('#ffffff', 2.5);
+sun.position.set(6, 15, 8);
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024);
+Object.assign(sun.shadow.camera, { left: -20, right: 20, top: 20, bottom: -20, near: 1, far: 50 });
+scene.add(sun);
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  fitCamera();
+});
+
+// Input. isHeld() is what is down now. wasPressed() is what went down since it was last asked: once per frame
+// for the screens, and once per simulation step inside update(), so a press is never lost or counted twice.
+const ACTIONS = {
+  left: ['ArrowLeft', 'KeyA'], right: ['ArrowRight', 'KeyD'], up: ['ArrowUp', 'KeyW'], down: ['ArrowDown', 'KeyS'],
+  action: ['Space', 'Enter'], pause: ['Escape', 'KeyP'], mute: ['KeyM'], help: ['Slash'],
+  flipL: ['ArrowLeft', 'KeyZ', 'ShiftLeft'], flipR: ['ArrowRight', 'Slash', 'ShiftRight'], plunger: ['Space', 'ArrowDown', 'KeyS'],
+};
+const held = new Set(), pressed = new Set();
+const isHeld = action => ACTIONS[action].some(code => held.has(code));
+const stepPressed = new Set();
+let inStep = false;
+const wasPressed = action => ACTIONS[action].some(code => (inStep ? stepPressed : pressed).has(code));
+addEventListener('keydown', event => {
+  if (Object.values(ACTIONS).flat().includes(event.code)) event.preventDefault();
+  if (!event.repeat) { pressed.add(event.code); stepPressed.add(event.code); }
+  held.add(event.code);
+  unlockSound();
+});
+addEventListener('keyup', event => held.delete(event.code));
+addEventListener('blur', () => { held.clear(); if (state === 'playing') show('paused'); });
+
+// Sound, synthesized so the game stays one file. Browsers allow it only after a key press.
+let audio = null, muted = saved.get('muted', false);
+function unlockSound() {
+  try { audio ??= new AudioContext(); audio.resume(); } catch {}
+}
+function sound(freq = 440, seconds = 0.1, type = 'square', slideTo = freq, volume = 0.15) {
+  if (muted || audio?.state !== 'running') return;
+  const t = audio.currentTime, osc = audio.createOscillator(), gain = audio.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, t);
+  osc.frequency.exponentialRampToValueAtTime(Math.max(1, slideTo), t + seconds);
+  gain.gain.setValueAtTime(volume, t);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + seconds);
+  osc.connect(gain).connect(audio.destination);
+  osc.start(t);
+  osc.stop(t + seconds);
+}
+
+// Screens and rounds: title → playing ⇄ paused → over (or won) → playing ...
+const $ = id => document.getElementById(id);
+let state = 'title', helpFrom = 'title', score = 0, best = saved.get('best', 0), shake = 0;
+let ticks = 0, frames = 0, ready = false;
+const events = {};
+const note = name => { events[name] = (events[name] ?? 0) + 1; };
+$('best').textContent = best;
+
+function show(next) {
+  state = next;
+  for (const id of ['title', 'paused', 'over', 'help']) $(id).classList.toggle('show', id === next || (id === 'over' && next === 'won'));
+}
+
+function startRound() {
+  reset();
+  show('playing');
+  sound(440, 0.12, 'square', 880);
+}
+
+function endRound(won) {
+  if (state !== 'playing') return;
+  const final = Math.floor(score), isBest = final > best;
+  if (isBest) { best = final; saved.set('best', best); $('best').textContent = best; }
+  $('over-title').textContent = won ? 'YOU WIN' : 'GAME OVER';
+  $('over-score').textContent = `Score ${final}`;
+  $('over-best').textContent = isBest ? 'New best!' : '';
+  show(won ? 'won' : 'over');
+}
+
+// The loop: keys → fixed-step simulation → render. Game rules never run in render.
+// Seeded randomness: `check` passes seed=1 and gets the same round on every run.
+let seed = Number(launchParam('seed') ?? Date.now()) >>> 0;
+function random() {
+  seed = (seed + 0x6d2b79f5) >>> 0;
+  let t = Math.imul(seed ^ (seed >>> 15), seed | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+
+const STEP = 1 / 120, clock = new THREE.Clock();
+let accumulator = 0;
+
+function frame() {
+  frames++;
+  const dt = Math.min(clock.getDelta(), 0.1);       // a hidden window must not leap ahead
+
+  if (wasPressed('mute')) { muted = !muted; saved.set('muted', muted); }
+  if (state === 'help') {
+    if (pressed.size) show(helpFrom);
+  } else if (wasPressed('help') && state !== 'playing') {
+    helpFrom = state;
+    show('help');
+  } else if (state === 'title' || state === 'over' || state === 'won') {
+    if (wasPressed('action')) startRound();
+  } else if (state === 'paused') {
+    if (wasPressed('pause')) show('playing');
+  } else if (wasPressed('pause')) {
+    show('paused');
+  } else {
+    accumulator += dt;
+    for (let steps = 0; accumulator >= STEP && steps < 12 && state === 'playing'; steps++) {
+      inStep = true;
+      update(STEP);
+      inStep = false;
+      stepPressed.clear();
+      ticks++;
+      accumulator -= STEP;
+    }
+  }
+  if (state !== 'playing') { accumulator = 0; stepPressed.clear(); }
+  pressed.clear();
+
+  $('score').textContent = Math.floor(score);
+  shake = Math.max(0, shake - dt);
+  const shakeX = (Math.random() - 0.5) * shake, shakeY = (Math.random() - 0.5) * shake;
+  camera.position.x += shakeX;
+  camera.position.y += shakeY;
+  renderer.render(scene, camera);
+  camera.position.x -= shakeX;
+  camera.position.y -= shakeY;
+  ready = true;
+}
+
+// What `check` reads and drives. Keep it.
+window.omarchyGame = {
+  get ready() { return ready; }, get state() { return state; }, get score() { return score; },
+  get ticks() { return ticks; }, get frames() { return frames; }, events, check: CHECK,
+  end: () => endRound(false),
+};
+
+build();
+reset();
+renderer.setAnimationLoop(frame);
+</script>
+</body>
+</html>

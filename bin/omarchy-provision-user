@@ -125,6 +125,11 @@ done
 source "$OMARCHY_INSTALL/user/all.sh"
 
 omarchy-refresh-applications
+# The games that come with Omarchy go in the launcher beside the web apps. Each entry's
+# window class names this user's home, so they are written here rather than shipped.
+for game in "$OMARCHY_PATH"/games/*/index.html; do
+  omarchy-games-install "$(basename "$(dirname "$game")")" >/dev/null || true
+done
 env -u BROWSER XDG_CURRENT_DESKTOP= xdg-settings set default-web-browser chromium.desktop
 xdg-mime default HEY.desktop x-scheme-handler/mailto
 

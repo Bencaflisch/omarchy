@@ -83,6 +83,7 @@ default/libalpm/hooks/*.hook
 install/**                     ──►  omarchy             /usr/share/omarchy/install/
 migrations/**                  ──►  omarchy             /usr/share/omarchy/migrations/
 themes/**                      ──►  omarchy             /usr/share/omarchy/themes/
+games/**                       ──►  omarchy             /usr/share/omarchy/games/    (with games/vendor: three.js for offline play)
 shell/**                       ──►  omarchy             /usr/share/omarchy/shell/
 version                        ──►  omarchy             /usr/share/omarchy/version
                                                         + /etc/skel/.local/state/omarchy/migrations/*
