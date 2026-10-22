@@ -137,7 +137,7 @@ def codex_endpoints():
   try:
     with (codex_home() / "config.toml").open("rb") as handle:
       config = tomllib.load(handle)
-  except (OSError, tomllib.TOMLDecodeError):
+  except (OSError, UnicodeError, tomllib.TOMLDecodeError):
     return {}
   providers = config.get("model_providers")
   if not isinstance(providers, dict):

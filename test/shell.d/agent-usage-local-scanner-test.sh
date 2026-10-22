@@ -121,6 +121,15 @@ turn("mystery", "mystery", "qwen-custom")
 record = collect("local")
 expect("Local counts the providers local.json names", record["modelUsage"].get("qwen-custom", {}).get("inputTokens"), 1000, record)
 
+# A Codex config that isn't UTF-8 names no endpoints, like a missing one,
+# and costs only the LAN rollouts it would have named.
+config = Path(os.environ["CODEX_HOME"]) / "config.toml"
+saved = config.read_bytes()
+config.write_bytes(b'a = "\xff\xfe"\n')
+record = local()
+expect("Local reads past a Codex config that isn't UTF-8", models(record), ["qwen-custom", "qwen-here"], record)
+config.write_bytes(saved)
+
 # A provider collector's id is never local, whatever local.json says.
 local_config("openrouter", "openai")
 record = collect("local")
