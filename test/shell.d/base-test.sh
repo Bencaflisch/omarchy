@@ -16,6 +16,12 @@ export ROOT
 # this at a file of their own.
 export OMARCHY_LANGUAGE_FILE=$ROOT/test/.no-language
 
+# Tests point HOME at a scratch directory, but a desktop session also exports
+# the XDG base directories, which would keep pointing at the real home: a
+# migration under test would then edit or delete the user's own files. Unset,
+# they follow HOME. A test that wants one sets it itself.
+unset XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_STATE_HOME
+
 pass() {
   printf 'ok - %s\n' "$1"
 }
