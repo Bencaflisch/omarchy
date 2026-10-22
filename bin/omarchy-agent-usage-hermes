@@ -6,8 +6,8 @@
 
 Everything the agents panel shows for Hermes is local session stats, read
 only from the state.db in Hermes' home (HERMES_HOME, else ~/.hermes) and in
-each named profile under ~/.hermes/profiles. Hermes has no subscription of
-its own, so the record has no limits.
+each named profile under its root's profiles/ and ~/.hermes/profiles. Hermes
+has no subscription of its own, so the record has no limits.
 
 Chat sessions that arrived over messaging gateways count too: Hermes treats
 them as first-class sessions and so does this record.
@@ -40,14 +40,23 @@ AGENT_ID = "hermes"
 AGENT_NAME = "Hermes"
 
 
-# Hermes anchors named profiles under ~/.hermes whatever HERMES_HOME says, so
-# they are looked for there. A profile linked to the home counts once.
+# Hermes' home is HERMES_HOME, its ~ and $VARs expanded, else
+# ~/.hermes<HERMES_DATA_DIR_SUFFIX>. Named profiles sit under the root's
+# profiles/: the default home, unless HERMES_HOME lies outside it, where a
+# <root>/profiles/<name> home makes <root> the root and any other home is its
+# own (hermes_constants.get_default_hermes_root). ~/.hermes/profiles is read
+# whatever the root, as before. A profile linked to the home counts once.
 def state_paths():
-  home = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
+  native = Path.home() / (".hermes" + os.environ.get("HERMES_DATA_DIR_SUFFIX", ""))
+  configured = os.environ.get("HERMES_HOME", "").strip()
+  home = Path(os.path.expanduser(os.path.expandvars(configured))) if configured else native
+  root = native
+  if not home.resolve().is_relative_to(native.resolve()):
+    root = home.parent.parent if home.parent.name == "profiles" else home
   candidates = [home / "state.db"]
-  profiles = Path.home() / ".hermes" / "profiles"
-  if profiles.is_dir():
-    candidates.extend(sorted(path / "state.db" for path in profiles.iterdir() if path.is_dir()))
+  for profiles in dict.fromkeys((root / "profiles", native / "profiles", Path.home() / ".hermes" / "profiles")):
+    if profiles.is_dir():
+      candidates.extend(sorted(path / "state.db" for path in profiles.iterdir() if path.is_dir()))
 
   paths, seen = [], set()
   for candidate in candidates:

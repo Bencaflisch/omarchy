@@ -123,6 +123,29 @@ expect("Hermes reads HERMES_HOME and every named profile",
        [record["modelUsage"]["gpt-6-astra"]["inputTokens"], record["modelUsage"]["gpt-6-sol"]["inputTokens"], record["totalSessions"], record["totalPrompts"]],
        [100, 1000, 2, 2], record)
 
+# Hermes expands ~ and $VARs in HERMES_HOME, and a custom home at
+# <root>/profiles/<name> keeps its sibling profiles under <root>/profiles
+# (hermes_constants._hermes_root_of).
+sandbox()
+state_db(home() / "srv" / "profiles" / "work" / "state.db", ("gpt-6-astra", 100))
+state_db(home() / "srv" / "profiles" / "play" / "state.db", ("gpt-6-sol", 1000))
+os.environ["HERMES_ROOT_FOR_TEST"] = "srv"
+os.environ["HERMES_HOME"] = "~/$HERMES_ROOT_FOR_TEST/profiles/work"
+record = hermes()
+del os.environ["HERMES_HOME"], os.environ["HERMES_ROOT_FOR_TEST"]
+expect("Hermes expands HERMES_HOME and reads the profiles beside a custom profile home",
+       [record["modelUsage"].get("gpt-6-astra", {}).get("inputTokens"), record["modelUsage"].get("gpt-6-sol", {}).get("inputTokens"), record["totalSessions"]],
+       [100, 1000, 2], record)
+
+# HERMES_DATA_DIR_SUFFIX names the default home.
+sandbox()
+state_db(home() / ".hermes-beta" / "state.db", ("gpt-6-astra", 100))
+os.environ["HERMES_DATA_DIR_SUFFIX"] = "-beta"
+record = hermes()
+del os.environ["HERMES_DATA_DIR_SUFFIX"]
+expect("Hermes reads the default home HERMES_DATA_DIR_SUFFIX names",
+       record["modelUsage"].get("gpt-6-astra", {}).get("inputTokens"), 100, record)
+
 # A profile that is a link to the home is the home: counted once.
 sandbox()
 state_db(home() / ".hermes" / "state.db", ("gpt-6-astra", 100))
