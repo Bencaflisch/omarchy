@@ -26,6 +26,8 @@ export OMARCHY_TEST_ARGV="$test_tmp/argv"
 export OMARCHY_REMOVE_NOTIFY=false
 applications="$HOME/.local/share/applications"
 icons="$HOME/.local/share/icons/hicolor/256x256/apps"
+mkdir -p "$HOME/.local/state/omarchy/current/theme"
+printf 'background = "#1a1b26"\nforeground = "#a9b1d6"\naccent = "#7aa2f7"\n' >"$HOME/.local/state/omarchy/current/theme/colors.toml"
 
 make_game() {
   mkdir -p "$HOME/Games/$1"
@@ -48,17 +50,19 @@ launched_argument() {
 }
 
 make_game tilt-maze
-magick -size 1280x800 xc:'#7aa2f7' "$HOME/Games/tilt-maze/check-play.png"
+printf '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" rx="12" fill="#7aa2f7"/></svg>\n' >"$HOME/Games/tilt-maze/icon.svg"
 omarchy-games-install tilt-maze >/dev/null || fail "games install adds a game in ~/Games"
 desktop="$applications/Tilt Maze.desktop"
 [[ -f $desktop ]] || fail "games install names the launcher after the game"
 url=$(launched_argument "$desktop")
 [[ $url == file://* ]] || fail "the launcher opens the game as a file URL" "$url"
-decoded=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.unquote(sys.argv[1].removeprefix("file://")))' "$url")
+decoded=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.unquote(sys.argv[1].removeprefix("file://").split("#")[0]))' "$url")
 [[ $decoded == "$HOME/Games/tilt-maze/index.html" ]] || fail "the file URL names the game's index.html" "$url"
+accent=$(python3 -c 'import json, sys, urllib.parse; print(json.loads(urllib.parse.unquote(sys.argv[1].split("#palette=")[1]))["accent"])' "$url")
+[[ $accent == "#7aa2f7" ]] || fail "the game is opened with the current theme's palette" "$url"
 grep -qx 'Categories=Game;' "$desktop" || fail "the launcher is filed under games"
-[[ $(magick identify -format '%wx%h' "$icons/tilt-maze.png") == "256x256" ]] || fail "the icon is a square cut from check's screenshot"
-pass "games install launches ~/Games/<name>/index.html from a home with a space and a percent sign"
+[[ $(magick identify -format '%wx%h' "$icons/tilt-maze.png") == "256x256" ]] || fail "the game's icon.svg becomes a 256 pixel icon"
+pass "games install launches ~/Games/<name>/index.html in the current theme, from a home with a space and a percent sign"
 
 omarchy-games-install tilt-maze >/dev/null || fail "installing a game again replaces its own launcher"
 printf '[Desktop Entry]\nName=Snake\nExec=snake-app\n' >"$applications/Snake.desktop"

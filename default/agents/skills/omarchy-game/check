@@ -9,11 +9,11 @@ be ready, starts a round, plays the game's own CHECK.play script with real key
 presses, pauses and resumes, ends the round and starts another. Any page error
 fails the check, and so does a round that never starts, a simulation that never
 moves, a pause that doesn't stop it, or a CHECK.expect event that never
-happened. Screenshots land beside the game as check-title.png, check-play.png
-and check-over.png: look at all three before calling the game done.
+happened. Screenshots land beside the game as check-title.png, check-play.png,
+check-over.png and check-light.png (in a light theme): look at all four before calling the game done.
 """
 
-import base64, json, os, pathlib, queue, shutil, subprocess, sys, tempfile, threading, time
+import base64, json, os, pathlib, queue, shutil, subprocess, sys, tempfile, threading, time, urllib.parse
 
 KEYS = {
   "Space": (" ", 32), "Enter": ("Enter", 13), "Escape": ("Escape", 27), "Tab": ("Tab", 9), "Backspace": ("Backspace", 8),
@@ -25,6 +25,11 @@ for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
   KEYS["Key" + c] = (c.lower(), ord(c))
 for d in "0123456789":
   KEYS["Digit" + d] = (d, ord(d))
+
+# A light theme (Flexoki Light), since games follow whichever theme the desktop has when they launch.
+LIGHT = {"mode": "light", "background": "#fffcf0", "foreground": "#100f0f", "accent": "#205ea6", "muted": "#b7b5ac",
+         "red": "#d14d41", "green": "#879a39", "yellow": "#d0a215", "blue": "#205ea6", "magenta": "#ce5d97",
+         "cyan": "#3aa99f", "orange": "#d0772b"}
 
 
 class Stop(Exception):
@@ -189,7 +194,7 @@ def blank(png):
   return out.isdigit() and int(out) <= 2
 
 
-def run(page, folder, problems, notes):
+def run(page, url, folder, problems, notes):
   shot = lambda name: page.shoot(os.path.join(folder, f"check-{name}.png"))
 
   st = page.wait_for(lambda s: s["ready"], 30)
@@ -287,13 +292,25 @@ def run(page, folder, problems, notes):
   if st["state"] != "playing":
     problems.append(f"A restarted round ended at once as '{st['state']}': reset() is not resetting everything.")
 
+  # The same game in a light theme, as omarchy-games-launch would pass it. A new fragment alone
+  # would only fire hashchange, so leave the page first and load it fresh.
+  page.send("Page.navigate", {"url": "about:blank"})
+  time.sleep(0.3)
+  page.send("Page.navigate", {"url": url.split("#")[0] + "#seed=1&palette=" + urllib.parse.quote(json.dumps(LIGHT))})
+  time.sleep(1)
+  st = page.wait_for(lambda s: s["ready"] and s["state"] == "title", 30)
+  if st["ready"]:
+    page.tap(start)
+    time.sleep(1.5)
+    shot("light")
+
 
 def main():
   if len(sys.argv) != 2 or not os.path.isfile(sys.argv[1]):
     sys.exit("Usage: check <path to the game's index.html>")
   path = os.path.realpath(sys.argv[1])
   folder = os.path.dirname(path)
-  for name in ("title", "play", "over"):
+  for name in ("title", "play", "over", "light"):
     try:
       os.remove(os.path.join(folder, f"check-{name}.png"))
     except FileNotFoundError:
@@ -303,8 +320,9 @@ def main():
   profile = tempfile.mkdtemp(prefix="omarchy-game-check-")
   browser = Browser(profile)
   try:
-    page = Page(browser, pathlib.Path(path).as_uri() + "#seed=1")
-    run(page, folder, problems, notes)
+    url = pathlib.Path(path).as_uri() + "#seed=1"
+    page = Page(browser, url)
+    run(page, url, folder, problems, notes)
   except Stop:
     pass
   except Exception as e:
@@ -325,7 +343,7 @@ def main():
   print("== Play")
   print("\n".join(notes) if notes else "not reached")
   print("== Screenshots")
-  for name in ("title", "play", "over"):
+  for name in ("title", "play", "over", "light"):
     png = os.path.join(folder, f"check-{name}.png")
     if os.path.isfile(png):
       print(png)
@@ -340,7 +358,7 @@ def main():
     print("\n".join(f"- {p}" for p in problems))
     print("\nFix these, then run check again.")
     sys.exit(1)
-  print("PASSED the automatic checks, which only prove the game runs. Now view the three screenshots above with your")
+  print("PASSED the automatic checks, which only prove the game runs. Now view the four screenshots above with your")
   print("image tool (view_image in Codex, Read in Claude Code) and fix what looks wrong: is the player obvious, is")
   print("everything on screen and readable, in the theme's colours, and does it look like the game you meant to make?")
 

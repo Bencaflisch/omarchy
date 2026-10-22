@@ -41,7 +41,7 @@ If `~/Games/<name>` already holds a game, ask before replacing it.
 
 Read the whole template once before changing it. Then edit that copy in place, section by section — never write the file from scratch, and never rewrite the frame. Work in `~/Games/<name>/index.html` itself, not a copy elsewhere:
 
-1. **SETTINGS**: set `NAME` to the game's name, and fill `PALETTE` from `omarchy-theme-color --all` (same keys: `mode`, `background`, `foreground`, `accent`, `muted`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `orange`). The game takes the look of the theme it was made in. Themes can be nearly monochrome or light: tell things apart by brightness and size as well as hue, and check the screenshots.
+1. **SETTINGS**: set `NAME` to the game's name, and fill `PALETTE` from `omarchy-theme-color --all` (same keys: `mode`, `background`, `foreground`, `accent`, `muted`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `orange`), keeping `themed(...)` around it. That is only the fallback: launched from the app launcher, the game is handed the desktop's current theme, whatever it is by then. So take every colour from `PALETTE` (never a colour written anywhere else), and make it work in light themes and dark ones, and in nearly monochrome ones: tell things apart by brightness and size as well as hue.
 2. **THE GAME**: replace everything in that section with your game, keeping its five pieces: `build()` once for everything reused, `reset()` to start a round, `update(dt)` for every rule, `note(name)` when something worth testing happens, `endRound(won)` when the round ends. Set `score` as the game goes.
 3. **The screens** in the HTML: the `<title>`, the title screen's name, one line saying the goal, and the controls; the help table. Keep the element ids.
 4. **CHECK**: the key presses that play your game for 5–10 seconds after it starts, and the `note()` names that must happen while they do. It must exercise the main mechanic: for breakout, keys that move the paddle under the ball and `expect: ['brick']`; for a maze, moves that reach a wall and `expect: ['bump']`; for a shooter, firing at something and `expect: ['hit']`.
@@ -55,21 +55,31 @@ Leave the frame alone: the input, sound, screens, loop and `window.omarchyGame` 
 "$SKILL_DIR/check" ~/Games/<name>/index.html
 ```
 
-`check` opens the game headless, starts a round, pauses and resumes it, plays your `CHECK.play`, ends the round and restarts it. It fails on any page error, a round that won't start, a simulation that doesn't move, a pause that doesn't stop it, or a `CHECK.expect` event that never happened. Fix what it reports and run it again until it says PASSED. Never weaken `CHECK` to make it pass: if the mechanic doesn't happen, the game is broken.
+`check` opens the game headless, starts a round, pauses and resumes it, plays your `CHECK.play`, ends the round and restarts it, then opens it again in a light theme. It fails on any page error, a round that won't start, a simulation that doesn't move, a pause that doesn't stop it, or a `CHECK.expect` event that never happened. Fix what it reports and run it again until it says PASSED. Never weaken `CHECK` to make it pass: if the mechanic doesn't happen, the game is broken.
 
-Then look at `check-title.png`, `check-play.png` and `check-over.png` beside the game, every time, with your harness's tool for viewing an image (`view_image` in Codex, Read in Claude Code). Reading the file names in the output is not looking. A pass only proves the game runs; only the pictures show whether it is any good. For each picture, write one line answering each of these, then fix every answer that is no and check again:
+Then look at `check-title.png`, `check-play.png`, `check-over.png` and `check-light.png` beside the game, every time, with your harness's tool for viewing an image (`view_image` in Codex, Read in Claude Code). Reading the file names in the output is not looking. A pass only proves the game runs; only the pictures show whether it is any good. For each picture, write one line answering each of these, then fix every answer that is no and check again:
 
 - Does the play area fill most of the window, with the player and everything it needs fully on screen and nothing cut off at the edges?
 - Is the player big and obvious, and is everything else told apart, in the theme's colours?
 - Does it look like the game you set out to make, with enough in it to be worth playing, not a few shapes on an empty field?
+- In `check-light.png`, is it as readable and as good-looking in a light theme?
 
-## 4. Put it in the launcher
+## 4. Give it an icon
+
+Write `~/Games/<name>/icon.svg`: a 256×256 square with a rounded tile filling it (`rx="56"`) in one strong colour, and on it one bold, simple picture of the game in a contrasting colour — a snake's coil, a chess knight, a flag on a mine — drawn with a few flat shapes. No text, no tiny detail, no more than three colours: it has to read at 32 pixels beside every other icon in the launcher. Then render it and look at it, large and small:
+
+```bash
+magick -background none ~/Games/<name>/icon.svg -resize 256x256 /tmp/<name>-icon.png
+magick /tmp/<name>-icon.png -resize 32x32 /tmp/<name>-icon-32.png
+```
+
+## 5. Put it in the launcher
 
 ```bash
 omarchy-games-install <name> ["Title"]
 ```
 
-This adds the game to the app launcher (Super + Space) as a web app, with an icon cut from `check-play.png` (or `icon.png` beside the game, if you made one). Run it again after renaming the title; the game file itself needs no reinstall after edits. Tell the user the game's name in the launcher, where the file is, the controls, and that it is removed under Remove > Web App (which leaves the file in `~/Games`).
+This adds the game to the app launcher (Super + Space) as a web app, opened in the desktop's current theme, with `icon.svg` as its icon (or a square cut from `check-play.png` if there is none). Run it again after renaming the title; the game file itself needs no reinstall after edits. Tell the user the game's name in the launcher, where the file is, the controls, and that it is removed under Remove > Web App (which leaves the file in `~/Games`).
 
 ## Making it good
 

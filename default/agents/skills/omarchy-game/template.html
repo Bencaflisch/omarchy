@@ -65,15 +65,16 @@ import * as THREE from 'three';
 
 // =============================================================================
 // SETTINGS — change these.
-// NAME namespaces saved data. PALETTE is the Omarchy theme, filled in from
-// `omarchy-theme-color --all` when the game was made.
+// NAME namespaces saved data. PALETTE is the Omarchy theme the game was made in, from
+// `omarchy-theme-color --all`. Launched from the app launcher, themed() swaps in the
+// desktop's current theme, so take every colour from PALETTE and keep themed() around it.
 // =============================================================================
 const NAME = 'dodge';
-const PALETTE = {
+const PALETTE = themed({
   mode: 'dark',
   background: '#1a1b26', foreground: '#a9b1d6', accent: '#7aa2f7', muted: '#414868',
   red: '#f7768e', green: '#9ece6a', yellow: '#e0af68', blue: '#7aa2f7', magenta: '#ad8ee6', cyan: '#449dab', orange: '#eb927b',
-};
+});
 
 // The key presses `check` plays after starting a round, as [seconds after start, key code, milliseconds held],
 // and the note() events that must happen while it plays. Make both exercise THIS game's main mechanic.
@@ -175,6 +176,22 @@ function update(dt) {
 // EVERYTHING BELOW IS THE FRAME AROUND THE GAME. Keep it. Change it only to add
 // controls to ACTIONS, or to adjust the camera, lights and fog to suit the game.
 // =============================================================================
+
+// omarchy-games-launch opens the game as index.html#palette=<the current theme as JSON>; check adds seed=1.
+function launchParam(name) {
+  return new URLSearchParams(location.hash.slice(1)).get(name);
+}
+
+function themed(fallback) {
+  let current = {};
+  try { current = JSON.parse(launchParam('palette') ?? '{}'); } catch {}
+  const palette = { ...fallback };
+  for (const key of Object.keys(fallback)) {
+    const value = current[key];
+    if (key === 'mode' ? value === 'light' || value === 'dark' : /^#[0-9a-f]{6}$/i.test(value ?? '')) palette[key] = value;
+  }
+  return palette;
+}
 
 for (const [key, value] of Object.entries(PALETTE)) document.documentElement.style.setProperty(`--${key}`, value);
 
@@ -292,8 +309,8 @@ function endRound(won) {
 }
 
 // The loop: keys → fixed-step simulation → render. Game rules never run in render.
-// Seeded randomness: `check` loads the game as index.html#seed=1 and gets the same round on every run.
-let seed = Number(location.hash.match(/seed=(\d+)/)?.[1] ?? Date.now()) >>> 0;
+// Seeded randomness: `check` passes seed=1 and gets the same round on every run.
+let seed = Number(launchParam('seed') ?? Date.now()) >>> 0;
 function random() {
   seed = (seed + 0x6d2b79f5) >>> 0;
   let t = Math.imul(seed ^ (seed >>> 15), seed | 1);
