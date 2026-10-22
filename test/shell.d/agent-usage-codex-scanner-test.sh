@@ -168,6 +168,17 @@ expect("Codex skips lines that aren't usage and tracks the model across turn_con
   "o3": {"inputTokens": 20, "outputTokens": 5, "cacheReadInputTokens": 10, "cacheCreationInputTokens": 0},
 }, record)
 
+# A line of the wrong shape, or a payload, info or usage that isn't an
+# object, loses that line alone: the turns after it still count.
+new_home()
+rollout("shaped.jsonl", '[{"type": "session_meta"}]', {"type": "session_meta", "payload": [1]},
+        {"type": "turn_context", "payload": ["gpt-x"]}, context("gpt-test"), tokens(10, 1),
+        {"type": "event_msg", "payload": {"type": "token_count", "info": [1]}},
+        {"type": "event_msg", "payload": {"type": "token_count", "info": {"last_token_usage": [1]}}}, tokens(20, 2))
+record = codex()
+expect("Codex skips a wrong-shaped rollout line and keeps reading the file",
+       [record["todayTotalTokens"], record["todayPrompts"]], [33, 2], record)
+
 # Session history only grows, so a refresh reads the files that changed and
 # replays its per-file totals for the rest. pi sessions stay out of that
 # cache: a fork repeats its parent's messages, so they are only deduplicated

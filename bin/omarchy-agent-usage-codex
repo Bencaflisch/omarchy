@@ -40,6 +40,7 @@ from collectors import (  # noqa: E402
   local_day,
   now_ms,
   number,
+  obj,
   opencode_db,
   pi_session_roots,
   read_json,
@@ -250,6 +251,10 @@ def read_native_codex_session(path, stat_result):
           entry = json.loads(raw)
         except Exception:
           continue
+        # A line of the wrong shape is skipped like one that isn't JSON, not
+        # a reason to stop reading the turns after it.
+        if not isinstance(entry, dict):
+          continue
         if entry.get("type") == "session_meta":
           # A forked rollout copies its parent's session_meta after its own,
           # so only the first one, as Codex reads it, says who served this.
@@ -261,7 +266,7 @@ def read_native_codex_session(path, stat_result):
           # local box or a third party, never this subscription, so drop the
           # whole rollout the way the pi and opencode scans drop foreign
           # providers.
-          meta = entry.get("payload") or {}
+          meta = obj(entry.get("payload"))
           provider = str(meta.get("model_provider") or "")
           # Rollouts predating the field carry no provider at all; count
           # those rather than silently lose the history.
@@ -269,7 +274,7 @@ def read_native_codex_session(path, stat_result):
             break
           continue
         if entry.get("type") == "turn_context":
-          payload = entry.get("payload") or {}
+          payload = obj(entry.get("payload"))
           current_model = model_name(payload.get("model") or payload.get("model_slug") or current_model)
           continue
         payload = entry.get("payload") or entry
@@ -279,10 +284,10 @@ def read_native_codex_session(path, stat_result):
           continue
         if payload.get("type") != "token_count":
           continue
-        info = payload.get("info") or {}
+        info = obj(payload.get("info"))
         # total_token_usage is cumulative for the session. Adding every
         # snapshot makes usage grow quadratically, so count the last turn.
-        usage = info.get("last_token_usage") or {}
+        usage = obj(info.get("last_token_usage"))
         cache_read = token_count(usage.get("cached_input_tokens"))
         cache_write = token_count(usage.get("cache_write_input_tokens"))
         # Cached tokens are included in input_tokens, and reasoning tokens
