@@ -177,6 +177,27 @@ record = kimi()
 expect("Kimi counts every Claude Code reply while Claude Code is pointed at Kimi Code",
        [record["todayTokensByModel"], record["todayPrompts"]], [{"kimi-for-coding": 300, "claude-sonnet-4-5": 40}, 2], record)
 
+# pi, omp and opencode on the Kimi Code plan count here: pi's own
+# `kimi-coding` provider and models.dev's `kimi-code-plan-global` and
+# `kimi-code-plan-cn`. Moonshot's pay-as-you-go API isn't the plan, and a
+# gateway named like it isn't either.
+sandbox()
+write_pi_session(home() / ".pi" / "agent" / "sessions" / "project" / "pi.jsonl", [
+  {"type": "message", "id": "u1", "timestamp": today_stamp(), "message": {"role": "user", "content": "hi"}},
+  pi_reply("kimi-coding", 300, id="k1", model="k3", api="openai-completions"),
+  pi_reply("moonshotai", 999, id="m1", model="kimi-k2.6"),
+  pi_reply("kimi-coding-proxy", 999, id="p1", model="k3"),
+])
+opencode_db(message=[
+  ("msg_1", "ses_1", oc_v1("kimi-code-plan-global", 200, model="kimi-for-coding")),
+  ("msg_2", "ses_1", oc_v1("kimi-code-plan-cn", 20, model="kimi-for-coding-highspeed")),
+  ("msg_3", "ses_1", oc_v1("moonshotai-cn", 999, model="kimi-k2.6")),
+])
+record = kimi()
+expect("Kimi counts pi and opencode on the Kimi Code plan ids, never Moonshot's pay-as-you-go API",
+       [record["todayTokensByModel"], record["todayPrompts"], record["ready"], record["usageStatusText"]],
+       [{"k3": 300, "kimi-for-coding": 200, "kimi-for-coding-highspeed": 20}, 3, True, "Waiting for auth"], record)
+
 # ---------------------------------------------------------------- contract
 
 sandbox()

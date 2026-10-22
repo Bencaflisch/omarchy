@@ -85,6 +85,7 @@ CLAIMED_PROVIDERS = {
   "deepseek",  # deepseek
   "devin",  # devin
   "fireworks", "fireworks-ai",  # fireworks, which counts the whole account
+  "kimi-coding", "kimi-code-plan-global", "kimi-code-plan-cn",  # kimi
   "google-antigravity",  # agy, pi's Antigravity sign-in
   "meta",  # muse
   "minimax", "minimax-cn", "minimax-coding-plan", "minimax-cn-coding-plan",  # minimax

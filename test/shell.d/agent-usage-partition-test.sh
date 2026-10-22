@@ -179,8 +179,13 @@ PROVIDERS = [
   ("qwen-token-plan-cn", "qwen-pt", "", "qwen", "qwen"),
   ("qwen-token-plan-individual", "qwen-pt", "", "qwen", "qwen"),
   ("qwen-portal", "qwen-pt", "", "qwen", "qwen"),
-  # Alibaba's pay-as-you-go keys carry no plan.
+  ("kimi-coding", "kimi-pt", "", "kimi", "kimi"),
+  ("kimi-code-plan-global", "kimi-pt", "", "kimi", "kimi"),
+  ("kimi-code-plan-cn", "kimi-pt", "", "kimi", "kimi"),
+  # Alibaba's and Moonshot's pay-as-you-go keys carry no plan.
   ("alibaba", "qwen-pt", "", None, None),
+  ("moonshotai", "kimi-pt", "", None, None),
+  ("moonshotai-cn", "kimi-pt", "", None, None),
   ("acme-unclaimed", "acme-pt", "", None, None),
 ]
 

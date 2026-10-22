@@ -37,10 +37,14 @@ from collectors import (  # noqa: E402
   local_day,
   obj,
   open_json,
+  opencode_db,
+  pi_session_roots,
   read_json,
   routed_match,
   routed_sources,
   scan_max_age,
+  scan_opencode,
+  scan_pi_sessions,
   scan_routed,
   token_count,
   warn,
@@ -470,6 +474,18 @@ def code_home() -> Path:
   return Path.home() / ".kimi-code"
 
 
+# The Kimi Code plan as pi, omp and opencode name it: pi's own `kimi-coding`
+# provider (api.kimi.com/coding/v1, the plan's endpoint) and models.dev's
+# `kimi-code-plan-global` (kimi.ai) and `kimi-code-plan-cn` (kimi.com).
+# Exact ids: Moonshot's pay-as-you-go API (`moonshotai`, `moonshotai-cn`) is
+# not the plan these limits meter.
+PROVIDERS = ("kimi-coding", "kimi-code-plan-global", "kimi-code-plan-cn")
+
+
+def billed_here(provider: str, model: str, entry: dict) -> bool:
+  return provider in PROVIDERS
+
+
 # Kimi Code logs each agent of a session, subagents included, to its own
 # append-only sessions/<workspace>/<session>/agents/<agent>/wire.jsonl: a
 # usage.record for every model request it made, compactions included, the
@@ -526,9 +542,10 @@ def read_wire(path: Path) -> tuple[bool, list[tuple]]:
 
 def scan() -> tuple[dict[str, Any], bool]:
   """Kimi Code's usage and typed prompts, each counted once though forks
-  copy them, Claude Code's turns on Kimi (pointed at Kimi's or Moonshot's
-  API, or answered by a Kimi model) and MiniMax Code's custom providers at
-  those hosts, and whether every session was read."""
+  copy them, pi, omp and opencode sessions on the Kimi Code plan, Claude
+  Code's turns on Kimi (pointed at Kimi's or Moonshot's API, or answered by a
+  Kimi model) and MiniMax Code's custom providers at those hosts, and
+  whether every session was read."""
   stats = Stats()
   complete = True
   wires = []
@@ -555,9 +572,12 @@ def scan() -> tuple[dict[str, Any], bool]:
       else:
         stats.add_prompts(row[2], session)
   routed_rows, routed_complete = scan_routed(AGENT_ID)
-  for row in routed_rows:
-    stats.add_row(row, row.model)
-  return stats.snapshot(), complete and routed_complete
+  pi_rows, pi_complete = scan_pi_sessions(r'"provider"\s*:\s*"(' + "|".join(PROVIDERS) + r')"', billed_here)
+  # The database's prefilter matches every plan id.
+  db_rows, db_complete = scan_opencode(["kimi-cod"], billed_here)
+  for row in routed_rows + pi_rows + db_rows:
+    stats.add_row(row, row.model.rstrip("/").split("/")[-1] or AGENT_ID)
+  return stats.snapshot(), complete and routed_complete and pi_complete and db_complete
 
 
 # Keyed by the credential store, the endpoint, and the token, so another
@@ -616,9 +636,10 @@ def main() -> int:
   args = parser.parse_args()
 
   # The digest covers Kimi Code's home, so another home never reuses this
-  # one's numbers, and Claude Code's and MiniMax Code's sessions, whose owner
-  # depends on where they are sent.
-  sources = [code_home(), *routed_sources()]
+  # one's numbers, pi's and omp's session roots and opencode's database, and
+  # Claude Code's and MiniMax Code's sessions, whose owner depends on where
+  # they are sent.
+  sources = [code_home(), *pi_session_roots(), opencode_db(), *routed_sources()]
   stats = cached_scan(AGENT_ID, sources, scan_max_age(args.force, args.limits_only), scan, match=routed_match())
   if not in_use() and not stats.get("modelUsage") and not stats.get("totalPrompts"):
     emit(base_record())
