@@ -178,4 +178,18 @@ record, _ = deepseek("down")
 expect("DeepSeek collector keeps one key's balance per API host",
        [http.requests[0]["url"], "balance" in other, other["usageStatusText"], record["balance"]["remaining"], record["limitsStale"]],
        ["https://deepseek.example/user/balance", False, "Balance unavailable", float(answer["total"]), True], other)
+
+# balance_infos holds one entry per currency, CNY or USD (DeepSeek's
+# get-user-balance reference): the funded one is the balance, so an empty CNY
+# entry never reads as an empty account beside USD credit.
+sandbox()
+os.environ["DEEPSEEK_API_KEY"] = "key-123"
+with FakeHttp({BALANCE: {"is_available": True, "balance_infos": [
+  {"currency": "CNY", "total_balance": "0.00", "granted_balance": "0.00", "topped_up_balance": "0.00"},
+  {"currency": "USD", "total_balance": "12.50", "granted_balance": "0.00", "topped_up_balance": "12.50"},
+]}}):
+  record = collect("deepseek", "--force")
+expect("DeepSeek collector reads the currency that holds the credit",
+       [record["balance"]["remaining"], record["balance"]["currency"], record["usageStatusText"]], [12.5, "USD", ""], record)
+
 PY

@@ -456,25 +456,34 @@ def fetch_balance(api_base_url: str, key: str) -> dict[str, Any]:
   if not isinstance(payload, dict):
     raise DeepSeekError("DeepSeek returned an invalid balance response.")
   infos = payload.get("balance_infos")
-  if not isinstance(infos, list) or not infos or not isinstance(infos[0], dict):
+  if not isinstance(infos, list) or not infos:
     raise DeepSeekError("DeepSeek's balance response carried no balance_infos.")
-  first = infos[0]
 
-  # An answer without a readable total says nothing about the balance, so it
-  # is a failed check that keeps the last good one, never a balance of zero.
-  total = first.get("total_balance")
-  try:
-    remaining = None if isinstance(total, bool) or total is None else Decimal(str(total).strip())
-  except InvalidOperation:
-    remaining = None
-  if remaining is None or not representable(remaining):
+  # One entry per currency (CNY or USD). The one holding credit is the
+  # balance, so an empty CNY entry never hides a funded USD one; with none
+  # funded, the first. An entry without a readable total says nothing and is
+  # skipped, and an answer with none is a failed check that keeps the last
+  # good balance, never a balance of zero.
+  readable = []
+  for info in infos:
+    if not isinstance(info, dict):
+      continue
+    total = info.get("total_balance")
+    try:
+      remaining = None if isinstance(total, bool) or total is None else Decimal(str(total).strip())
+    except InvalidOperation:
+      remaining = None
+    if remaining is not None and representable(remaining):
+      readable.append((remaining, info))
+  if not readable:
     raise DeepSeekError("DeepSeek's balance response carried no total_balance.")
+  remaining, info = next((entry for entry in readable if entry[0] > 0), readable[0])
 
   return {
     "remaining": remaining,
-    "granted": money(first.get("granted_balance")),
-    "toppedUp": money(first.get("topped_up_balance")),
-    "currency": str(first.get("currency") or "CNY"),
+    "granted": money(info.get("granted_balance")),
+    "toppedUp": money(info.get("topped_up_balance")),
+    "currency": str(info.get("currency") or "CNY"),
   }
 
 
