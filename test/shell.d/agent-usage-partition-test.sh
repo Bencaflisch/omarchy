@@ -1346,3 +1346,155 @@ if [[ -z $cost_report ]]; then
 else
   fail "what a Claude Code cost-state holds beyond the replies is counted once, by the collector that bills its model" "$cost_report"
 fi
+
+# Codex rollouts on a model_providers entry, as Codex 0.163 writes them: the
+# config.toml base_url says who served them, so one at a provider's host is
+# that provider's collector's whatever the entry's id (Z.ai, OpenRouter,
+# DeepSeek, Moonshot, Model Studio, MiniMax, ollama.com), one on the user's
+# own hardware is local's, and one at a host nothing can place nobody's. A
+# provider gone from the config keeps the base_url it was last seen with.
+CODEX_ROUTES_HOME="$WORK/codex-routes"
+mkdir -p "$CODEX_ROUTES_HOME/.codex" "$CODEX_ROUTES_HOME/.local/state/omarchy/agents"
+cat >"$CODEX_ROUTES_HOME/.codex/config.toml" <<'TOML'
+model = "gpt-5.1-codex"
+[model_providers.zai]
+name = "zai"
+base_url = "https://api.z.ai/api/coding/paas/v4"
+wire_api = "responses"
+[model_providers.openrouter]
+name = "openrouter"
+base_url = "https://openrouter.ai/api/v1"
+wire_api = "responses"
+[model_providers.dsk]
+base_url = "https://api.deepseek.com/v1"
+[model_providers.moon]
+base_url = "https://api.moonshot.ai/v1"
+[model_providers.dash]
+base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+[model_providers.mm]
+base_url = "https://api.minimax.io/v1"
+[model_providers.ollama]
+base_url = "https://ollama.com/v1"
+[model_providers.box]
+base_url = "http://192.168.1.20:8080/v1"
+[model_providers.acme]
+base_url = "https://llm.acme.example/v1"
+TOML
+python3 - "$CODEX_ROUTES_HOME" "$WORK/codex-routes-cells.json" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+home = Path(sys.argv[1])
+stamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+(home / ".local/state/omarchy/agents/local-codex-providers.json").write_text(json.dumps(
+  {"homes": {str(home / ".codex"): {"gone": "https://api.z.ai/api/paas/v4"}}}))
+ROUTES = [
+  ("openai", "gpt-5.1-codex", "codex"),
+  ("zai", "glm-4.6", "zai"),
+  ("openrouter", "z-ai/glm-4.6", "openrouter"),
+  ("dsk", "deepseek-chat", "deepseek"),
+  ("moon", "kimi-k2-0905-preview", "kimi"),
+  ("dash", "qwen3-coder-plus", "qwen"),
+  ("mm", "MiniMax-M2", "minimax"),
+  ("ollama", "gpt-oss:120b", "ollama"),
+  ("box", "qwen3-coder:30b", "local"),
+  ("acme", "acme-coder", None),
+  ("gone", "glm-4.5", "zai"),
+]
+rollouts = home / ".codex/sessions" / datetime.now().strftime("%Y/%m/%d")
+rollouts.mkdir(parents=True)
+cells = []
+for n, (provider, model, owner) in enumerate(ROUTES):
+  tag = f"zr{n:03d}"
+  base, colon, suffix = model.partition(":")
+  name = f"{base}-{tag}{colon}{suffix}"
+  thread = f"01a16422-7868-7633-a566-{n:012d}"
+  first = {"input_tokens": 8234 + n, "cached_input_tokens": 71, "cache_write_input_tokens": 31, "output_tokens": 51, "reasoning_output_tokens": 0, "total_tokens": 8285 + n}
+  second = {"input_tokens": 9234 + n, "cached_input_tokens": 72, "cache_write_input_tokens": 32, "output_tokens": 52, "reasoning_output_tokens": 0, "total_tokens": 9286 + n}
+  total = {key: first[key] + second[key] for key in first}
+  lines = [
+    {"timestamp": stamp, "type": "session_meta", "payload": {"session_id": thread, "id": thread, "originator": "codex_exec", "cli_version": "0.163.0", "source": "exec", "thread_source": "user", "model_provider": provider}},
+    {"timestamp": stamp, "type": "turn_context", "payload": {"model": name}},
+    {"timestamp": stamp, "type": "event_msg", "payload": {"type": "item_completed", "thread_id": thread, "item": {"type": "UserMessage", "id": f"u{n}", "content": [{"type": "text", "text": "go"}]}}},
+    {"timestamp": stamp, "type": "token_usage_record", "payload": {"thread_id": thread, "response_id": "resp_mock_0001", "usage": first, "thread_token_usage": first}},
+    {"timestamp": stamp, "type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": first, "last_token_usage": first}}},
+    {"timestamp": stamp, "type": "token_usage_record", "payload": {"thread_id": thread, "response_id": "resp_mock_0002", "usage": second, "thread_token_usage": total}},
+    {"timestamp": stamp, "type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": total, "last_token_usage": second}}},
+  ]
+  (rollouts / f"rollout-{tag}.jsonl").write_text("".join(json.dumps(line) + "\n" for line in lines))
+  cells.append({"tag": tag, "provider": provider, "tokens": total["input_tokens"] + total["output_tokens"], "owner": owner})
+json.dump(cells, open(sys.argv[2], "w"))
+PY
+
+codex_routes_report() {
+  python3 - "$WORK/codex-routes-cells.json" "$@" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+cells = {cell["tag"]: cell for cell in json.load(open(sys.argv[1]))}
+results = Path(sys.argv[2])
+seen = {tag: {} for tag in cells}
+for cid in sys.argv[3:]:
+  try:
+    record = json.loads((results / f"{cid}.json").read_text())
+  except ValueError:
+    print(f"{cid} printed no record: {(results / f'{cid}.err').read_text()[-300:]}")
+    continue
+  for model, bucket in (record.get("modelUsage") or {}).items():
+    total = sum(bucket.get(key) or 0 for key in ("inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"))
+    for tag in re.findall(r"zr\d{3}", model):
+      if tag in seen and total:
+        seen[tag][cid] = seen[tag].get(cid, 0) + total
+for tag, cell in sorted(cells.items()):
+  owner, tokens = cell["owner"], cell["tokens"]
+  wrong = [f"{cid} counted it {total / tokens:g}x" for cid, total in sorted(seen[tag].items()) if cid != owner or total != tokens]
+  if owner is not None and owner not in seen[tag]:
+    wrong.insert(0, f"{owner} missed it")
+  if wrong:
+    print(f"Codex provider {cell['provider']} ({tag}), expected {owner}: {'; '.join(wrong)}")
+PY
+}
+
+run_all "$CODEX_ROUTES_HOME" "$WORK/codex-routes-results"
+codex_routes=$(codex_routes_report "$WORK/codex-routes-results" "${collectors[@]}")
+if [[ -z $codex_routes ]]; then
+  pass "a Codex model_providers entry counts once, under the collector its base_url's host bills"
+else
+  fail "a Codex model_providers entry counts once, under the collector its base_url's host bills" "$codex_routes"
+fi
+
+# Moving a provider's base_url is a new scan: a cached one that counted it
+# under Z.ai no longer stands once config.toml sends it elsewhere.
+mkdir -p "$WORK/codex-routes-cached"
+run_cached_zai() {
+  env -i HOME="$CODEX_ROUTES_HOME" PATH="$WORK/bin" LANG=C.UTF-8 ${TZ+TZ="$TZ"} OMARCHY_PATH="$ROOT" OMARCHY_LANGUAGE_FILE="$OMARCHY_LANGUAGE_FILE" \
+    XDG_CONFIG_HOME="$CODEX_ROUTES_HOME/.config" XDG_DATA_HOME="$CODEX_ROUTES_HOME/.local/share" XDG_STATE_HOME="$CODEX_ROUTES_HOME/.local/state" \
+    XDG_CACHE_HOME="$CODEX_ROUTES_HOME/.cache" XDG_RUNTIME_DIR="$CODEX_ROUTES_HOME/.run" \
+    http_proxy=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 ALL_PROXY=http://127.0.0.1:9 \
+    "$TIMEOUT" --kill-after=5 "$COLLECTOR_TIMEOUT" "$ROOT/bin/omarchy-agent-usage-zai" --limits-only \
+    >"$WORK/codex-routes-cached/zai.json" 2>"$WORK/codex-routes-cached/zai.err" || true
+}
+run_cached_zai
+sed -i 's#https://api.z.ai/api/coding/paas/v4#https://llm.acme.example/zai/v1#' "$CODEX_ROUTES_HOME/.codex/config.toml"
+run_cached_zai
+if codex_cached=$(python3 - "$WORK/codex-routes-cached/zai.json" <<'PY'
+import json
+import sys
+
+try:
+  usage = json.load(open(sys.argv[1])).get("modelUsage") or {}
+except ValueError:
+  usage = {"no record": {}}
+models = sorted(model for model in usage if "zr" in model or model == "no record")
+if models != ["glm-4.5-zr010"]:
+  print(f"zai counted {models}, expected only glm-4.5-zr010")
+PY
+) && [[ -z $codex_cached ]]; then
+  pass "moving a Codex provider's base_url off Z.ai rescans rather than keeping a cached count"
+else
+  fail "moving a Codex provider's base_url off Z.ai rescans rather than keeping a cached count" "$codex_cached"
+fi

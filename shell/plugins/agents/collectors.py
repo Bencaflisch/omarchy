@@ -34,6 +34,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -2008,7 +2009,8 @@ def claude_code_scan_match(claude_dir: Path | None = None) -> dict[str, str]:
 # rest (`--oss` on a local daemon, a custom model_providers entry) are read
 # here for the collectors that bill them: the local collector for a
 # self-hosted provider, Ollama Cloud for a cloud-tagged model the local
-# daemon forwarded.
+# daemon forwarded, and a provider's collector for a model_providers entry
+# whose base_url is that provider's host (codex_route_owner).
 
 # The Codex collector counts rollouts on the built-in provider, and ones too
 # old to name a provider at all.
@@ -2258,6 +2260,109 @@ def codex_rollouts(cache_file: Path | None, reuse: bool = True) -> tuple[dict[st
     except OSError as exc:
       warn(f"could not write file cache ({exc})")
   return records, complete
+
+def _codex_config_urls(path: Path) -> dict[str, str]:
+  try:
+    with path.open("rb") as handle:
+      config = tomllib.load(handle)
+  except (OSError, UnicodeError, tomllib.TOMLDecodeError):
+    return {}
+  providers = config.get("model_providers")
+  if not isinstance(providers, dict):
+    return {}
+  return {str(name).lower(): str(entry.get("base_url") or "") for name, entry in providers.items() if isinstance(entry, dict)}
+
+
+def codex_config_urls() -> dict[str, str]:
+  """provider id -> base_url, from the Codex CLI's own config: the system
+  layer, the user's config.toml over it, and the profiles
+  (<name>.config.toml) Codex layers over that when one is selected."""
+  home = codex_home()
+  urls: dict[str, str] = {}
+  for path in (Path("/etc/codex/config.toml"), home / "config.toml", *sorted(home.glob("*.config.toml"))):
+    urls.update(_codex_config_urls(path))
+  return urls
+
+
+def codex_providers_path() -> Path:
+  return Path(os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state")) / "omarchy" / "agents" / "local-codex-providers.json"
+
+
+def codex_provider_urls() -> dict[str, str]:
+  """provider id -> base_url, for every Codex provider config.toml has named.
+
+  A rollout records only its provider's id, never the URL it reached, so a
+  custom provider that leaves config.toml would take its history with it.
+  Each run remembers the endpoints the config names, per Codex home, and a
+  provider the config no longer has keeps the last one it had. The current
+  config always wins. A provider only ever given on the command line (`-c
+  model_providers...`) or in a project's .codex/config.toml is never seen
+  here: local.json names those for the local collector.
+  """
+  path = codex_providers_path()
+  homes = read_json(path).get("homes")
+  homes = homes if isinstance(homes, dict) else {}
+  key = str(codex_home())
+  known = homes.get(key)
+  known = {str(pid): url for pid, url in known.items() if isinstance(url, str) and url} if isinstance(known, dict) else {}
+  urls = {**known, **codex_config_urls()}
+  remembered = {pid: url for pid, url in urls.items() if url}
+  if remembered != known:
+    try:
+      path.parent.mkdir(parents=True, exist_ok=True)
+      write_json(path, {"homes": {**homes, key: remembered}}, sort_keys=True)
+    except OSError as exc:
+      # Remembering costs nothing when it fails: the current config still
+      # classifies.
+      warn(f"could not remember Codex providers ({exc})")
+  return urls
+
+
+def codex_route_owner(provider: Any, model: Any, urls: dict[str, str]) -> str | None:
+  """The provider collector that bills a Codex rollout on `provider`, with
+  the model that answered, or None for one no provider's collector counts
+  (the local collector decides which of those it ran itself). The built-in
+  provider is `codex`'s. A model_providers entry whose base_url is a
+  provider's host is that provider's, whatever its id; one on the user's own
+  hardware or a host nothing here can place is no provider's. Past that,
+  `ollama-cloud`, and a cloud-tagged model through the local daemon's
+  `ollama`, are Ollama Cloud's."""
+  name = str(provider or "").strip().lower()
+  if name in ("", CODEX_NATIVE_PROVIDER):
+    return "codex"
+  owner = endpoint_owner(urls.get(name))
+  if owner and owner != "local":
+    return owner
+  if name == "ollama-cloud" or (name == "ollama" and cloud_model(model)):
+    return "ollama"
+  return None
+
+
+def codex_scan_match() -> dict[str, Any]:
+  """For a collector's cached_scan(match=...): which collector each Codex
+  provider's base_url bills, which the config can change without a rollout
+  changing."""
+  return {"codexRoutes": [[pid, endpoint_owner(url)] for pid, url in sorted(codex_provider_urls().items())]}
+
+
+def scan_codex_routed(owner: str, reuse: bool = True) -> tuple[list[UsageRow], bool]:
+  """The Codex rollout totals codex_route_owner() says `owner` bills, as rows
+  (one per rollout, day and model, prompts counted), and whether every
+  rollout was read. Only Ollama Cloud bills a provider no base_url names, so
+  a collector no configured provider points at reads nothing."""
+  urls = codex_provider_urls()
+  if owner != "ollama" and not any(endpoint_owner(url) == owner for url in urls.values()):
+    return [], True
+  records, complete = codex_rollouts(codex_rollout_cache(owner), reuse=reuse)
+  rows = [
+    UsageRow(day, key, owner, model, *totals[:4], prompts=totals[4])
+    for key, record in records.items()
+    for day, models in record["days"].items()
+    for model, totals in models.items()
+    if codex_route_owner(record["provider"], model, urls) == owner
+  ]
+  return rows, complete
+
 
 # ------------------------------------------------------------ Kimchi
 
@@ -2661,28 +2766,31 @@ def scan_mcode(owner: str) -> tuple[list[UsageRow], bool]:
 
 # -------------------------------------------- harnesses routed by base URL
 #
-# Claude Code and MiniMax Code send to whatever endpoint they are given, and
-# record only a model or a route's name, so the collector of every provider
-# they can be pointed at (and `local`, for the user's own hardware) reads
-# both, each keeping what claude_code_owner() and mcode_route_owner() say it
-# bills.
+# Claude Code, MiniMax Code and Codex send to whatever endpoint they are
+# given, and record only a model or a route's name, so the collector of every
+# provider they can be pointed at (and `local`, for the user's own hardware)
+# reads them, each keeping what claude_code_owner(), mcode_route_owner() and
+# codex_route_owner() say it bills. The local collector reads Codex with a
+# rule of its own, since it also counts provider ids no base_url names.
 
 
 def routed_sources() -> list[Path]:
   """The stores scan_routed() reads, for a collector's scan sources."""
-  return [claude_code_dir() / "projects", mcode_data_dir()]
+  return [claude_code_dir() / "projects", mcode_data_dir(), codex_home()]
 
 
 def routed_match() -> dict[str, Any]:
   """What scan_routed() decided owners under, for cached_scan(match=...)."""
-  return {**claude_code_scan_match(), **mcode_scan_match()}
+  return {**claude_code_scan_match(), **mcode_scan_match(), **codex_scan_match()}
 
 
-def scan_routed(owner: str) -> tuple[list[UsageRow], bool]:
-  """Claude Code's and MiniMax Code's usage that `owner` bills, and whether
-  every session was read."""
+def scan_routed(owner: str, reuse: bool = True) -> tuple[list[UsageRow], bool]:
+  """Claude Code's, MiniMax Code's and Codex's usage that `owner` bills, and
+  whether every session was read. `reuse=False` reads every Codex rollout
+  again rather than from its per-file cache."""
   mcode_rows, complete = scan_mcode(owner)
-  return scan_claude_code(owner) + mcode_rows, complete
+  codex_rows, codex_complete = ([], True) if owner == "local" else scan_codex_routed(owner, reuse)
+  return scan_claude_code(owner) + mcode_rows + codex_rows, complete and codex_complete
 
 
 # ------------------------------------------------------------------ limits
