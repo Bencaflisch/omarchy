@@ -2675,17 +2675,19 @@ def mcode_routes(data_dir: Path | None = None) -> dict[str, str]:
   return routes
 
 
-def mcode_route_owner(provider: Any, routes: dict[str, str]) -> str | None:
-  """The collector that bills a MiniMax Code reply on route `provider`. A
-  reply naming none predates third-party routes and ran on MiniMax. A
-  custom provider is its baseURL's (a provider's host, or the user's own
-  hardware); one gone from the config, or behind a gateway nothing here can
-  place, is nobody's here."""
+def mcode_route_owner(provider: Any, routes: dict[str, str], model: Any = None) -> str | None:
+  """The collector that bills a MiniMax Code reply by `model` on route
+  `provider`. A reply naming none predates third-party routes and ran on
+  MiniMax. A custom provider is its baseURL's (a provider's host, or the
+  user's own hardware, where a cloud-tagged model only passed through a
+  local Ollama daemon to Ollama's servers); one gone from the config, or
+  behind a gateway nothing here can place, is nobody's here."""
   if provider in (None, "", *MCODE_PROVIDERS):
     return "minimax"
   name = str(provider)
   if name.startswith("custom_provider:"):
-    return routes.get(name.partition(":")[2]) or None
+    owner = routes.get(name.partition(":")[2]) or None
+    return "ollama" if owner == "local" and cloud_model(model) else owner
   return None
 
 
@@ -2719,8 +2721,10 @@ def _mcode_day(message: dict[str, Any], entry: dict[str, Any]) -> str | None:
 def scan_mcode(owner: str) -> tuple[list[UsageRow], bool]:
   """MiniMax Code's replies and typed prompts that `owner` bills, as rows
   (replies with no prompts of their own, prompts with no tokens), and
-  whether every session was read. A prompt goes with the route of the reply
-  that answers it; one left unanswered with the session's last route."""
+  whether every session was read. A prompt goes with the route and model of
+  the reply that answers it, so a collector keeping some models alone keeps
+  their prompts too; one left unanswered with the session's last route and
+  no model."""
   root = mcode_data_dir() / "v2" / "sessions"
   if not root.is_dir():
     return [], True
@@ -2757,9 +2761,10 @@ def scan_mcode(owner: str) -> tuple[list[UsageRow], bool]:
             continue
           if message.get("role") != "assistant":
             continue
-          route = mcode_route_owner(message.get("provider"), routes)
+          model = str(message.get("model") or entry.get("model") or "minimax").strip() or "minimax"
+          route = mcode_route_owner(message.get("provider"), routes, model)
           if route == owner:
-            rows.extend(UsageRow(prompt_day, session, owner, "", 0, 0, 0, 0) for prompt_day in pending)
+            rows.extend(UsageRow(prompt_day, session, owner, model, 0, 0, 0, 0) for prompt_day in pending)
           pending = []
           usage = message.get("usage")
           if route != owner or not isinstance(usage, dict):
@@ -2767,7 +2772,6 @@ def scan_mcode(owner: str) -> tuple[list[UsageRow], bool]:
           input_tokens, output_tokens, cache_read, cache_write = _mcode_tokens(usage)
           if not (input_tokens or output_tokens or cache_read or cache_write):
             continue
-          model = str(message.get("model") or entry.get("model") or "minimax").strip() or "minimax"
           rows.append(UsageRow(day, session, owner, model, input_tokens, output_tokens, cache_read, cache_write, prompts=0))
       if route == owner:
         rows.extend(UsageRow(prompt_day, session, owner, "", 0, 0, 0, 0) for prompt_day in pending)
