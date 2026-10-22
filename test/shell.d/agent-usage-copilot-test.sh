@@ -434,7 +434,7 @@ def current_store(rows):
   path = copilot_home() / "session-store.db"
   path.parent.mkdir(parents=True, exist_ok=True)
   conn = sqlite3.connect(path)
-  conn.execute("CREATE TABLE assistant_usage_events (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, turn_index INTEGER, agent_id TEXT,"
+  conn.execute("CREATE TABLE IF NOT EXISTS assistant_usage_events (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, turn_index INTEGER, agent_id TEXT,"
                " parent_tool_call_id TEXT, model TEXT NOT NULL, copilot_usage_model TEXT, input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER,"
                " cache_write_tokens INTEGER, reasoning_tokens INTEGER, total_nano_aiu INTEGER, request_multiplier REAL, duration_ms INTEGER,"
                " time_to_first_token_ms INTEGER, output_ttft_ms REAL, inter_token_latency_ms INTEGER, initiator TEXT, api_endpoint TEXT, reasoning_effort TEXT,"
@@ -458,4 +458,26 @@ record = copilot()
 expect("a current store counts the prompts typed, not the agent's follow-up calls, and shows them",
        {key: record[key] for key in ("ready", "hasPromptStats", "todayPrompts", "totalPrompts", "todaySessions", "todayTotalTokens")},
        {"ready": True, "hasPromptStats": True, "todayPrompts": 3, "totalPrompts": 3, "todaySessions": 2, "todayTotalTokens": 4400}, record)
+
+# A request sent to a custom provider (BYOK, COPILOT_PROVIDER_BASE_URL) has
+# no GitHub usage report: GitHub billed nothing, so it isn't Copilot's.
+current_store([
+  ("sess-byok", 0, "mock-model", None, 21372, 251, 271, None, 0.0, "user", "stop", NOW),
+  ("sess-byok", 1, "mock-model", None, 21675, 254, 274, None, 0.0, "user", "stop", NOW),
+])
+record = copilot()
+expect("a request to a custom provider isn't counted as Copilot's",
+       {key: record[key] for key in ("todayPrompts", "todaySessions", "todayTotalTokens")} | {"models": sorted(record["modelUsage"])},
+       {"todayPrompts": 3, "todaySessions": 2, "todayTotalTokens": 4400, "models": ["gpt-5.2"]}, record)
+
+# A machine where Copilot only ever ran against a custom provider has nothing
+# of Copilot's to show, and its transcripts aren't read in the store's place.
+sandbox()
+configured(remote=False)
+current_store([("sess-byok", 0, "mock-model", None, 21372, 251, 271, None, 0.0, "user", "stop", NOW)])
+transcript("sess-byok", [("user.message", {"content": "Say hi"}, NOW),
+                         ("session.shutdown", {"modelMetrics": {"mock-model": {"usage": {"inputTokens": 21372, "outputTokens": 251}}}}, NOW)])
+record = copilot()
+expect("a store of custom-provider requests alone leaves Copilot empty",
+       [record["ready"], record["totalPrompts"], record["todayTotalTokens"]], [False, 0, 0], record)
 PY

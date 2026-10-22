@@ -285,8 +285,12 @@ class UsageTally(Stats):
 #
 # Current CLIs also say who started each request: initiator "user" is a
 # prompt typed into the session, and "agent" the follow-up calls the agent
-# made on its own (a tool loop's next step, a subagent). A store from before
-# that column can't tell its prompts apart.
+# made on its own (a tool loop's next step, a subagent). And a request GitHub
+# served carries GitHub's usage report, its copilot_usage_model and cost; one
+# sent to a custom provider (BYOK, COPILOT_PROVIDER_BASE_URL) has neither, so
+# that provider billed it, not Copilot, and it stays out of this record. The
+# store doesn't keep where such a request went. A store from before these
+# columns counts every row as Copilot's, and its prompts can't be told apart.
 
 
 def table_columns(conn: sqlite3.Connection, name: str) -> set[str]:
@@ -303,7 +307,8 @@ def scan_store(conn: sqlite3.Connection) -> tuple[dict[str, Any], int]:
   rows_seen = 0
   columns = table_columns(conn, "assistant_usage_events")
   knows_initiator = "initiator" in columns
-  optional = [name for name in ("initiator", "agent_id") if name in columns]
+  knows_billing = "copilot_usage_model" in columns
+  optional = [name for name in ("initiator", "agent_id", "copilot_usage_model") if name in columns]
   extra = "".join(", " + name for name in optional)
   try:
     rows = conn.execute(
@@ -317,6 +322,8 @@ def scan_store(conn: sqlite3.Connection) -> tuple[dict[str, Any], int]:
       if day is None:
         continue
       rows_seen += 1
+      if knows_billing and row["copilot_usage_model"] is None and row["total_nano_aiu"] is None:
+        continue
       if knows_initiator:
         typed = clean_name(row["initiator"]) == "user" and not ("agent_id" in optional and clean_name(row["agent_id"]))
         tally.add_prompts(day, session_id or "unknown", 1 if typed else 0)
