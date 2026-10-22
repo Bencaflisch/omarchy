@@ -595,11 +595,23 @@ by_tokens = sorted(row.input_tokens + row.output_tokens + row.cache_read + row.c
 check("a scan that read everything says so", complete)
 check(
   "pi replies count once by (id, timestamp), id-less lines always, with totals, thinking, and garbage handled",
-  by_tokens == [1, 1, 10, 20, 40, 100, 1000],
+  by_tokens == [1, 1, 10, 16, 40, 100, 1000],
   json.dumps([row._asdict() for row in rows]),
 )
 reasoning = next(row for row in rows if row.input_tokens == 2)
-check("thinking tokens count as output", (reasoning.output_tokens, reasoning.cache_read, reasoning.cache_write) == (7, 5, 6))
+check("thinking is already in output and never added again", (reasoning.output_tokens, reasoning.cache_read, reasoning.cache_write) == (3, 5, 6))
+# As pi 1.4.0 and omp 18.12.6 wrote them for a reply the server billed as 54
+# and 84 completion tokens, 7 and 37 of them reasoning: totalTokens leaves the
+# thinking out because output already holds it.
+thinking = work / "thinking" / "sessions"
+write_session(thinking / "pi.jsonl", [reply("demo", 0, "pi1", usage={"input": 1401, "output": 54, "cacheRead": 74, "cacheWrite": 0, "reasoning": 7, "totalTokens": 1529})])
+write_session(thinking / "omp.jsonl", [reply("demo", 0, "omp1", usage={"input": 4401, "output": 84, "cacheRead": 104, "cacheWrite": 0, "totalTokens": 4589, "reasoningTokens": 37})])
+thinking_rows, _ = collectors.scan_pi_sessions(r'"provider"\s*:\s*"demo"', lambda provider, model, entry: True, roots=[thinking])
+check(
+  "pi's and omp's output already holds their thinking",
+  sorted((row.output_tokens, row.input_tokens + row.output_tokens + row.cache_read) for row in thinking_rows) == [(54, 1529), (84, 4589)],
+  json.dumps([row._asdict() for row in thinking_rows]),
+)
 check("a forked message counts toward the session it was forked from", next(row for row in rows if row.input_tokens == 100).session == os.path.realpath(parent))
 check("a fork that only copied its parent is no session of its own", os.path.realpath(sessions / "a" / "copy-only.jsonl") not in {row.session for row in rows})
 check("the provider filter is the caller's", all(row.provider == "demo" for row in rows))
@@ -652,7 +664,7 @@ check("a collector can read a pi-format tree of its own instead", own_complete a
 both_rows, _ = collectors.scan_pi_sessions(r'"provider"\s*:\s*"demo"', lambda provider, model, entry: True, roots=[*collectors.pi_session_roots(), harness, work / "alias", work / "missing"])
 check(
   "roots read beside pi's count a message copied between them once, an alias once, and a missing one as nothing",
-  sorted(row.input_tokens + row.output_tokens + row.cache_read + row.cache_write for row in both_rows) == [1, 1, 10, 20, 40, 100, 300, 1000],
+  sorted(row.input_tokens + row.output_tokens + row.cache_read + row.cache_write for row in both_rows) == [1, 1, 10, 16, 40, 100, 300, 1000],
   json.dumps([row._asdict() for row in both_rows]),
 )
 check("canonical roots drop an alias and a root inside another", collectors.canonical_roots([harness, work / "alias", harness / "inner", work / "harness"]) == [(work / "harness").resolve()])

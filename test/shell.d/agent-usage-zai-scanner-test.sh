@@ -39,7 +39,7 @@ def sessions():
 sandbox()
 stamp = today_stamp()
 write_pi_session(sessions() / "project" / "pi.jsonl", [
-  pi_reply("zai", id="a", model="glm-5.3", timestamp=stamp, usage={"input": 10, "output": 4, "reasoning": 6, "cacheRead": 3, "cacheWrite": 2}),
+  pi_reply("zai", id="a", model="glm-5.3", timestamp=stamp, usage={"input": 10, "output": 10, "reasoning": 6, "cacheRead": 3, "cacheWrite": 2}),
   pi_reply("zhipu", id="b", model="glm-4.7", timestamp=stamp, usage={"input": 20, "output": 5}),
   pi_reply("openai", id="c", model="gpt", timestamp=stamp, usage={"input": 999, "output": 999}),
   {"type": "message", "id": "d", "timestamp": stamp, "message": {"role": "user", "provider": "zai", "model": "glm-5.3", "usage": {"input": 500, "output": 500}}},
@@ -56,7 +56,7 @@ expect("Z.ai is ready on local stats alone and waits for a key, naming ZAI_API_K
 
 # Reasoning tokens fold into output and cache tokens split out; openai, the
 # user turn and the malformed line drop out.
-expect("Z.ai counts zai and zhipu assistant turns, reasoning in output", {
+expect("Z.ai counts zai and zhipu assistant turns, reasoning already in output", {
   "models": sorted(record["modelUsage"]), "glm-5.3": record["modelUsage"]["glm-5.3"],
 }, {
   "models": ["glm-4.6", "glm-4.7", "glm-5.3"],

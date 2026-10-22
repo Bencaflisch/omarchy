@@ -697,8 +697,9 @@ def _pi_row(entry: Any, path: str, accept: Accept) -> tuple[tuple, UsageRow] | N
     return None
   usage = obj(message.get("usage"))
   input_tokens = usage_tokens(usage, "input", "inputTokens", "input_tokens")
-  # pi folds thinking into its own field; both are generated.
-  output_tokens = usage_tokens(usage, "output", "outputTokens", "output_tokens") + usage_tokens(usage, "reasoning", "reasoningTokens", "reasoning_tokens")
+  # pi's `reasoning` and omp's `reasoningTokens` are the part of output that
+  # was thinking, already in it, so they are never added again.
+  output_tokens = usage_tokens(usage, "output", "outputTokens", "output_tokens")
   cache_read = usage_tokens(usage, "cacheRead", "cacheReadTokens", "cache_read", "cache_read_input_tokens")
   cache_write = usage_tokens(usage, "cacheWrite", "cacheWriteTokens", "cache_write", "cache_creation_input_tokens")
   if not (input_tokens or output_tokens or cache_read or cache_write):
