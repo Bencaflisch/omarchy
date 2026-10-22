@@ -142,6 +142,11 @@ record = ollama(mode="down")
 expect("Ollama keeps each key's limits and plan apart", [record["limits"], record["tierLabel"], record["usageStatusText"]],
        [[], "", "Ollama limits unavailable"], record)
 
+# Ollama's UserResponse struct tags the plan `plan` (api/types.go), as the
+# server re-encodes it; the capitalized spelling still reads.
+record = ollama(routes={**ROUTES, ME: {"id": "00000000-0000-0000-0000-000000000000", "email": "a@example.com", "name": "a", "plan": "pro"}})
+expect("Ollama reads the plan under its JSON tag's lowercase spelling", record["tierLabel"], "Pro", record)
+
 # ---------------------------------------------------------- the answer
 
 # With nothing kept, a failed check says the limits are unavailable; only an
