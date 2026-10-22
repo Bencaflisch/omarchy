@@ -1607,6 +1607,58 @@ def read_claude_code_transcript(path: Path, entry: dict[str, Any] | None) -> dic
   }
 
 
+def _claude_code_index_stamp(index_file: Path) -> tuple[int, int, int] | None:
+  """Which index file is there now: a write replaces it whole."""
+  try:
+    info = index_file.stat()
+  except OSError:
+    return None
+  return (info.st_ino, info.st_mtime_ns, info.st_size)
+
+
+def _claude_code_index_fresh(index: dict[str, Any], files: list[Path]) -> bool:
+  """Whether `index` holds every transcript in `files` as it is now, and no
+  other, so nothing needs reading."""
+  if len(index) != len(files):
+    return False
+  for path in files:
+    entry = index.get(str(path))
+    try:
+      info = path.stat()
+    except OSError:
+      return False
+    if not entry or entry.get("size") != info.st_size or entry.get("mtime") != info.st_mtime_ns:
+      return False
+  return True
+
+
+def _claude_code_read_transcripts(files: list[Path], previous: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+  """Each transcript's index entry, reusing `previous`, and the order they
+  were read in."""
+  current: dict[str, Any] = {}
+  order: list[str] = []
+  unreadable_count = 0
+  unreadable_examples: list[str] = []
+  for path in files:
+    key = str(path)
+    try:
+      current[key] = read_claude_code_transcript(path, previous.get(key))
+    except Exception as exc:
+      unreadable_count += 1
+      if len(unreadable_examples) < 3:
+        unreadable_examples.append(f"{path}: {exc}")
+      # What was read before is still true of the file.
+      if key in previous:
+        current[key] = previous[key]
+    if key in current:
+      order.append(key)
+
+  if unreadable_count:
+    examples = "; ".join(unreadable_examples)
+    print(f"Ignoring {unreadable_count} unreadable Claude project files (examples: {examples})", file=sys.stderr)
+  return current, order
+
+
 _DEFAULT_INDEX = object()
 
 
@@ -1641,39 +1693,43 @@ def scan_claude_code(
     except OSError as exc:
       warn(f"scan index unavailable ({exc})")
       index_file = None
-  previous = _claude_code_load_index(index_file) if index_file and not reread else {}
-  current: dict[str, Any] = {}
-
+  # Every collector reading Claude Code runs at once (the update command
+  # backgrounds one per agent), so one of them brings the index up to date
+  # while the others wait on its lock and then find nothing left to read. An
+  # index that already answers for every transcript is read without waiting.
   # Directory order, as before: when one API message shows up in several
   # transcripts with the same output count, the last file visited wins, and
   # the numbers must not move because the scan got faster.
-  order: list[str] = []
-  unreadable_count = 0
-  unreadable_examples: list[str] = []
-  files = projects.rglob("*.jsonl") if projects.is_dir() else []
-  for path in files:
-    key = str(path)
-    try:
-      current[key] = read_claude_code_transcript(path, previous.get(key))
-    except Exception as exc:
-      unreadable_count += 1
-      if len(unreadable_examples) < 3:
-        unreadable_examples.append(f"{path}: {exc}")
-      # What was read before is still true of the file.
-      if key in previous:
-        current[key] = previous[key]
-    if key in current:
-      order.append(key)
+  files = list(projects.rglob("*.jsonl")) if projects.is_dir() else []
+  if not index_file:
+    current, order = _claude_code_read_transcripts(files, {})
+  else:
+    lock_file = index_file.with_name(index_file.name + ".lock")
 
-  if unreadable_count:
-    examples = "; ".join(unreadable_examples)
-    print(f"Ignoring {unreadable_count} unreadable Claude project files (examples: {examples})", file=sys.stderr)
+    def build(previous: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+      current, order = _claude_code_read_transcripts(files, previous)
+      if current != previous:
+        try:
+          write_json(index_file, {"version": CLAUDE_CODE_INDEX_VERSION, "zone": _claude_code_index_zone(), "files": current}, sort_keys=True)
+        except Exception as exc:
+          warn(f"could not write the Claude scan index {index_file} ({exc})")
+      return current, order
 
-  if index_file and current != previous:
-    try:
-      write_json(index_file, {"version": CLAUDE_CODE_INDEX_VERSION, "zone": _claude_code_index_zone(), "files": current}, sort_keys=True)
-    except Exception as exc:
-      warn(f"could not write the Claude scan index {index_file} ({exc})")
+    loaded = _claude_code_index_stamp(index_file)
+    previous = {} if reread else _claude_code_load_index(index_file)
+    built = None
+    if reread or not _claude_code_index_fresh(previous, files):
+      with exclusive_lock(lock_file):
+        if reread or _claude_code_index_stamp(index_file) == loaded:
+          built = build(previous)
+      # Whoever held the lock wrote the index meanwhile, most likely all
+      # this reader needs.
+      if built is None:
+        previous = _claude_code_load_index(index_file)
+        if not _claude_code_index_fresh(previous, files):
+          with exclusive_lock(lock_file):
+            built = build(_claude_code_load_index(index_file))
+    current, order = built or (previous, [str(path) for path in files])
 
   owners: dict[Any, str | None] = {}
 

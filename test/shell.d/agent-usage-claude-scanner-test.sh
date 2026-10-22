@@ -252,6 +252,61 @@ finally:
   time.tzset()
 expect("Claude recomputes indexed days after a timezone change", record["activeDates"], [expected_day], record)
 
+# Every collector reading Claude Code runs at once, and the index is built
+# once: one reads the transcripts while the others wait for it, then take
+# what it wrote. A transcript grown since is the only one read again, and an
+# index current for every transcript is read as it is.
+sandbox()
+for n in range(3):
+  transcript(message(f"busy-{n}", 100 + n, 1), name=f"busy-{n}.jsonl")
+import collectors
+reads = home() / "reads.log"
+totals = home() / "totals.log"
+start = home() / "start"
+real_read = collectors.read_claude_code_transcript
+
+
+def logged_read(path, entry):
+  result = real_read(path, entry)
+  if result is not entry:
+    with reads.open("a") as handle:
+      handle.write(f"{path.name}\n")
+    time.sleep(0.1)
+  return result
+
+
+def scan_at_once(count=4):
+  for path in (reads, totals, start):
+    path.unlink(missing_ok=True)
+  children = []
+  for _ in range(count):
+    pid = os.fork()
+    if pid == 0:
+      try:
+        collectors.read_claude_code_transcript = logged_read
+        while not start.exists():
+          time.sleep(0.005)
+        rows = collectors.scan_claude_code("claude", projects().parent, base_url="")
+        with totals.open("a") as handle:
+          handle.write(f"{sum(row.input_tokens for row in rows)}\n")
+      finally:
+        os._exit(0)
+    children.append(pid)
+  start.touch()
+  for pid in children:
+    os.waitpid(pid, 0)
+  lines = lambda path: sorted(path.read_text().split()) if path.exists() else []
+  return lines(reads), lines(totals)
+
+
+cold = scan_at_once()
+transcript(message("busy-3", 1000, 1), name="busy-0.jsonl", mode="a")
+grown = scan_at_once()
+warm = scan_at_once()
+expect("Claude Code's index is built once while every collector reads it at once",
+       [cold, grown, warm],
+       [(["busy-0.jsonl", "busy-1.jsonl", "busy-2.jsonl"], ["303"] * 4), (["busy-0.jsonl"], ["1303"] * 4), ([], ["1303"] * 4)])
+
 # A streamed response is several lines under one message id: the first line's
 # output is a placeholder, so a message counts from its highest output. One
 # that fell back to another model mid-stream keeps its final line whole rather
