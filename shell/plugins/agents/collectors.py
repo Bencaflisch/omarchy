@@ -1336,7 +1336,7 @@ def account_entry(account: dict[str, Any], limits: dict[str, Any], plan: str, **
     "active": account["active"],
     "primary": bool(account.get("primary")),
     "limits": limits["limits"],
-    "stale": not limits["live"],
+    "stale": not limits["live"] and bool(limits["limits"]),
     "fetchedAt": limits["fetchedAtMs"],
     "usageStatusText": limits["usageStatusText"],
     "authHelpText": limits["authHelpText"],

@@ -295,7 +295,7 @@ def main():
     home = default_home()
     tier = plan(home)
     limits = collect_limits(home, cache_key(home, "main"), args.force)
-    stale, fetched_at = not limits["live"], limits["fetchedAtMs"]
+    stale, fetched_at = not limits["live"] and bool(limits["limits"]), limits["fetchedAtMs"]
 
   # With accounts registered, the primary is ~/.grok by definition.
   stats_home = Path.home() / ".grok" if accounts else default_home()

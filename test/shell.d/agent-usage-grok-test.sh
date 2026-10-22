@@ -133,7 +133,7 @@ expect("a week that reset while Grok was idle starts over at zero",
 for path in limits_cache_files("grok"):
   path.unlink()
 record = grok()
-expect("a lapsed token with nothing cached says to start Grok", [record["usageStatusText"], record["limits"]], ["Limits paused", []], record)
+expect("a lapsed token with nothing cached says to start Grok, with no limits to call stale", [record["usageStatusText"], record["limits"], record["limitsStale"]], ["Limits paused", [], False], record)
 
 # A refresh token past Grok's 30-day sign-in can't renew anything: signed out.
 signed_in(grok_home(), expires=iso_in(-31 * 86400), refresh_token="r")

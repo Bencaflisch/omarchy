@@ -875,7 +875,7 @@ def main() -> int:
     identity = re.sub(r"[^A-Za-z0-9_-]", "", current_account_id(claude_dir))
     cache_name = f"claude-limits-{identity}.json" if identity else "claude-limits.json"
     limits = collect_limits(access_token, expires_at_ms, refresh_expires_at_ms, args.force, cache_name)
-    stale, fetched_at = not limits["live"], limits["fetchedAtMs"]
+    stale, fetched_at = not limits["live"] and bool(limits["limits"]), limits["fetchedAtMs"]
     # Asking for a sign-in only makes sense where Claude Code is in use: its
     # config home or profile exists, or there is local usage. A machine that
     # never ran it prints the unused record, which the panel skips.

@@ -873,4 +873,8 @@ check(
   and collectors.account_entry(dict(accounts[0], plan="Old"), limits, "")["plan"] == "Old",
   json.dumps(entry),
 )
+check(
+  "an account whose check failed with nothing kept has no limits to call stale",
+  collectors.account_entry(accounts[1], dict(limits, limits=[]), "")["stale"] is False,
+)
 PY
