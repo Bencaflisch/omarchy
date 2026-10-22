@@ -90,17 +90,24 @@ opencode_db(message=[("m1", "ses_a", oc_v1("openrouter", 100, model="openai/gpt-
 record = openrouter(OPENROUTER_API_KEY="sk-test")
 expect("a model is named without its provider prefix", sorted(record["modelUsage"]), ["gpt-4o-mini"], record)
 
-# /activity folds prompt tokens into input, and completion and reasoning
-# tokens into output (thinking counts as output), one bucket per model.
+# /activity folds prompt tokens into input and completion tokens into output,
+# one bucket per model. Reasoning is part of the completion count (OpenRouter's
+# AI SDK provider reads text = completion - reasoning), so it is never added
+# again; the first row is the spec's own ActivityItem example. A row naming
+# reasoning alone still counts it as output.
 activity = module.summarize_activity([
-  {"date": TODAY.strftime("%Y-%m-%d"), "model": "openai/gpt-4o-mini", "prompt_tokens": 50, "completion_tokens": 25, "reasoning_tokens": 10},
+  {"byok_usage_inference": 0.012, "cached_tokens": 10, "completion_tokens": 125, "date": TODAY.strftime("%Y-%m-%d"),
+   "endpoint_id": "550e8400-e29b-41d4-a716-446655440000", "model": "openai/gpt-4.1", "model_permaslug": "openai/gpt-4.1-2025-04-14",
+   "prompt_tokens": 50, "provider_name": "OpenAI", "reasoning_tokens": 25, "requests": 5, "usage": 0.015},
+  {"date": TODAY.strftime("%Y-%m-%d"), "model": "openai/gpt-4o-mini", "prompt_tokens": 5, "completion_tokens": 0, "reasoning_tokens": 4},
   {"date": "2020-01-01", "model": "x/y-model", "prompt_tokens": 7, "completion_tokens": 3, "reasoning_tokens": 0},
   "garbage-row",
 ], TODAY)
-expect("activity folds prompt, completion and reasoning tokens per model, with its active dates",
-       [activity["todayTotalTokens"], sorted(activity["modelUsage"]), len(activity["activeDates"])], [85, ["gpt-4o-mini", "y-model"], 2], activity)
-expect("activity counts reasoning tokens as output, never input",
-       [activity["modelUsage"]["gpt-4o-mini"]["inputTokens"], activity["modelUsage"]["gpt-4o-mini"]["outputTokens"]], [50, 35], activity)
+expect("activity folds prompt and completion tokens per model, with its active dates",
+       [activity["todayTotalTokens"], sorted(activity["modelUsage"]), len(activity["activeDates"])], [184, ["gpt-4.1-2025-04-14", "gpt-4o-mini", "y-model"], 2], activity)
+expect("activity counts reasoning inside the completion tokens, once, as output",
+       [activity["modelUsage"]["gpt-4.1-2025-04-14"]["inputTokens"], activity["modelUsage"]["gpt-4.1-2025-04-14"]["outputTokens"],
+        activity["modelUsage"]["gpt-4o-mini"]["outputTokens"]], [50, 125, 4], activity)
 expect("a key without a credit limit has no meter, and one with a limit names its period, not a reset time",
        [module.key_limit_meter({"limit": None, "limit_remaining": None}), module.key_limit_meter({"limit": 10, "limit_remaining": 4, "limit_reset": "weekly"})],
        [[], [{"label": "Weekly key limit", "title": "Weekly key limit", "percent": 0.6, "resetsAt": ""}]])

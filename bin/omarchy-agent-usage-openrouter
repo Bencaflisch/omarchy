@@ -182,8 +182,8 @@ def summarize_activity(items: list[Any], today: datetime) -> dict[str, Any]:
   """Fold /activity rows into the panel's stats dict.
 
   One row per (date, endpoint): prompt tokens count as input, and completion
-  and reasoning tokens as output (thinking is generated, so it is output, as
-  the collector contract has it). The billing API reports
+  tokens, reasoning among them, as output (thinking is generated, so it is
+  output, as the collector contract has it). The billing API reports
   tokens, never prompt or session counts, so hasPromptStats stays False
   and the panel keeps those numbers out of today's tooltip.
   """
@@ -200,14 +200,16 @@ def summarize_activity(items: list[Any], today: datetime) -> dict[str, Any]:
     day = activity_day(raw.get("date"))
     model = model_name(str(raw.get("model_permaslug") or raw.get("model") or ""))
     prompt = number(raw.get("prompt_tokens"))
-    reasoning = number(raw.get("reasoning_tokens"))
-    output = number(raw.get("completion_tokens"))
-    total = prompt + reasoning + output
+    # Reasoning is part of the completion count, as in OpenRouter's usage
+    # (its own AI SDK provider reads text = completion - reasoning), so it
+    # is never added again; a row naming reasoning alone still counts it.
+    output = max(number(raw.get("completion_tokens")), number(raw.get("reasoning_tokens")))
+    total = prompt + output
     if total <= 0:
       continue
     bucket = model_usage.setdefault(model, empty_bucket())
     bucket["inputTokens"] += prompt
-    bucket["outputTokens"] += output + reasoning
+    bucket["outputTokens"] += output
     if day:
       active_dates.add(day)
     if day in recent:
