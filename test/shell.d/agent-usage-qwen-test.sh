@@ -151,6 +151,24 @@ local = collect("local", "--force")
 expect("Local counts the Qwen Code replies sent to a self-hosted server",
        [local["todayTokensByModel"], local["todayPrompts"]], [{"local-qwen": 3030}, 1], local)
 
+# A scan answers only for the routes it was made under: a route moved after
+# it is reflected at once, even on a --limits-only run. As Qwen Code 0.26.0
+# wrote a run against a server of the user's own.
+def env_run():
+  sandbox()
+  transcript(chats() / "env.jsonl", [
+    prompt("54ccea9a", "env", NOW),
+    response("e1", "env", NOW, "qwen-env-model", "openai", 6309, 55, 75, 0, "chatcmpl-mock405", total=6364),
+    response("e2", "env", NOW, "qwen-env-model", "openai", 7310, 56, 76, 0, "chatcmpl-mock406", total=7366),
+  ])
+
+
+env_run()
+write_json(home() / ".qwen" / "settings.json", {"modelProviders": {"openai": [{"id": "qwen-env-model", "baseUrl": "http://127.0.0.1:18491/v1"}]}})
+expect("Qwen leaves out a reply its route sends to a server of the user's own", collect("qwen")["todayTotalTokens"], 0)
+write_json(home() / ".qwen" / "settings.json", {"modelProviders": {"openai": [{"id": "qwen-env-model", "baseUrl": "https://coding-intl.dashscope.aliyuncs.com/v1"}]}})
+expect("a Qwen scan made before a modelProviders route moved is not reused after it", collect("qwen", "--limits-only")["todayTotalTokens"], 13730)
+
 # --------------------------------------------------------- untrusted fields
 
 sandbox()

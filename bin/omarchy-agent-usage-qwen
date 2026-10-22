@@ -315,6 +315,14 @@ def model_routes(home):
   return routes
 
 
+def harness_match():
+  """For a scan's cached_scan(match=...): a digest of where Qwen Code's
+  replies are sent, which its settings can change without a transcript
+  changing."""
+  config = json.dumps(sorted([*key, url] for key, url in model_routes(qwen_home()).items()))
+  return {"qwenRoutes": hashlib.sha1(config.encode("utf-8", "surrogatepass")).hexdigest()}
+
+
 def route_owner(auth_type, model, routes):
   """The collector that bills a reply, by the auth type Qwen Code recorded
   for it and, where settings.json names one, the base URL its model is sent
@@ -457,9 +465,10 @@ def main():
 
   # The digest covers every path the scan reads, so another home, runtime
   # directory, session root or database never reuses this one's numbers.
-  # Where Claude Code and MiniMax Code send their turns decides whose they
-  # are, so a scan only answers for the routes it was made under.
-  stats = cached_scan(AGENT_ID, scan_sources(), scan_max_age(args.force, args.limits_only), scan, match=routed_match())
+  # Where each harness sends its replies decides whose they are, so a scan
+  # only answers for the routes it was made under.
+  match = {**harness_match(), **routed_match()}
+  stats = cached_scan(AGENT_ID, scan_sources(), scan_max_age(args.force, args.limits_only), scan, match=match)
 
   # There is no quota to read, so nothing waits on a sign-in: the status stays
   # empty and local stats show alone. A machine that never ran Qwen Code or a
