@@ -20,6 +20,7 @@ import contextlib
 import fcntl
 import hashlib
 import http.client
+import ipaddress
 import json
 import math
 import os
@@ -479,8 +480,12 @@ class Stats:
           self.today_sessions.add(session)
 
   def add_row(self, row: UsageRow, model: str) -> None:
-    """A row from scan_pi_sessions or scan_opencode, under the model name the
-    collector shows for it."""
+    """A row from one of the shared readers, under the model name the
+    collector shows for it. A row with no tokens books its prompts alone,
+    and with none of those still says its session was in use that day."""
+    if row.input_tokens + row.output_tokens + row.cache_read + row.cache_write <= 0:
+      self.add_prompts(row.day, row.session, row.prompts)
+      return
     self.add(row.day, row.session, model, row.input_tokens, row.output_tokens, row.cache_read, row.cache_write, row.prompts)
 
   def snapshot(self) -> dict[str, Any]:
@@ -1155,6 +1160,528 @@ def scan_opencode(providers: Iterable[str], accept: Accept) -> tuple[list[UsageR
   finally:
     conn.close()
   return answered(), True
+
+
+# --------------------------------------------------- who bills an endpoint
+#
+# Some harnesses send to whatever base URL they are given and record only the
+# model that answered, or a route's name: Claude Code fronts any endpoint
+# ANTHROPIC_BASE_URL names, and a MiniMax Code custom provider any baseURL.
+# Z.ai, Ollama, MiniMax, DeepSeek, Kimi and OpenRouter each document pointing
+# them at their own APIs, so the host says whose tokens those turns are.
+
+# The hosts a harness is pointed at in place of its own service, by the
+# collector that bills them. A subdomain of one is the same service.
+PROVIDER_HOSTS = {
+  "api.z.ai": "zai",
+  "open.bigmodel.cn": "zai",
+  "ollama.com": "ollama",
+  "api.minimax.io": "minimax",
+  "api.minimaxi.com": "minimax",
+  "api.deepseek.com": "deepseek",
+  "api.moonshot.ai": "kimi",
+  "api.moonshot.cn": "kimi",
+  "api.kimi.com": "kimi",
+  "api.kimi.ai": "kimi",
+  "openrouter.ai": "openrouter",
+}
+
+
+def url_host(url: Any) -> str:
+  """The lowercase host a URL names, or "" for none or a URL that isn't one."""
+  try:
+    return (urllib.parse.urlsplit(str(url or "").strip()).hostname or "").lower().rstrip(".")
+  except ValueError:
+    return ""
+
+
+def self_hosted(url: Any) -> bool:
+  """Whether a base URL points at hardware the user controls: this machine,
+  a private or link-local address, or a LAN name."""
+  host = url_host(url)
+  if not host:
+    return False
+  if host == "localhost":
+    return True
+  try:
+    address = ipaddress.ip_address(host)
+    return address.is_loopback or address.is_private or address.is_link_local
+  except ValueError:
+    pass
+  # A bare hostname is a LAN name by construction; the rest are the suffixes
+  # home routers and mDNS hand out.
+  if "." not in host:
+    return True
+  return host.endswith((".home", ".lan", ".local", ".internal", ".localdomain", ".home.arpa"))
+
+
+def endpoint_owner(url: Any) -> str:
+  """The collector that bills what a base URL serves: a provider host's, or
+  `local` for one the user runs, or "" when nothing here can place it (a
+  gateway or proxy that may forward anywhere)."""
+  host = url_host(url)
+  if not host:
+    return ""
+  owner = next((provider for name, provider in PROVIDER_HOSTS.items() if host == name or host.endswith("." + name)), "")
+  return owner or ("local" if self_hosted(url) else "")
+
+
+def cloud_model(model: Any) -> bool:
+  """Whether a model is one of Ollama's hosted ones, which carry a cloud tag
+  ("glm-4.6:cloud", "gpt-oss:120b-cloud"): a local daemon only forwards
+  them, so Ollama's servers did the work."""
+  text = str(model or "").lower()
+  tag = text.rpartition(":")[2] if ":" in text else ""
+  return tag == "cloud" or tag.endswith("-cloud")
+
+
+# --------------------------------------------------------- Claude Code
+#
+# Claude Code writes one JSONL transcript per session under
+# ~/.claude/projects (CLAUDE_CONFIG_DIR moves it). Each reply carries the
+# model that answered and its usage, but not where it was sent: the claude
+# collector counts the replies Anthropic served, and the collector of
+# whichever provider ANTHROPIC_BASE_URL names, or whose model answered,
+# counts the rest. claude_code_owner() is the one rule all of them apply, so
+# every reply lands in exactly one record.
+
+# What a model's name says about who served it, when Claude Code is pointed
+# at no other host: these are those providers' own models.
+CLAUDE_CODE_MODEL_OWNERS = (
+  ("glm-", "zai"),
+  ("minimax-", "minimax"),
+  ("deepseek-", "deepseek"),
+  ("kimi-", "kimi"),
+  ("moonshot", "kimi"),
+)
+
+
+def claude_code_dir() -> Path:
+  return Path(os.path.expandvars(os.path.expanduser(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude"))).resolve()
+
+
+def claude_code_base_url(claude_dir: Path | None = None) -> str:
+  """Where ANTHROPIC_BASE_URL sends Claude Code now: its settings' env wins
+  over the environment, as it does in Claude Code."""
+  env = read_json((claude_dir or claude_code_dir()) / "settings.json").get("env")
+  configured = env.get("ANTHROPIC_BASE_URL") if isinstance(env, dict) else None
+  return str(configured or os.environ.get("ANTHROPIC_BASE_URL") or "").strip()
+
+
+def claude_code_endpoint(base_url: str) -> str:
+  """The kind of endpoint Claude Code is sent to, which is all that decides
+  who owns its replies: "" for Anthropic's own (no override), a provider
+  collector's id, `local`, or `other` for a host nothing here can place."""
+  host = url_host(base_url)
+  if not host or host == "anthropic.com" or host.endswith(".anthropic.com"):
+    return ""
+  return endpoint_owner(base_url) or "other"
+
+
+def claude_code_owner(model: Any, base_url: str = "") -> str | None:
+  """The collector that counts a Claude Code reply by `model` (None for a
+  prompt no reply has answered yet) while Claude Code is sent to `base_url`,
+  or None when nothing here can say who billed it.
+
+  A transcript doesn't say where it was sent, so while ANTHROPIC_BASE_URL
+  names a provider's host every reply is read as that provider's. Otherwise
+  an Ollama cloud tag is Ollama's, wherever it was sent, and a Claude model
+  is Anthropic's, through a proxy that may forward to it too. Behind a
+  self-hosted base URL anything else ran on the user's own hardware. With no
+  override the model's name says whose it was (glm-* is Z.ai's, MiniMax-*
+  MiniMax's, deepseek-* DeepSeek's, kimi-* and moonshot* Kimi's); behind a
+  gateway nothing here can place, it could be anyone's, and counts nowhere.
+  """
+  endpoint = claude_code_endpoint(base_url)
+  if endpoint not in ("", "local", "other"):
+    return endpoint
+  name = str(model).lower() if model is not None else ""
+  if cloud_model(name):
+    return "ollama"
+  if model is None or "claude" in name:
+    return "claude"
+  if endpoint == "local":
+    return "local"
+  if endpoint == "other":
+    return None
+  return next((owner for prefix, owner in CLAUDE_CODE_MODEL_OWNERS if name.startswith(prefix)), None)
+
+
+# Transcripts are append-only, and most of the corpus never changes between
+# ticks, so the scan keeps a per-file index: the unique usage records already
+# parsed out of each file plus the byte offset they end at. A file whose size
+# and mtime match the index is not opened; a file that grew is read from the
+# stored offset; anything else (truncated, rewritten, replaced, unknown) is
+# read from the start. Every collector reading Claude Code shares the index,
+# which holds every reply whoever owns it.
+#
+# Version 5 reads token counts and times the way every collector reads them
+# (a count written as a string is no count, an untrusted time skips its line),
+# so an index parsed the older way is read again. Version 6 stops reading a
+# falsy time (0, false, "") as no time at all, which counted it as today.
+# Version 7 keeps the typed prompts too, which are the record's prompts; a
+# reply was counted as one before. Version 8 keys a reply by its request too,
+# and keeps its bare message id and whether a sidechain wrote it. Version 9
+# reads the advisor iterations a reply carries. Version 10 keeps the model
+# that answered each prompt.
+CLAUDE_CODE_INDEX_VERSION = 10
+
+# How much of each end of what was read the index remembers a hash of, so a
+# file replaced or rewritten with more than it had is not mistaken for an
+# append.
+CLAUDE_CODE_INDEX_HEAD_BYTES = 4096
+
+# What Claude Code puts in a user line that nobody typed: a background task
+# reporting back, a local command's output and its caveat, and the marker an
+# interruption leaves.
+CLAUDE_CODE_MACHINE_PROMPTS = ("<task-notification>", "<local-command-stdout>", "<local-command-stderr>", "<local-command-caveat>", "[Request interrupted")
+# Who sent a prompt, where Claude Code records it (a user line's
+# promptSource, a queued one's origin.kind): the system (a task notification)
+# and another agent are not a person asking.
+CLAUDE_CODE_MACHINE_SOURCES = ("system", "task-notification", "peer")
+
+
+def claude_code_index_path(projects: Path) -> Path:
+  digest = hashlib.sha1(str(projects).encode("utf-8", "surrogatepass")).hexdigest()[:16]
+  return cache_root() / f"claude-index-{digest}.json"
+
+
+# Records hold local days, so an index is only true in the timezone that
+# wrote it; after a change every transcript is read again.
+def _claude_code_index_zone() -> list[Any]:
+  return [os.environ.get("TZ"), list(time.tzname), time.timezone, time.altzone]
+
+
+def _claude_code_load_index(index_file: Path) -> dict[str, Any]:
+  data = read_json(index_file)
+  if data.get("version") == CLAUDE_CODE_INDEX_VERSION and data.get("zone") == _claude_code_index_zone() and isinstance(data.get("files"), dict):
+    return data["files"]
+  return {}
+
+
+# What was already read, by its first and last few kilobytes: a transcript
+# rewritten in place rather than appended to changes one or the other.
+def _claude_code_digest(path: Path, length: int) -> str:
+  digest = hashlib.sha1()
+  with path.open("rb") as handle:
+    digest.update(handle.read(min(length, CLAUDE_CODE_INDEX_HEAD_BYTES)))
+    handle.seek(max(0, length - CLAUDE_CODE_INDEX_HEAD_BYTES))
+    digest.update(handle.read(min(length, CLAUDE_CODE_INDEX_HEAD_BYTES)))
+  return digest.hexdigest()
+
+
+def claude_code_typed_prompt(line: dict[str, Any]) -> bool:
+  """Whether a transcript line is a prompt a person sent: a main-thread user
+  message that isn't a tool's result, Claude Code's own (isMeta), a
+  compaction summary, or a subagent's (isSidechain); or a prompt typed while
+  a turn was running, which Claude Code queues into the turn as a
+  queued_command attachment rather than a user line."""
+  if line.get("isMeta") or line.get("isSidechain") or line.get("isCompactSummary"):
+    return False
+  if line.get("type") == "attachment":
+    queued = line.get("attachment")
+    if not isinstance(queued, dict) or queued.get("type") != "queued_command" or queued.get("commandMode") != "prompt" or queued.get("isMeta"):
+      return False
+    origin = queued.get("origin")
+    return not (isinstance(origin, dict) and origin.get("kind") in CLAUDE_CODE_MACHINE_SOURCES)
+  if line.get("type") != "user" or line.get("promptSource") in CLAUDE_CODE_MACHINE_SOURCES:
+    return False
+  message = line.get("message")
+  content = message.get("content") if isinstance(message, dict) else None
+  if isinstance(content, str):
+    text = content
+  elif isinstance(content, list):
+    blocks = [block for block in content if isinstance(block, dict)]
+    if not blocks or any(block.get("type") == "tool_result" for block in blocks):
+      return False
+    text = next((str(block.get("text") or "") for block in blocks if block.get("type") == "text"), "")
+  else:
+    return False
+  return not text.lstrip().startswith(CLAUDE_CODE_MACHINE_PROMPTS)
+
+
+def _claude_code_line_day(parsed: dict[str, Any], message: dict[str, Any]) -> tuple[bool, str | None]:
+  """(trusted, day) of a transcript line. A line with no time is today's,
+  kept as None so the index stays true past midnight; one whose time can't
+  be trusted counts nowhere. A time of 0, false or "" is present and
+  untrusted, not missing."""
+  timestamp = parsed.get("timestamp")
+  if timestamp is None:
+    timestamp = message.get("timestamp")
+  if timestamp is None:
+    return True, None
+  day = local_day(timestamp)
+  return day is not None, day
+
+
+def read_claude_code_transcript(path: Path, entry: dict[str, Any] | None) -> dict[str, Any]:
+  """Return the index entry for one transcript, reusing `entry` where the file
+  only grew. Records are [key, model, day, input, output, cacheRead,
+  cacheWrite, session, messageId, sidechain]; prompts are [key, day,
+  session, model], the model of the first reply after it (None until one
+  is read). A `day` is None when the line carries no timestamp."""
+  info = path.stat()
+  size = info.st_size
+  mtime = info.st_mtime_ns
+
+  if entry and entry.get("size") == size and entry.get("mtime") == mtime:
+    return entry
+
+  # Only the same file, grown past what was read with what was read still in
+  # place, is an append. A transcript replaced by a larger one is a new file,
+  # and one rewritten in place has a different start or end.
+  if (
+    entry
+    and size > number(entry.get("size"))
+    and entry.get("file") == [info.st_dev, info.st_ino]
+    and entry.get("head") == _claude_code_digest(path, number(entry.get("offset")))
+  ):
+    records = list(entry.get("records") or [])
+    prompts = [list(prompt) for prompt in entry.get("prompts") or []]
+    offset = number(entry.get("offset"))
+    line_number = number(entry.get("lines"))
+  else:
+    records = []
+    prompts = []
+    offset = 0
+    line_number = 0
+
+  # A streamed response is several lines sharing one message id, and the
+  # first line's output_tokens is a placeholder while the last carries the
+  # real count. Keep each message's line with the highest output count (the
+  # last one read wins a tie), whole: a response that fell back to another
+  # model mid-stream has lines that are separate snapshots, and mixing fields
+  # across them over-counts cache tokens and credits the wrong model.
+  positions = {record[0]: index for index, record in enumerate(records)}
+  prompted = {prompt[0] for prompt in prompts}
+  # Prompts still waiting for their reply, which says who answered them.
+  unanswered = [prompt for prompt in prompts if prompt[3] is None]
+  with path.open("rb") as handle:
+    handle.seek(offset)
+    for raw in handle:
+      if not raw.endswith(b"\n"):
+        # A line still being written; pick it up whole next time.
+        break
+      offset += len(raw)
+      line_number += 1
+
+      # Cheap pre-filter before JSON parsing keeps files with unrelated
+      # lines inexpensive.
+      if b'"usage":' not in raw and b'"user"' not in raw and b'"queued_command"' not in raw:
+        continue
+
+      try:
+        parsed = json.loads(raw.decode("utf-8", errors="replace"))
+      except Exception:
+        continue
+      # A line of JSON that isn't an object is a bad row, not a bad file.
+      if not isinstance(parsed, dict):
+        continue
+
+      message = parsed.get("message") if isinstance(parsed.get("message"), dict) else {}
+
+      # A prompt copied into a resumed or forked transcript keeps its uuid,
+      # so the uuid counts it once.
+      if parsed.get("type") in ("user", "attachment"):
+        if claude_code_typed_prompt(parsed):
+          trusted, day = _claude_code_line_day(parsed, message)
+          prompt_key = str(parsed.get("uuid") or f"{path}:{line_number}")
+          if trusted and prompt_key not in prompted:
+            prompted.add(prompt_key)
+            prompts.append([prompt_key, day, str(parsed.get("sessionId") or path), None])
+            unanswered.append(prompts[-1])
+        continue
+
+      if parsed.get("type") != "assistant" and message.get("role") != "assistant":
+        continue
+
+      usage = message.get("usage") or parsed.get("usage")
+      if not isinstance(usage, dict):
+        continue
+
+      # One response is one message id and one request id, across every
+      # transcript a copy of it lands in: a gateway can reuse a message id for
+      # every response it serves, and only the request tells those apart.
+      message_id = str(message.get("id") or parsed.get("messageId") or "")
+      request_id = str(parsed.get("requestId") or "")
+      if message_id:
+        key = f"{message_id}:{request_id}" if request_id else message_id
+      else:
+        key = f"{path}:{parsed.get('uuid') or request_id or line_number}"
+
+      trusted, day = _claude_code_line_day(parsed, message)
+      if not trusted:
+        continue
+
+      # An advisor the model consulted is billed apart, under its own model:
+      # Claude Code prices each `advisor_message` iteration on its own, and the
+      # reply's top-level usage is the main model's alone.
+      session_key = str(parsed.get("sessionId") or path)
+      sidechain = parsed.get("isSidechain") is True
+      served = [(key, message_id, str(message.get("model") or parsed.get("model") or "claude"), usage)]
+      iterations = usage.get("iterations")
+      for index, iteration in enumerate(iterations if isinstance(iterations, list) else []):
+        if isinstance(iteration, dict) and iteration.get("type") == "advisor_message" and iteration.get("model"):
+          served.append((f"{key}:advisor:{index}", f"{message_id}:advisor:{index}" if message_id else "", str(iteration["model"]), iteration))
+
+      for record_key, record_id, model, counts in served:
+        input_tokens = usage_tokens(counts, "input_tokens", "inputTokens")
+        output_tokens = usage_tokens(counts, "output_tokens", "outputTokens")
+        cache_read = usage_tokens(counts, "cache_read_input_tokens", "cacheReadInputTokens")
+        cache_write = usage_tokens(counts, "cache_creation_input_tokens", "cacheCreationInputTokens")
+        if input_tokens + output_tokens + cache_read + cache_write <= 0:
+          continue
+
+        # The first reply a model spent tokens on says who answered the
+        # prompts before it: not a subagent's, which answers the subagent,
+        # and not one Claude Code made up itself (`<synthetic>`, no tokens).
+        if record_key == key and not sidechain:
+          for prompt in unanswered:
+            prompt[3] = model
+          unanswered.clear()
+
+        held = positions.get(record_key)
+        if held is not None and output_tokens < records[held][4]:
+          continue
+
+        record = [record_key, model, day, input_tokens, output_tokens, cache_read, cache_write, session_key, record_id, sidechain]
+        if held is None:
+          positions[record_key] = len(records)
+          records.append(record)
+        else:
+          records[held] = record
+
+  return {
+    "size": size,
+    "file": [info.st_dev, info.st_ino],
+    "mtime": mtime,
+    "head": _claude_code_digest(path, offset),
+    "offset": offset,
+    "lines": line_number,
+    "records": records,
+    "prompts": prompts,
+  }
+
+
+_DEFAULT_INDEX = object()
+
+
+def scan_claude_code(
+  owner: str,
+  projects: Path | None = None,
+  index_file: Any = _DEFAULT_INDEX,
+  base_url: str | None = None,
+) -> list[UsageRow]:
+  """The Claude Code usage `owner` counts, as rows: each reply once (with no
+  prompts of its own), each typed prompt once (no tokens), and a tokenless
+  row for every session in use on a day, for Stats.add_row().
+
+  `projects` defaults to the Claude Code home's projects/, `index_file` to
+  the index every collector shares there (None reads without one), and
+  `base_url` to where Claude Code is sent now. Every reply is deduplicated
+  across transcripts before claude_code_owner() splits them, so a reply a
+  fork copied lands once, under one owner.
+  """
+  if projects is None:
+    projects = claude_code_dir() / "projects"
+  if base_url is None:
+    base_url = claude_code_base_url(projects.parent)
+  if index_file is _DEFAULT_INDEX:
+    try:
+      index_file = claude_code_index_path(projects)
+    except OSError as exc:
+      warn(f"scan index unavailable ({exc})")
+      index_file = None
+  previous = _claude_code_load_index(index_file) if index_file else {}
+  current: dict[str, Any] = {}
+
+  # Directory order, as before: when one API message shows up in several
+  # transcripts with the same output count, the last file visited wins, and
+  # the numbers must not move because the scan got faster.
+  order: list[str] = []
+  unreadable_count = 0
+  unreadable_examples: list[str] = []
+  files = projects.rglob("*.jsonl") if projects.is_dir() else []
+  for path in files:
+    key = str(path)
+    try:
+      current[key] = read_claude_code_transcript(path, previous.get(key))
+    except Exception as exc:
+      unreadable_count += 1
+      if len(unreadable_examples) < 3:
+        unreadable_examples.append(f"{path}: {exc}")
+      # What was read before is still true of the file.
+      if key in previous:
+        current[key] = previous[key]
+    if key in current:
+      order.append(key)
+
+  if unreadable_count:
+    examples = "; ".join(unreadable_examples)
+    print(f"Ignoring {unreadable_count} unreadable Claude project files (examples: {examples})", file=sys.stderr)
+
+  if index_file and current != previous:
+    try:
+      write_json(index_file, {"version": CLAUDE_CODE_INDEX_VERSION, "zone": _claude_code_index_zone(), "files": current}, sort_keys=True)
+    except Exception as exc:
+      warn(f"could not write the Claude scan index {index_file} ({exc})")
+
+  owners: dict[Any, str | None] = {}
+
+  def ours(model: Any) -> bool:
+    if model not in owners:
+      owners[model] = claude_code_owner(model, base_url)
+    return owners[model] == owner
+
+  # One API message can show up in several transcripts (a resumed session
+  # carries the earlier ones). As within a file, the record with the highest
+  # output count wins, the last one visited breaking a tie. Only the tokens
+  # are deduplicated: every transcript holding a reply on a day was a session
+  # in use that day, so a fork that copied a session's replies never takes
+  # that session out of the count.
+  seen: dict[str, list[Any]] = {}
+  active: set[tuple[Any, str]] = set()
+  for key in order:
+    for record in current[key].get("records") or []:
+      if ours(record[1]):
+        active.add((record[2], record[7]))
+      held = seen.get(record[0])
+      if held is not None and record[4] < held[4]:
+        continue
+      seen[record[0]] = record
+
+  # A sidechain (a /btw side question) replays its parent's messages under
+  # new request ids; the parent's own copy is the one that counts.
+  parents = {(record[8], record[7]) for record in seen.values() if record[8] and not record[9]}
+  scan_day = today()
+  rows: list[UsageRow] = []
+  for _, model, day, input_tokens, output_tokens, cache_read, cache_write, session_key, message_id, sidechain in seen.values():
+    if (sidechain and (message_id, session_key) in parents) or not ours(model):
+      continue
+    rows.append(UsageRow(day or scan_day, session_key, owner, model, input_tokens, output_tokens, cache_read, cache_write, prompts=0))
+
+  # A prompt is what a person typed, not each API request a tool loop makes,
+  # so replies carry no prompts and the typed ones are counted on their own,
+  # once each across transcripts, under whoever answered them.
+  typed: dict[str, list[Any]] = {}
+  for key in order:
+    for prompt in current[key].get("prompts") or []:
+      if ours(prompt[3]):
+        active.add((prompt[1], prompt[2]))
+      typed.setdefault(prompt[0], prompt)
+  for _, day, session_key, model in typed.values():
+    if ours(model):
+      rows.append(UsageRow(day or scan_day, session_key, owner, "", 0, 0, 0, 0, prompts=1))
+  for day, session_key in sorted(active, key=lambda item: (str(item[0]), item[1])):
+    rows.append(UsageRow(day or scan_day, session_key, owner, "", 0, 0, 0, 0, prompts=0))
+  return rows
+
+
+def claude_code_scan_match(claude_dir: Path | None = None) -> dict[str, str]:
+  """What a scan of Claude Code's transcripts was made under, for a
+  collector's cached_scan(match=...): where Claude Code is sent decides
+  whose its replies are, so a scan only answers for the endpoint it saw."""
+  return {"claudeCodeEndpoint": claude_code_endpoint(claude_code_base_url(claude_dir))}
 
 
 # ------------------------------------------------------------------ limits

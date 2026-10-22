@@ -915,6 +915,96 @@ check(
   json.dumps([row._asdict() for row in rows]),
 )
 
+# ------------------------------------------------------------- endpoints
+
+# A base URL's host says who bills what it serves: a provider's own host or
+# a subdomain of it, the user's own hardware, or nothing that can be placed.
+for url, owner in (
+  ("https://api.z.ai/api/anthropic", "zai"),
+  ("https://open.bigmodel.cn/api/anthropic", "zai"),
+  ("https://ollama.com", "ollama"),
+  ("https://api.minimax.io/anthropic", "minimax"),
+  ("https://api.minimaxi.com/anthropic", "minimax"),
+  ("https://api.deepseek.com/anthropic", "deepseek"),
+  ("https://api.kimi.com/coding/", "kimi"),
+  ("https://api.moonshot.ai/anthropic", "kimi"),
+  ("https://openrouter.ai/api", "openrouter"),
+  ("https://eu.openrouter.ai/api", "openrouter"),
+  ("http://localhost:11434", "local"),
+  ("http://127.0.0.1:4000", "local"),
+  ("http://192.168.1.20:8080/v1", "local"),
+  ("http://gpu-box:11434", "local"),
+  ("http://studio.lan:1234/v1", "local"),
+  ("https://llm-proxy.example.com/anthropic", ""),
+  ("https://notapi.z.ai.example.com", ""),
+  ("", ""),
+  ("http://[::1", ""),
+):
+  check(f"the endpoint {url!r} is billed by {owner or 'nobody here'}", collectors.endpoint_owner(url) == owner, collectors.endpoint_owner(url))
+
+# Claude Code's replies, by the model that answered and where Claude Code is
+# sent: the one rule every collector reading its transcripts applies.
+CLAUDE_CODE_OWNERS = {
+  "": {"claude-sonnet-4-5": "claude", None: "claude", "glm-4.6": "zai", "GLM-4.5-Air": "zai", "glm-4.6:cloud": "ollama",
+       "gpt-oss:120b-cloud": "ollama", "MiniMax-M2": "minimax", "deepseek-chat": "deepseek", "kimi-k2-0905": "kimi",
+       "moonshot-v1-8k": "kimi", "qwen3-coder": None, "<synthetic>": None},
+  "https://api.anthropic.com": {"claude-sonnet-4-5": "claude", "glm-4.6": "zai"},
+  "https://api.z.ai/api/anthropic": {"claude-sonnet-4-5": "zai", None: "zai", "glm-4.6": "zai", "glm-4.6:cloud": "zai"},
+  "https://ollama.com": {"claude-sonnet-4-5": "ollama", "kimi-k2.7-code:cloud": "ollama", "glm-4.6": "ollama"},
+  "https://openrouter.ai/api": {"claude-sonnet-4-5": "openrouter", "anthropic/claude-sonnet-4.5": "openrouter", None: "openrouter"},
+  "https://api.minimax.io/anthropic": {"MiniMax-M2": "minimax", "claude-sonnet-4-5": "minimax"},
+  "https://api.deepseek.com/anthropic": {"deepseek-chat": "deepseek"},
+  "https://api.kimi.com/coding/": {"kimi-for-coding": "kimi", "claude-sonnet-4-5": "kimi"},
+  "http://localhost:11434": {"qwen3-coder": "local", "glm-4.6": "local", "deepseek-r1:8b": "local", "glm-4.6:cloud": "ollama",
+                             "claude-sonnet-4-5": "claude", None: "claude"},
+  "https://llm-proxy.example.com/anthropic": {"claude-sonnet-4-5": "claude", None: "claude", "glm-4.6": None, "qwen3-coder": None,
+                                              "gpt-oss:120b-cloud": "ollama"},
+}
+for url, models in CLAUDE_CODE_OWNERS.items():
+  got = {model: collectors.claude_code_owner(model, url) for model in models}
+  check(f"Claude Code replies sent to {url or 'Anthropic'} go to the collector that bills them", got == models, json.dumps({str(k): v for k, v in got.items()}))
+
+# The shared transcript reader hands each owner its replies once, typed
+# prompts apart from them, and the sessions in use; Stats books a row with no
+# tokens as its prompts alone.
+claude_home = home / "claude-code"
+transcripts = claude_home / "projects" / "demo"
+transcripts.mkdir(parents=True)
+
+
+def claude_reply(message_id, model, input_tokens, session="s1"):
+  return {"type": "assistant", "timestamp": stamp, "sessionId": session, "requestId": "r-" + message_id,
+          "message": {"id": message_id, "role": "assistant", "model": model, "usage": {"input_tokens": input_tokens, "output_tokens": 1}}}
+
+
+def claude_prompt(uuid, session="s1"):
+  return {"type": "user", "uuid": uuid, "timestamp": stamp, "sessionId": session, "message": {"role": "user", "content": "hi"}}
+
+
+lines = [claude_prompt("p1"), claude_reply("m1", "claude-sonnet-4-5", 100), claude_prompt("p2"), claude_reply("m2", "glm-4.6", 200),
+         claude_reply("m3", "glm-4.6", 300)]
+(transcripts / "s1.jsonl").write_text("".join(json.dumps(line) + "\n" for line in lines))
+# A fork copies the GLM reply into a session of its own: counted once.
+(transcripts / "s2.jsonl").write_text(json.dumps({**claude_reply("m3", "glm-4.6", 300), "sessionId": "s2"}) + "\n")
+by_owner = {}
+for owner in ("claude", "zai", "ollama"):
+  owned = collectors.Stats()
+  for row in collectors.scan_claude_code(owner, claude_home / "projects", None, ""):
+    owned.add_row(row, row.model)
+  by_owner[owner] = owned.snapshot()
+check(
+  "the Claude Code reader splits replies and prompts between their owners, a copied reply once",
+  [(by_owner[o]["todayTotalTokens"], by_owner[o]["todayPrompts"], by_owner[o]["todaySessions"]) for o in ("claude", "zai", "ollama")]
+  == [(101, 1, 1), (502, 1, 2), (0, 0, 0)],
+  json.dumps(by_owner),
+)
+check(
+  "a scan of Claude Code is matched to the kind of endpoint it was made under, never the URL itself",
+  collectors.claude_code_endpoint("https://user:secret@llm-proxy.example.com") == "other"
+  and collectors.claude_code_endpoint("https://api.anthropic.com") == ""
+  and collectors.claude_code_endpoint("http://127.0.0.1:4000") == "local",
+)
+
 # --------------------------------------------------------------- sign-ins
 
 import base64  # noqa: E402
