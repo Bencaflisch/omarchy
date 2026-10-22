@@ -1662,13 +1662,15 @@ def scan_claude_code(
         continue
       seen[record[0]] = record
 
-  # A sidechain (a /btw side question) replays its parent's messages under
-  # new request ids; the parent's own copy is the one that counts.
-  parents = {(record[8], record[7]) for record in seen.values() if record[8] and not record[9]}
+  # A sidechain (a /btw side question) replays its parent's messages whole
+  # under new request ids; the parent's own copy is the one that counts. A
+  # subagent's own reply is a request of its own, which a gateway reusing one
+  # message id can still give its parent's id, so only a whole copy is one.
+  parents = {(record[8], record[7], *record[3:7]) for record in seen.values() if record[8] and not record[9]}
   scan_day = today()
   rows: list[UsageRow] = []
   for _, model, day, input_tokens, output_tokens, cache_read, cache_write, session_key, message_id, sidechain in seen.values():
-    if (sidechain and (message_id, session_key) in parents) or not ours(model):
+    if (sidechain and (message_id, session_key, input_tokens, output_tokens, cache_read, cache_write) in parents) or not ours(model):
       continue
     rows.append(UsageRow(day or scan_day, session_key, owner, model, input_tokens, output_tokens, cache_read, cache_write, prompts=0))
 

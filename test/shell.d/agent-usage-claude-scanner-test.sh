@@ -297,6 +297,21 @@ record = claude()
 expect("Claude counts a response by message and request id, once across forks and sidechain replays",
        record["todayTotalTokens"], 5000 + 10 + 20 + 30 + 40 + 50, record)
 
+# A gateway reusing one message id gives a subagent's reply its parent's id
+# too, as Claude Code 2.1.308 wrote it behind one: the subagent's request is
+# its own, not a replay of the parent's, and counts.
+sandbox()
+
+
+def gateway(request_id, n, **extra):
+  return {**message("msg_same", 5000234 + 1000 * n, 50 + n, cache_write=30 + n, cache_read=70 + n), "requestId": request_id, **extra}
+
+
+transcript(gateway("req_0002", 1), gateway("req_0004", 3), gateway("req_0005", 4), name="main.jsonl")
+transcript(gateway("req_0003", 2, isSidechain=True, agentId="a1"), name="main/subagents/agent-a1.jsonl")
+record = claude()
+expect("Claude counts a subagent's reply that shares its parent's message id", record["todayTotalTokens"], 20011566, record)
+
 # An advisor the model consulted is billed apart under its own model, from
 # the reply's `usage.iterations`; the top-level usage is the main model's
 # alone, and no other iteration is added again. ccusage's own fixture line,
