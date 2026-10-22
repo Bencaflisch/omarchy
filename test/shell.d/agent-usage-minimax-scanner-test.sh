@@ -111,6 +111,17 @@ if os.geteuid() != 0:
     locked.chmod(0o644)
   record = minimax("--limits-only")
   expect("MiniMax does not cache a scan that missed a MiniMax Code file", record["totalPrompts"], 5, record)
+
+  # Nor one that couldn't list a session directory, whose files it never saw.
+  for path in scan_cache_files("minimax"):
+    path.unlink()
+  locked.parent.chmod(0)
+  try:
+    minimax()
+  finally:
+    locked.parent.chmod(0o755)
+  record = minimax("--limits-only")
+  expect("MiniMax does not cache a scan that couldn't list a MiniMax Code session directory", record["totalPrompts"], 5, record)
 else:
   print("ok - MiniMax does not cache a scan that missed a MiniMax Code file # SKIP root reads anything")
 

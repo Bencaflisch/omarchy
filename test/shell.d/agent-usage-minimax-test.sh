@@ -156,6 +156,20 @@ expect("MiniMax asks MINIMAX_BASE_URL when it is set", credentials(), ["mmx_env"
 del os.environ["MINIMAX_API_KEY"], os.environ["MINIMAX_BASE_URL"]
 expect("MiniMax asks with mmx's own key on the host mmx names", credentials(), ["mmx_saved", "https://api.minimaxi.com"])
 
+# Wherever the host comes from, the key never goes over plain HTTP to another
+# machine, nor to a URL that isn't one.
+for name, setup in (
+  ("MINIMAX_BASE_URL", lambda: os.environ.update(MINIMAX_API_KEY="mmx_env", MINIMAX_BASE_URL="http://evil.example")),
+  ("mmx's base_url", lambda: write_json(home() / ".mmx" / "config.json", {"api_key": "mmx_saved", "base_url": "http://evil.example"})),
+  ("mmx's resource_url", lambda: write_json(home() / ".mmx" / "config.json", {"oauth": {"access_token": "mmx_oauth", "resource_url": "not a url"}})),
+):
+  setup()
+  record, http = minimax(ANSWER)
+  expect(f"MiniMax sends its key to no untrusted endpoint from {name}",
+         [http.count, record["usageStatusText"], "HTTPS" in record["authHelpText"]], [0, "MiniMax limits unavailable", True], record)
+  os.environ.pop("MINIMAX_API_KEY", None)
+  os.environ.pop("MINIMAX_BASE_URL", None)
+
 # A key saved under a provider id MiniMax doesn't bill belongs to a gateway
 # in front of it, and is never sent to MiniMax as a bearer.
 sandbox()

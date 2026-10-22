@@ -46,6 +46,7 @@ from collectors import (  # noqa: E402
   scan_opencode,
   scan_pi_sessions,
   token_count,
+  trusted_endpoint,
   warn,
 )
 
@@ -258,6 +259,10 @@ def quota_limits(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 def fetch_quota(api_key: str, base_url: str) -> dict[str, Any]:
   endpoint = base_url.rstrip("/") + "/v1/token_plan/remains"
+  # MINIMAX_BASE_URL, --base-url and mmx's own base_url or resource_url move
+  # the endpoint, never the key onto a connection anyone on the way can read.
+  if not trusted_endpoint(endpoint):
+    raise MiniMaxError("The MiniMax endpoint must use HTTPS (plain HTTP only for loopback); the key was not sent.")
   request = urllib.request.Request(
     endpoint,
     headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
@@ -379,8 +384,11 @@ def scan_mcode(stats: Stats) -> bool:
   root = mcode_data_dir() / "v2" / "sessions"
   if not root.is_dir():
     return True
-  complete = True
-  for path in sorted(root.rglob("messages.jsonl")):
+  # A directory the walk can't list has sessions the scan missed.
+  unlisted: list[OSError] = []
+  found = [directory / "messages.jsonl" for directory, _, names in root.walk(on_error=unlisted.append) if "messages.jsonl" in names]
+  complete = not unlisted
+  for path in sorted(found):
     # One directory per session; its messages carry no session id of their own.
     session = "mcode:" + str(path.parent)
     try:
