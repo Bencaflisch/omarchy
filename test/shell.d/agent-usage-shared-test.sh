@@ -76,6 +76,10 @@ check(
   "local_day skips a damaged stamp dated before 2000 or after 2100",
   [collectors.local_day(value) for value in (1, 86400, "1999-12-31T12:00:00", "2102-06-01T00:00:00Z")] == [None] * 4,
 )
+check(
+  "local_day skips digit strings that aren't a time: other scripts' digits and thousands of digits",
+  [collectors.local_day(value) for value in ("\u0661\u0667\u0660\u0660\u0660\u0660\u0660\u0660\u0660\u0660", "9" * 5000)] == [None] * 2,
+)
 check("local_day reads epoch milliseconds, seconds, and digit strings alike", len({
   collectors.local_day(1_700_000_000_000),
   collectors.local_day(1_700_000_000),
@@ -339,12 +343,31 @@ check(
 )
 older.save([], balance={"remaining": 2})
 check("a plain save replaces whatever was kept", json.loads(credits.path.read_text())["balance"] == {"remaining": 2})
+ahead = json.loads(credits.path.read_text())
+ahead["fetchedAtMs"] = collectors.now_ms() + 3_600_000
+credits.path.write_text(json.dumps(ahead))
+older.save([], only_if_newer=True, balance={"remaining": 3})
+check(
+  "a stamp an hour ahead, from before the clock went back, is replaced by an answer saved only if newer",
+  json.loads(credits.path.read_text())["balance"] == {"remaining": 3},
+)
 named = collectors.LimitsCache.at(collectors.cache_root() / "demo-limits.json")
 named.save([{"label": "Weekly", "percent": 0.1, "resetsAt": future}])
 check(
   "a cache opened at a name of its own keeps and reads like any other",
   named.path.name == "demo-limits.json" and named.lock_path.name == "demo-limits.lock"
   and collectors.LimitsCache.at(named.path).fresh(False) and collectors.LimitsCache.at(named.path).limits == named.limits,
+)
+
+import io  # noqa: E402
+
+printed = io.StringIO()
+with contextlib.redirect_stdout(printed):
+  collectors.emit({"balance": {"remaining": float("inf"), "spent": [float("nan"), 1.5]}, "ready": True})
+check(
+  "emit prints a number that overflowed as 0, so the record stays JSON the panel can parse",
+  json.loads(printed.getvalue()) == {"balance": {"remaining": 0, "spent": [0, 1.5]}, "ready": True},
+  printed.getvalue(),
 )
 
 # ------------------------------------------------------------------- http
@@ -376,6 +399,7 @@ check("open_json returns the JSON answer", outcome(lambda request, timeout=None:
 check("an HTTP status is a refusal, not a transport failure", outcome(failing(urllib.error.HTTPError("u", 401, "no", {}, None))) == (401, False, False))
 check("no route, no DNS, and a timeout are transport failures", {outcome(failing(error)) for error in (urllib.error.URLError("no route"), TimeoutError("slow"), ConnectionResetError())} == {(0, True, False)})
 check("a body that isn't JSON is an invalid answer", outcome(lambda request, timeout=None: io.BytesIO(b"<html>")) == (0, False, True))
+check("a body nested deeper than the parser goes is an invalid answer", outcome(lambda request, timeout=None: io.BytesIO(b"[" * 200_000)) == (0, False, True))
 
 import http.client  # noqa: E402
 
@@ -434,6 +458,51 @@ try:
 except collectors.HttpError as error:
   short = error
 check("a body short of its Content-Length over a socket is cut short", short is not None and (short.transport, short.invalid, short.cut_short) == (False, True, True), repr(short and vars(short)))
+
+
+def drip_server():
+  listener = socket.socket()
+  listener.bind(("127.0.0.1", 0))
+  listener.listen(1)
+
+  def serve():
+    conn, _ = listener.accept()
+    with conn:
+      conn.recv(65536)
+      conn.sendall(b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 1000\r\n\r\n')
+      with contextlib.suppress(OSError):
+        for _ in range(100):
+          conn.sendall(b" ")
+          time.sleep(0.1)
+    listener.close()
+
+  threading.Thread(target=serve, daemon=True).start()
+  return f"http://127.0.0.1:{listener.getsockname()[1]}/"
+
+
+began = time.monotonic()
+try:
+  collectors.open_json(urllib.request.Request(drip_server()), timeout=0.3)
+  dripped = None
+except collectors.HttpError as error:
+  dripped = error
+check(
+  "a reply dripping a byte at a time runs out of time as a transport failure instead of holding the collector",
+  dripped is not None and dripped.transport and time.monotonic() - began < 5,
+  repr(dripped and vars(dripped)),
+)
+bad_key = urllib.request.Request("https://example.invalid", headers={"Authorization": "Bearer sk-secret\nX: y"})
+urllib.request.urlopen = real_urlopen
+try:
+  collectors.open_json(bad_key)
+  header = None
+except collectors.HttpError as error:
+  header = error
+check(
+  "a key http.client won't send is an invalid answer that doesn't quote the key",
+  header is not None and header.invalid and header.__cause__ is None and header.__suppress_context__ and "sk-secret" not in str(header),
+  repr(header),
+)
 check(
   "a credential goes over HTTPS, or plain HTTP to loopback, and never to a URL with credentials in it",
   [collectors.trusted_endpoint(url) for url in ("https://example.com/x", "http://127.0.0.1:9/x", "http://localhost/x", "http://[::1]:9/x",

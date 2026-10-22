@@ -23,6 +23,7 @@ import http.client
 import json
 import math
 import os
+import re
 import shutil
 import sqlite3
 import stat
@@ -161,7 +162,9 @@ def local_day(value: Any) -> str | None:
   """
   if value is None:
     return today()
-  if isinstance(value, str) and value.strip().isdigit():
+  # ASCII digits only, and few enough to be a time: isdigit() also passes
+  # other scripts' digits and int() refuses strings past 4300 digits.
+  if isinstance(value, str) and re.fullmatch(r"[0-9]{1,20}", value.strip()):
     value = int(value.strip())
   if isinstance(value, bool):
     return None
@@ -362,9 +365,24 @@ def base_record(agent_id: str, name: str, **overrides: Any) -> dict[str, Any]:
   return record
 
 
+def _finite(value: Any) -> Any:
+  if isinstance(value, float) and not math.isfinite(value):
+    return 0
+  if isinstance(value, dict):
+    return {key: _finite(item) for key, item in value.items()}
+  if isinstance(value, (list, tuple)):
+    return [_finite(item) for item in value]
+  return value
+
+
 def emit(record: dict[str, Any], sort_keys: bool = False) -> None:
-  """Print the record, the one thing on stdout."""
-  print(json.dumps(record, separators=(",", ":"), sort_keys=sort_keys))
+  """Print the record, the one thing on stdout.
+
+  A number that overflowed to infinity (a huge balance read with float())
+  prints as 0: Infinity and NaN aren't JSON, and the panel would drop the
+  whole record over one.
+  """
+  print(json.dumps(_finite(record), separators=(",", ":"), sort_keys=sort_keys, allow_nan=False))
 
 
 class Stats:
@@ -1035,12 +1053,16 @@ class LimitsCache:
 
     With `only_if_newer`, a file another run stamped later is left as it is,
     so overlapping runs (the panel's own refresh and a sooner retry) never
-    roll a newer answer back. This run still uses its own answer.
+    roll a newer answer back. This run still uses its own answer. Only a
+    stamp up to five minutes ahead counts as newer: one further ahead was
+    written before the clock went back and would otherwise never be
+    replaced.
     """
     fetched_at = now_ms()
     payload = {"fetchedAtMs": fetched_at, "limits": limits, **extra}
     try:
-      if not only_if_newer or stamp(read_json(self.path).get("fetchedAtMs")) <= fetched_at:
+      kept = stamp(read_json(self.path).get("fetchedAtMs")) if only_if_newer else 0
+      if not fetched_at < kept <= fetched_at + 300_000:
         write_json(self.path, payload)
     except Exception as exc:
       warn(f"could not write limits cache ({exc})")
@@ -1092,11 +1114,30 @@ class HttpError(Exception):
     self.headers = headers
 
 
+def _read_by(response: Any, size: int, deadline: float) -> bytes:
+  """Up to `size` bytes of a reply, by `deadline`. The socket timeout only
+  bounds each wait, so a server dripping a byte at a time would otherwise
+  hold a collector forever."""
+  if not isinstance(response, http.client.HTTPResponse):
+    return response.read(size)
+  chunks, got = [], 0
+  while got < size:
+    if time.monotonic() > deadline:
+      raise TimeoutError("reply too slow")
+    chunk = response.read1(min(65536, size - got))
+    if not chunk:
+      break
+    chunks.append(chunk)
+    got += len(chunk)
+  return b"".join(chunks)
+
+
 def open_json(request: urllib.request.Request, timeout: float = 10, limit: int = HTTP_BODY_LIMIT) -> Any:
   """The JSON a request answers with, or HttpError saying why there's none."""
+  deadline = time.monotonic() + 3 * timeout
   try:
     with urllib.request.urlopen(request, timeout=timeout) as response:
-      body = response.read(limit + 1)
+      body = _read_by(response, limit + 1, deadline)
       # A sized read hands back what arrived when the server stops short of
       # its Content-Length, with the rest still owed.
       owed = getattr(response, "length", None)
@@ -1116,13 +1157,18 @@ def open_json(request: urllib.request.Request, timeout: float = 10, limit: int =
     # A reply arrived but was cut short (IncompleteRead) or garbled (a bad
     # status line, bad headers): the server answered.
     raise HttpError(cut_short=True) from error
+  except ValueError:
+    # A header http.client won't send: a key with a line break or a
+    # character outside Latin-1. Not chained, as the error quotes the key.
+    raise HttpError() from None
   if len(body) > limit:
     raise HttpError()
   if isinstance(owed, int) and owed > 0:
     raise HttpError(cut_short=True)
   try:
     return json.loads(body.decode("utf-8", errors="replace"))
-  except ValueError as error:
+  except (ValueError, RecursionError) as error:
+    # RecursionError: a body nested deeper than the parser will go.
     raise HttpError() from error
 
 
