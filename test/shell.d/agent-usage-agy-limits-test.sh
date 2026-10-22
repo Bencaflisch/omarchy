@@ -148,6 +148,15 @@ check_scan_cache(adapter)
 
 record, http = agy()
 expect("Antigravity collector asks with agy's token", {r["headers"].get("authorization") for r in http.requests}, {"Bearer token-main"})
+
+# agy's RetrieveUserQuotaSummaryRequest carries the project, which omp sends
+# from loadCodeAssist's cloudaicompanionProject, named as a string or {id}.
+asked = []
+for project in ("proj-1", {"id": "proj-2", "name": "Default"}, None):
+  routes = dict(ANSWER, **{TIER: dict(ANSWER[TIER], cloudaicompanionProject=project)})
+  _, http = agy(routes=routes)
+  asked += [json.loads(r["data"] or b"{}") for r in http.requests if QUOTA in r["url"]]
+expect("Antigravity collector asks for the quota of the project loadCodeAssist names", asked, [{"project": "proj-1"}, {"project": "proj-2"}, {}])
 caches = [path.name for path in limits_cache_files("agy")]
 check("Antigravity collector caches limits per account, named by a digest rather than the email",
       len(caches) == 1 and re.fullmatch(r"agy-limits-[0-9a-f]{16}\.json", caches[0]) and "me@example.com" not in caches[0], caches)
