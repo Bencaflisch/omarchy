@@ -48,9 +48,10 @@ file_url() {
 # import its neighbours. Fails, leaving nothing, when the page uses a version or an addon
 # that isn't vendored; the page itself then still runs from the CDN.
 build_offline_game() {
-  local page=$1 out=$2
+  local page=$1 out=$2 tmp
   mkdir -p "$(dirname "$out")"
-  python3 - "$page" "$out.tmp" "$OMARCHY_PATH/games/vendor" <<'PY' && mv "$out.tmp" "$out"
+  tmp=$(mktemp "$out.XXXXXX")     # two launches of one game must not share or remove each other's copy
+  python3 - "$page" "$tmp" "$OMARCHY_PATH/games/vendor" <<'PY' && chmod 644 "$tmp" && mv "$tmp" "$out"
 import base64, json, os, re, sys
 page, out, vendor = sys.argv[1:]
 html = open(page, encoding="utf-8").read()
@@ -68,16 +69,18 @@ def data(path, source=None):
 
 module = open(os.path.join(root, "three.module.min.js"), "rb").read().replace(b'"./three.core.min.js"', b'"three/core"')
 imports = {"three": data(None, module), "three/core": data(os.path.join(root, "three.core.min.js"))}
+addons = os.path.realpath(os.path.join(root, "examples", "jsm"))
 for addon in sorted(set(re.findall(r"""['"]three/addons/([\w./-]+\.js)['"]""", html))):
-    path = os.path.join(root, "examples", "jsm", addon)
-    # A data: module can't resolve a relative import, so only self-contained addons are vendored.
-    if ".." in addon or not os.path.isfile(path) or re.search(rb"""from\s*['"]\.""", open(path, "rb").read()):
+    # Only a file inside the vendored addons, never one a crafted path reaches elsewhere on disk;
+    # and only a self-contained one, since a data: module can't resolve a relative import.
+    path = os.path.realpath(os.path.join(addons, addon))
+    if os.path.commonpath([addons, path]) != addons or not os.path.isfile(path) or re.search(rb"""from\s*['"]\.""", open(path, "rb").read()):
         sys.exit(1)
     imports["three/addons/" + addon] = data(path)
 importmap = '<script type="importmap">' + json.dumps({"imports": imports}) + "</script>"
 open(out, "w", encoding="utf-8").write(html[:found.start()] + importmap + html[found.end():])
 PY
   local status=$?
-  rm -f "$out.tmp"
+  rm -f "$tmp"
   return $status
 }

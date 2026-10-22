@@ -117,3 +117,15 @@ OMARCHY_TEST_ARGV="$test_tmp/loader-argv" omarchy-games-launch loader
   fail "a game using an addon Omarchy doesn't vendor plays from its own page" "$(head -1 "$test_tmp/loader-argv")"
 [[ ! -e $HOME/.cache/omarchy/games/loader/index.html ]] || fail "no half-built offline copy is left behind"
 pass "a game using an addon Omarchy doesn't vendor falls back to the CDN"
+
+# An addon path that leaves the vendored addons must not pull a file from disk into the page.
+printf 'secret-%s\n' "$RANDOM" >"$test_tmp/secret.js"
+mkdir -p "$HOME/Games/escape"
+cat >"$HOME/Games/escape/index.html" <<HTML
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.min.js" } }</script>
+<script type="module">import 'three/addons/$test_tmp/secret.js';</script>
+HTML
+OMARCHY_TEST_ARGV="$test_tmp/escape-argv" omarchy-games-launch escape
+[[ ! -e $HOME/.cache/omarchy/games/escape/index.html ]] || fail "an addon path outside the vendored addons gets no offline copy"
+! grep -rqF "$(base64 -w0 "$test_tmp/secret.js")" "$HOME/.cache/omarchy/games" 2>/dev/null || fail "no file outside the vendored addons is built into a game"
+pass "an addon path outside the vendored addons can't read a file into the page"

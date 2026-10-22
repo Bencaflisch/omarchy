@@ -699,7 +699,8 @@ function performMove(from, index, to) {
   const stack = P[from].splice(index);
   P[to].push(...stack);
   if (from === 'waste') wasteShow = Math.max(1, wasteShow - 1);
-  if (to[0] === 'f') score += 10;
+  if (from[0] === 'f' && to[0] === 'f') {}           // shuffling an ace between foundations earns nothing
+  else if (to[0] === 'f') score += 10;
   else if (from === 'waste') score += 5;
   else if (from[0] === 'f') score = Math.max(0, score - 15);
   const top = P[from].at(-1);
