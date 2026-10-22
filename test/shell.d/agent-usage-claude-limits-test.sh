@@ -85,13 +85,14 @@ expect("Claude collector reads every model-scoped window once and drops unusable
   {"label": "claude-opus-5 Weekly", "title": "claude-opus-5 Weekly", "percent": 0.42, "resetsAt": ""},
 ], limits)
 
-# A payload that speaks fractions says so in its buckets, and the scoped
-# entries are read on the same scale rather than assuming percentages.
-fractions = read_limits({"five_hour": {"utilization": 0.78}, "limits": [
-  {"kind": "session", "percent": 0.78, "scope": None},
-  {"kind": "weekly_scoped", "percent": 0.42, "scope": {"model": {"display_name": "Fable"}}},
+# Every value is a percentage, as Claude Code renders them
+# (`${Math.floor(utilization)}% used`): just after a reset, a window at 0.6%
+# is 0.6%, never read as the fraction 0.6.
+low = read_limits({"five_hour": {"utilization": 0.6}, "seven_day": {"utilization": 0.8}, "limits": [
+  {"kind": "session", "percent": 0.6, "scope": None},
+  {"kind": "weekly_scoped", "percent": 0, "scope": {"model": {"id": "claude-fable-5", "display_name": "Fable"}}},
 ]})
-expect("Claude collector reads scoped percentages on the payload's own scale", [entry["percent"] for entry in fractions["limits"]], [0.78, 0.42], fractions)
+expect("Claude collector reads values below 1 as percentages", [entry["percent"] for entry in low["limits"]], [0.006, 0.008, 0.0], low)
 
 # An account with no model-scoped allowance, and an endpoint that never grew
 # the array, both keep the session and weekly windows they always had.

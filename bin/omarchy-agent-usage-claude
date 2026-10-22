@@ -569,17 +569,14 @@ def parse_utilization(value: Any) -> float:
     return float("nan")
 
 
-def normalize_utilization(value: Any, percent_scale: bool) -> float:
+# Every utilization and percent this endpoint answers is a percentage: Claude
+# Code's own /usage renders each as `${Math.floor(utilization)}% used`, so 0.6
+# is 0.6%, not 60%.
+def normalize_utilization(value: Any) -> float:
   n = parse_utilization(value)
   if not (n >= 0):
     return -1.0
-  # Anthropic's OAuth usage endpoint currently reports percentages (for
-  # example 37.0 or 1.0). Older payloads sometimes used fractions (0.37).
-  # A payload containing any value >= 1 is percent-scaled, so 1.0 renders
-  # as 1%, not 100%.
-  if percent_scale or n > 1:
-    return min(1.0, n / 100.0)
-  return min(1.0, n)
+  return min(1.0, n / 100.0)
 
 
 def normalize_reset_at(value: Any) -> str:
@@ -633,7 +630,7 @@ def scoped_window(kind: str) -> str:
 # actually spending against. A model can hold more than one scoped window, and
 # only the pair of model and window tells them apart, so both make the title
 # and both make the key that keeps a repeat out.
-def scoped_limits(payload: dict[str, Any], percent_scale: bool) -> list[dict[str, Any]]:
+def scoped_limits(payload: dict[str, Any]) -> list[dict[str, Any]]:
   entries = payload.get("limits")
   if not isinstance(entries, list):
     return []
@@ -652,7 +649,7 @@ def scoped_limits(payload: dict[str, Any], percent_scale: bool) -> list[dict[str
     kind = str(entry.get("kind") or "").strip()
     if name == "" or (name, kind) in seen:
       continue
-    percent = normalize_utilization(entry.get("percent"), percent_scale)
+    percent = normalize_utilization(entry.get("percent"))
     if percent < 0:
       continue
     seen.add((name, kind))
@@ -713,24 +710,17 @@ def probe_limits(access_token: str) -> dict[str, Any]:
   # groups with cowork and omelette and never shows as the weekly limit.
   weekly = usage_bucket(payload, "seven_day")
   session = usage_bucket(payload, "five_hour")
-  raw = [session.get("utilization") if session else None, weekly.get("utilization") if weekly else None]
-  # One payload speaks one convention, so the scoped entries settle the scale
-  # alongside the buckets rather than assuming their own.
-  entries = payload.get("limits")
-  if isinstance(entries, list):
-    raw += [entry.get("percent") for entry in entries if isinstance(entry, dict)]
-  percent_scale = any(parse_utilization(v) >= 1 for v in raw)
 
   limits = []
   if session is not None:
-    percent = normalize_utilization(session.get("utilization"), percent_scale)
+    percent = normalize_utilization(session.get("utilization"))
     if percent >= 0:
       limits.append({"label": "Session (5-hour)", "percent": percent, "resetsAt": normalize_reset_at(session.get("resets_at"))})
   if weekly is not None:
-    percent = normalize_utilization(weekly.get("utilization"), percent_scale)
+    percent = normalize_utilization(weekly.get("utilization"))
     if percent >= 0:
       limits.append({"label": "Weekly (7-day)", "percent": percent, "resetsAt": normalize_reset_at(weekly.get("resets_at"))})
-  limits.extend(scoped_limits(payload, percent_scale))
+  limits.extend(scoped_limits(payload))
 
   if not limits:
     return {"ok": False, "helpText": "Anthropic's usage endpoint returned no limits. Local Claude Code stats are still shown."}
