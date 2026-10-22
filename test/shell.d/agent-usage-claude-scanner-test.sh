@@ -528,6 +528,44 @@ expect("Claude's stats-cache fallback gives seven days of tokens and trusted mod
   {"claude-opus": {"inputTokens": 10, "outputTokens": 0, "cacheReadInputTokens": 7, "cacheCreationInputTokens": 0}},
 ], record)
 
+# history.jsonl as interactive Claude Code 2.1.308 wrote it: two typed
+# prompts, /model and /exit (built-ins that ask the model nothing, with and
+# without arguments), a custom command, and a prompt typed while a turn ran.
+def history_line(display, session):
+  return {"display": display, "pastedContents": {}, "timestamp": ms_in(0), "project": "/home/me/proj", "sessionId": session}
+
+
+HISTORY = [history_line("tuihello", "s1"), history_line("tuisecond", "s1"), history_line("/model opus", "s1"), history_line("/exit", "s1"),
+           history_line("/mycmd", "s2"), history_line("queuedtwo", "s2"), history_line("/exit", "s2")]
+
+# Without transcripts, history.jsonl's built-in commands are no prompts.
+sandbox()
+(home() / ".claude").mkdir()
+(home() / ".claude" / "history.jsonl").write_text("".join(json.dumps(line) + "\n" for line in HISTORY))
+record = claude()
+expect("Claude's history.jsonl fallback counts no built-in local command", [record["todayPrompts"], record["todaySessions"]], [4, 2], record)
+
+# Sent to Z.ai, those prompts were Z.ai's, and neither file says otherwise.
+write_json(home() / ".claude" / "settings.json", {"env": {"ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic"}})
+write_json(home() / ".claude" / "stats-cache.json", {"totalMessages": 40, "totalSessions": 3, "dailyActivity": [{"date": datetime.now().date().isoformat(), "messageCount": 4}]})
+record = claude()
+expect("Claude sent to Z.ai takes no prompts or sessions from its fallbacks",
+       [record["todayPrompts"], record["todaySessions"], record["totalPrompts"], record["totalSessions"], record["activeDays"]], [0, 0, 0, 0, 0], record)
+
+# Transcripts whose every reply another provider served were counted by that
+# provider's collector, prompts included: the fallbacks are not read again.
+(home() / ".claude" / "settings.json").unlink()
+transcript(
+  {"type": "user", "uuid": "u1", "sessionId": "s1", "timestamp": STAMP, "promptSource": "typed", "message": {"role": "user", "content": "tuihello"}},
+  message("glm-1", 10, 5, model="glm-5"),
+)
+for where, settings in (("named by its model", {}), ("sent to Z.ai", {"env": {"ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic"}})):
+  write_json(home() / ".claude" / "settings.json", settings)
+  record = claude()
+  expect(f"Claude with only another provider's transcripts ({where}) reads no fallback",
+         [record["ready"], record["todayPrompts"], record["todaySessions"], record["totalPrompts"], record["totalSessions"], record["activeDays"]],
+         [False, 0, 0, 0, 0, 0], record)
+
 # A stats-cache or history line of the wrong shape costs that field or line,
 # never the record.
 sandbox()
