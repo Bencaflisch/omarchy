@@ -29,7 +29,6 @@ Item {
   property real cardWidth: Style.space(380)
   property var snoozeOptions: []             // the daemon's
   property var actions: []                   // what the sender put on the wire
-  property bool deedsOpen: false
   property bool menuOpen: false
 
   // The pointer in the deck's coordinates: the deck owns hover, so cards and
@@ -128,49 +127,6 @@ Item {
     return out
   }
 
-  readonly property var moreDeed: ({ kind: "more", label: I18n.t("notifications.more"), value: "" })
-
-  // Measure the actual themed buttons: a fixed count overflows with larger
-  // fonts or longer action labels. Reserve More before admitting each action.
-  readonly property int fits: {
-    var widths = [], gap = deedRow.spacing, available = deedArea.width
-    for (var i = 0; i < deedMeasures.count; i++) {
-      var button = deedMeasures.itemAt(i)
-      if (button) widths.push(button.implicitWidth)
-    }
-    if (widths.length !== allDeeds.length) return 0
-    var total = 0
-    for (var k = 0; k < widths.length; k++) total += widths[k] + (k ? gap : 0)
-    if (total <= available) return widths.length
-    var used = moreMeasure.implicitWidth, count = 0
-    for (var j = 0; j < widths.length; j++) {
-      if (used + gap + widths[j] > available) break
-      used += gap + widths[j]
-      count++
-    }
-    return count
-  }
-  readonly property var deeds: allDeeds.slice(0, fits)
-  readonly property var spare: allDeeds.slice(fits)
-
-  Item {
-    visible: false
-    Repeater {
-      id: deedMeasures
-      model: card.allDeeds
-      DeedButton {
-        required property var modelData
-        deed: modelData
-        toast: card
-      }
-    }
-    DeedButton {
-      id: moreMeasure
-      deed: card.moreDeed
-      toast: card
-    }
-  }
-
   readonly property var menuDeeds: {
     var out = []
     for (var i = 0; i < snoozeOptions.length; i++)
@@ -181,7 +137,6 @@ Item {
 
   function doDeed(deed) {
     var kind = String(deed.kind || "")
-    if (kind === "more") { deedsOpen = !deedsOpen; return }
     if (kind === "snooze") { menuOpen = false; snoozeRequested(Number(deed.value)); return }
     if (kind === "action") { actionInvoked(String(deed.value)); return }
     offerTaken(kind, String(deed.value))
@@ -644,12 +599,10 @@ Item {
           readonly property real tail: Style.space(10) - card.contentPaddingY
 
           readonly property string mode: card.menuOpen ? "menu"
-                                       : card.deedsOpen ? "list"
                                        : (card.hovered && card.expanded
                                           && card.allDeeds.length > 0) ? "row" : ""
 
           readonly property real contentHeight: mode === "menu" ? menuRow.implicitHeight
-                                              : mode === "list" ? deedColumn.implicitHeight
                                               : mode === "row" ? deedRow.implicitHeight : 0
           // What the state asks for; the drawn height is whatever slack the
           // scene has given the card so far.
@@ -660,37 +613,27 @@ Item {
           visible: height > 0
           clip: true
 
-          Row {
+          // Right-aligned and wrapping: laid out right to left over the
+          // reversed list, so one line still reads in order.
+          Flow {
             id: deedRow
             anchors.bottom: parent.bottom
             anchors.bottomMargin: deedArea.tail
-            anchors.right: parent.right
+            width: parent.width
+            layoutDirection: Qt.RightToLeft
             spacing: Style.space(6)
             opacity: deedArea.mode === "row" ? 1 : 0
             visible: opacity > 0.01
             Behavior on opacity { NumberAnimation { duration: card.fade } }
 
             Repeater {
-              model: card.deeds
+              model: card.allDeeds.slice().reverse()
               DeedButton {
                 required property var modelData
                 deed: modelData
                 toast: card
               }
             }
-
-            DeedButton {
-              visible: card.spare.length > 0
-              deed: card.moreDeed
-              toast: card
-            }
-          }
-
-          DeedList {
-            id: deedColumn
-            shown: deedArea.mode === "list"
-            bottomGap: deedArea.tail
-            deedModel: card.deedsOpen ? card.allDeeds : []
           }
 
           // The right-click menu, on one line: "Snooze" and its choices.
@@ -706,7 +649,8 @@ Item {
 
             Text {
               textFormat: Text.PlainText
-              height: moreMeasure.implicitHeight
+              // As tall as the buttons beside it, so the word sits centred.
+              height: snoozeChoices.count ? snoozeChoices.itemAt(0).height : implicitHeight
               verticalAlignment: Text.AlignVCenter
               text: I18n.t("notifications.snooze")
               color: card.bodyColor
@@ -715,6 +659,7 @@ Item {
             }
 
             Repeater {
+              id: snoozeChoices
               model: card.menuOpen ? card.menuDeeds : []
               DeedButton {
                 required property var modelData
@@ -743,30 +688,6 @@ Item {
         if (card.menuOpen) { card.menuOpen = false; return }
         if (mouse.button === Qt.MiddleButton) card.dismissed()
         else card.activated()
-      }
-    }
-  }
-
-  component DeedList: Column {
-    id: list
-    property bool shown: false
-    property var deedModel: []
-    property real bottomGap: 0
-    anchors.bottom: parent.bottom
-    anchors.bottomMargin: bottomGap
-    width: parent.width
-    spacing: Style.space(4)
-    opacity: list.shown ? 1 : 0
-    visible: opacity > 0.01
-    Behavior on opacity { NumberAnimation { duration: card.fade } }
-
-    Repeater {
-      model: list.deedModel
-      DeedButton {
-        required property var modelData
-        deed: modelData
-        toast: card
-        wide: true
       }
     }
   }

@@ -12,7 +12,6 @@ Button {
   // Not "card": the toast's id is `card`, so a property of that name would
   // bind to itself and stay null.
   property var toast: null
-  property bool wide: false
 
   // Matched on the value too: a card with two codes has two Copy buttons.
   readonly property bool taken: toast && toast.takenKind
@@ -31,12 +30,11 @@ Button {
   fontFamily: Style.font.family
   fontSize: Style.font.body
 
-  // Full width in the "More" list, its own width in the row.
-  leftAlign: wide
-  width: wide && parent ? parent.width : implicitWidth
+  // Never wider than the card: a long action label is cut short instead.
+  width: parent ? Math.min(implicitWidth, parent.width) : implicitWidth
 
   // The shared Button's label is a single unbounded line. Measure our own so
-  // full-width actions wrap and contribute their complete height.
+  // it can be elided.
   implicitWidth: label.implicitWidth + horizontalPadding * 2
                  + _reservedBorderLeft + _reservedBorderRight
   implicitHeight: label.implicitHeight + verticalPadding * 2
@@ -50,7 +48,7 @@ Button {
                       - button.rightPadding - button._reservedBorderRight)
     text: button.labelText
     textFormat: Text.PlainText
-    wrapMode: button.wide ? Text.Wrap : Text.NoWrap
+    elide: Text.ElideRight
     color: button.selected ? button._selectedColor : button.foreground
     font.family: button.fontFamily
     font.pixelSize: button.fontSize
