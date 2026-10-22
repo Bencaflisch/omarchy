@@ -371,6 +371,17 @@ def empty_answer(root):
          [first["limits"], second["limits"], second["usageStatusText"], len(reqs)], [[], [], "", 1], second)
 
 
+def odd_answer(root):
+  os.environ["KIMI_API_KEY"] = "AT_env"
+  good = record()
+  state["payload"] = {"something": "else"}
+  data = record()
+  expect("an answer of another shape keeps the last good limits, stale",
+         [data["limits"] == good["limits"], data["limitsStale"], data["limitsFetchedAt"] == good["limitsFetchedAt"], data.get("retryAdvised")],
+         [True, True, True, None], data)
+  expect("an answer of another shape never replaces the cached one", run_main(scanner, "--limits-only")["limits"], good["limits"])
+
+
 def switched_cache(root):
   credentials("AT_account_a", time.time() + 3600)
   capture = scanner.api_key
@@ -393,7 +404,8 @@ cases = {"contract": contract, "env_key": env_key, "stores": stores, "home": hom
          "invalid_grant": invalid_grant, "refused_refresh": refused_refresh, "key_help": key_help, "refused": refused,
          "waiting_for_auth": waiting_for_auth, "trust": trust, "destination": destination, "redirects": redirects,
          "quota": modern_quota, "legacy_quota": legacy_quota, "cache_identity": cache_identity,
-         "rotation_cache": rotated_cache, "switched_cache": switched_cache, "empty_answer": empty_answer}
+         "rotation_cache": rotated_cache, "switched_cache": switched_cache, "empty_answer": empty_answer,
+         "odd_answer": odd_answer}
 selected = os.environ.get("OMARCHY_TEST_KIMI_CASE")
 for name, case in cases.items():
   if selected and name != selected:

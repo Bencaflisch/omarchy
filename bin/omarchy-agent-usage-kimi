@@ -315,6 +315,10 @@ def quota(key: str) -> dict[str, Any]:
     raise KimiError("Kimi returned an invalid usage response") from error
   if not isinstance(decoded, dict):
     raise KimiError("Kimi returned an empty usage response")
+  # A reply naming none of the quota shapes isn't an answer, so it fails the
+  # check rather than replacing the kept limits with none.
+  if not any(key in decoded for key in ("usages", "usage", "limits")):
+    raise KimiError("Kimi returned an invalid usage response")
   return decoded
 
 
