@@ -91,7 +91,9 @@ def expand_path(value: str) -> Path:
 # (a count written as a string is no count, an untrusted time skips its line),
 # so an index parsed the older way is read again. Version 6 stops reading a
 # falsy time (0, false, "") as no time at all, which counted it as today.
-INDEX_VERSION = 6
+# Version 7 keeps the typed prompts too, which are the record's prompts; a
+# reply was counted as one before.
+INDEX_VERSION = 7
 
 # How much of each end of what was read the index remembers a hash of, so a
 # file replaced or rewritten with more than it had is not mistaken for an
@@ -123,10 +125,65 @@ def read_digest(path: Path, length: int) -> str:
   return digest.hexdigest()
 
 
+# What Claude Code puts in a user line that nobody typed: a background task
+# reporting back, a local command's output and its caveat, and the marker an
+# interruption leaves.
+MACHINE_PROMPT_PREFIXES = ("<task-notification>", "<local-command-stdout>", "<local-command-stderr>", "<local-command-caveat>", "[Request interrupted")
+# Who sent a prompt, where Claude Code records it (a user line's
+# promptSource, a queued one's origin.kind): the system (a task notification)
+# and another agent are not a person asking.
+MACHINE_PROMPT_SOURCES = ("system", "task-notification", "peer")
+
+
+def typed_prompt(line: dict[str, Any]) -> bool:
+  """Whether a transcript line is a prompt a person sent: a main-thread user
+  message that isn't a tool's result, Claude Code's own (isMeta), a
+  compaction summary, or a subagent's (isSidechain); or a prompt typed while
+  a turn was running, which Claude Code queues into the turn as a
+  queued_command attachment rather than a user line."""
+  if line.get("isMeta") or line.get("isSidechain") or line.get("isCompactSummary"):
+    return False
+  if line.get("type") == "attachment":
+    queued = line.get("attachment")
+    if not isinstance(queued, dict) or queued.get("type") != "queued_command" or queued.get("commandMode") != "prompt" or queued.get("isMeta"):
+      return False
+    origin = queued.get("origin")
+    return not (isinstance(origin, dict) and origin.get("kind") in MACHINE_PROMPT_SOURCES)
+  if line.get("type") != "user" or line.get("promptSource") in MACHINE_PROMPT_SOURCES:
+    return False
+  message = line.get("message")
+  content = message.get("content") if isinstance(message, dict) else None
+  if isinstance(content, str):
+    text = content
+  elif isinstance(content, list):
+    blocks = [block for block in content if isinstance(block, dict)]
+    if not blocks or any(block.get("type") == "tool_result" for block in blocks):
+      return False
+    text = next((str(block.get("text") or "") for block in blocks if block.get("type") == "text"), "")
+  else:
+    return False
+  return not text.lstrip().startswith(MACHINE_PROMPT_PREFIXES)
+
+
+def line_day(parsed: dict[str, Any], message: dict[str, Any]) -> tuple[bool, str | None]:
+  """(trusted, day) of a transcript line. A line with no time is today's,
+  kept as None so the index stays true past midnight; one whose time can't
+  be trusted counts nowhere. A time of 0, false or "" is present and
+  untrusted, not missing."""
+  timestamp = parsed.get("timestamp")
+  if timestamp is None:
+    timestamp = message.get("timestamp")
+  if timestamp is None:
+    return True, None
+  day = local_day(timestamp)
+  return day is not None, day
+
+
 def parse_usage_records(path: Path, entry: dict[str, Any] | None) -> dict[str, Any]:
   """Return the index entry for one transcript, reusing `entry` where the file
   only grew. Records are [key, model, day, input, output, cacheRead,
-  cacheWrite, session]; `day` is None when the line carries no timestamp."""
+  cacheWrite, session]; prompts are [key, day, session]. A `day` is None
+  when the line carries no timestamp."""
   stat = path.stat()
   size = stat.st_size
   mtime = stat.st_mtime_ns
@@ -144,10 +201,12 @@ def parse_usage_records(path: Path, entry: dict[str, Any] | None) -> dict[str, A
     and entry.get("head") == read_digest(path, number(entry.get("offset")))
   ):
     records = list(entry.get("records") or [])
+    prompts = list(entry.get("prompts") or [])
     offset = number(entry.get("offset"))
     line_number = number(entry.get("lines"))
   else:
     records = []
+    prompts = []
     offset = 0
     line_number = 0
 
@@ -158,6 +217,7 @@ def parse_usage_records(path: Path, entry: dict[str, Any] | None) -> dict[str, A
   # model mid-stream has lines that are separate snapshots, and mixing fields
   # across them over-counts cache tokens and credits the wrong model.
   positions = {record[0]: index for index, record in enumerate(records)}
+  prompted = {prompt[0] for prompt in prompts}
   with path.open("rb") as handle:
     handle.seek(offset)
     for raw in handle:
@@ -169,7 +229,7 @@ def parse_usage_records(path: Path, entry: dict[str, Any] | None) -> dict[str, A
 
       # Cheap pre-filter before JSON parsing keeps files with unrelated
       # lines inexpensive.
-      if b'"usage":' not in raw:
+      if b'"usage":' not in raw and b'"user"' not in raw and b'"queued_command"' not in raw:
         continue
 
       try:
@@ -181,6 +241,18 @@ def parse_usage_records(path: Path, entry: dict[str, Any] | None) -> dict[str, A
         continue
 
       message = parsed.get("message") if isinstance(parsed.get("message"), dict) else {}
+
+      # A prompt copied into a resumed or forked transcript keeps its uuid,
+      # so the uuid counts it once.
+      if parsed.get("type") in ("user", "attachment"):
+        if typed_prompt(parsed):
+          trusted, day = line_day(parsed, message)
+          prompt_key = str(parsed.get("uuid") or f"{path}:{line_number}")
+          if trusted and prompt_key not in prompted:
+            prompted.add(prompt_key)
+            prompts.append([prompt_key, day, str(parsed.get("sessionId") or path)])
+        continue
+
       if parsed.get("type") != "assistant" and message.get("role") != "assistant":
         continue
 
@@ -198,14 +270,8 @@ def parse_usage_records(path: Path, entry: dict[str, Any] | None) -> dict[str, A
       if input_tokens + output_tokens + cache_read + cache_write <= 0:
         continue
 
-      # A line with no time is today's, kept as None so the index stays true
-      # past midnight; one whose time can't be trusted counts nowhere.
-      # A time of 0, false or "" is present and untrusted, not missing.
-      timestamp = parsed.get("timestamp")
-      if timestamp is None:
-        timestamp = message.get("timestamp")
-      day = local_day(timestamp) if timestamp is not None else None
-      if timestamp is not None and day is None:
+      trusted, day = line_day(parsed, message)
+      if not trusted:
         continue
 
       held = positions.get(key)
@@ -236,6 +302,7 @@ def parse_usage_records(path: Path, entry: dict[str, Any] | None) -> dict[str, A
     "offset": offset,
     "lines": line_number,
     "records": records,
+    "prompts": prompts,
   }
 
 
@@ -289,9 +356,18 @@ def scan_projects(projects_path: Path, index_file: Path | None = None) -> Stats:
         continue
       seen[record[0]] = record
 
+  # A prompt is what a person typed, not each API request a tool loop makes,
+  # so replies carry no prompts and the typed ones are counted on their own,
+  # once each across transcripts.
   stats = Stats()
   for _, model, day, input_tokens, output_tokens, cache_read, cache_write, session_key in seen.values():
-    stats.add(day or stats.today, session_key, model, input_tokens, output_tokens, cache_read, cache_write)
+    stats.add(day or stats.today, session_key, model, input_tokens, output_tokens, cache_read, cache_write, prompts=0)
+  typed: dict[str, list[Any]] = {}
+  for key in order:
+    for prompt in current[key].get("prompts") or []:
+      typed.setdefault(prompt[0], prompt)
+  for _, day, session_key in typed.values():
+    stats.add_prompts(day or stats.today, session_key)
   return stats
 
 
@@ -427,7 +503,7 @@ def scan_local(claude_dir: Path, index_file: Path | None) -> tuple[dict[str, Any
   db_rows, db_complete = scan_opencode(['anthropic"'], billed_here)
   complete = pi_complete and db_complete
 
-  if stats.total_prompts > 0:
+  if stats.total_prompts > 0 or stats.model_usage:
     add_shared_rows(stats, pi_rows, db_rows)
     return stats.snapshot(), complete
 
@@ -879,6 +955,7 @@ def main() -> int:
       claude_dir.exists()
       or profile_path(claude_dir).exists()
       or number(stats.get("totalPrompts")) > 0
+      or bool(stats.get("modelUsage"))
       or number(stats.get("todayPrompts")) > 0
       or len(limits["limits"]) > 0
     )
@@ -889,7 +966,7 @@ def main() -> int:
   record = base_record(
     AGENT_ID,
     AGENT_NAME,
-    ready=number(stats.get("totalPrompts")) > 0 or len(limits["limits"]) > 0,
+    ready=number(stats.get("totalPrompts")) > 0 or bool(stats.get("modelUsage")) or len(limits["limits"]) > 0,
     hasLocalStats=True,
     tierLabel=plan,
     usageStatusText=limits["usageStatusText"],

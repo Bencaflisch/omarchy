@@ -93,6 +93,60 @@ session.write_text(session.read_text().splitlines(keepends=True)[0])
 record = rescan()
 expect("Claude rereads a transcript that shrank", record["todayTotalTokens"], 29090, record)
 
+# Prompts are what a person typed, shaped as Claude Code 2.1 writes them: a
+# tool loop is one prompt however many API requests it makes, and a tool's
+# result, a background task reporting back, Claude Code's own meta lines, a
+# compaction summary, a local command's output, an interruption marker and a
+# subagent's prompt are none. A prompt typed while a turn runs is queued into
+# it as an attachment, and counts; one another agent sent doesn't. A prompt
+# copied into a forked transcript keeps its uuid and counts once.
+def user(uuid, content, session="session-1", **extra):
+  return {"type": "user", "uuid": uuid, "sessionId": session, "timestamp": STAMP, "isSidechain": False,
+          "message": {"role": "user", "content": content}, **extra}
+
+
+def queued(uuid, prompt, origin, **extra):
+  return {"type": "attachment", "uuid": uuid, "sessionId": "session-1", "timestamp": STAMP, "isSidechain": False,
+          "attachment": {"type": "queued_command", "commandMode": "prompt", "prompt": prompt, "origin": origin, **extra}}
+
+
+def tool_reply(message_id, output, block):
+  line = message(message_id, 1000, output)
+  line["message"]["content"] = [{"type": block}]
+  return line
+
+
+sandbox()
+loop = [
+  user("typed-1", "runtool", promptSource="typed"),
+  tool_reply("msg_1", 1, "thinking"), tool_reply("msg_1", 1, "text"), tool_reply("msg_1", 51, "tool_use"),
+  user("result-1", [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok"}], toolUseResult={"stdout": "ok"}),
+  tool_reply("msg_2", 52, "text"),
+]
+transcript(
+  *loop,
+  user("notified-1", "<task-notification>\n<task-id>b1</task-id>\n</task-notification>", promptSource="system"),
+  tool_reply("msg_3", 53, "text"),
+  user("meta-1", "<system-reminder>context</system-reminder>", isMeta=True),
+  user("summary-1", "This session is being continued from a previous conversation.", isCompactSummary=True, isVisibleInTranscriptOnly=True),
+  user("command-1", "<command-name>/model</command-name>"),
+  user("stdout-1", "<local-command-stdout>Set model</local-command-stdout>"),
+  user("interrupted-1", [{"type": "text", "text": "[Request interrupted by user]"}]),
+  user("image-1", [{"type": "image", "source": {}}, {"type": "text", "text": "what is this"}], promptSource="typed"),
+  tool_reply("msg_4", 54, "text"),
+  queued("queued-1", "also check the tests", {"kind": "human"}, humanTurn=True),
+  queued("queued-2", "<teammate-message>done</teammate-message>", {"kind": "peer", "from": "a1"}, isMeta=True),
+  {"type": "attachment", "uuid": "notified-2", "sessionId": "session-1", "timestamp": STAMP, "isSidechain": False,
+   "attachment": {"type": "queued_command", "commandMode": "task-notification", "prompt": "<task-notification></task-notification>"}},
+  name="parent.jsonl",
+)
+transcript({**user("side-1", "explore the repo"), "isSidechain": True}, name="parent/subagents/agent-a1.jsonl")
+fork = [{**line, "sessionId": "session-2"} for line in loop]
+transcript(*fork, user("typed-2", "forked", session="session-2", promptSource="typed"), tool_reply("msg_5", 55, "tool_use"), tool_reply("msg_6", 56, "text"), name="fork.jsonl")
+record = claude()
+expect("Claude counts the prompts a person typed, once each, not the API requests they made",
+       [record["todayPrompts"], record["totalPrompts"], record["todayTotalTokens"]], [5, 5, 6321], record)
+
 # A transcript replaced by a larger one, rewritten in place with more than it
 # had, or rewritten at its end or in its middle with both ends matching, is a
 # new file rather than an append, read from its start.
@@ -108,10 +162,10 @@ transcript(message("old-1", 1000))
 rescan()
 replaced(message("new-1", 20), message("new-2", 30))
 record = rescan()
-expect("Claude reads a transcript replaced by a larger one from its start", [record["todayTotalTokens"], record["totalPrompts"]], [50, 2], record)
+expect("Claude reads a transcript replaced by a larger one from its start", record["todayTotalTokens"], 50, record)
 transcript(message("other-1", 7), message("other-2", 8), message("other-3", 9))
 record = rescan()
-expect("Claude reads a transcript rewritten in place from its start", [record["todayTotalTokens"], record["totalPrompts"]], [24, 3], record)
+expect("Claude reads a transcript rewritten in place from its start", record["todayTotalTokens"], 24, record)
 
 transcript(*(message(f"long-{i}", 100) for i in range(1, 61)))
 rescan()
@@ -160,11 +214,11 @@ transcript(
 )
 record = claude()
 expect("Claude counts a streamed message from its final usage line, whole after a fallback", {
-  "test": record["modelUsage"]["claude-test"], "fallback": record["modelUsage"]["claude-fallback"], "prompts": record["totalPrompts"],
+  "test": record["modelUsage"]["claude-test"], "fallback": record["modelUsage"]["claude-fallback"], "today": record["todayTotalTokens"],
 }, {
   "test": {"cacheCreationInputTokens": 100, "cacheReadInputTokens": 2000, "inputTokens": 8, "outputTokens": 260},
   "fallback": {"cacheCreationInputTokens": 0, "cacheReadInputTokens": 3500, "inputTokens": 10, "outputTokens": 40},
-  "prompts": 2,
+  "today": 5918,
 }, record)
 
 # A stream still being written when the index was taken finishes in lines
@@ -173,14 +227,14 @@ rescan()
 transcript(message("message-2", 10, 90, cache_read=3500, model="claude-fallback", event="event-6"), mode="a")
 record = rescan()
 expect("Claude takes a streamed message's final count from appended lines",
-       [record["modelUsage"]["claude-fallback"]["outputTokens"], record["totalPrompts"]], [90, 2], record)
+       [record["modelUsage"]["claude-fallback"]["outputTokens"], record["todayTotalTokens"]], [90, 5968], record)
 
 # A line of JSON that isn't an object skips that line, never the transcript.
 sandbox()
 transcript(message("listed-1", 10), [message("listed-x", 99)], message("listed-2", 20))
 record = claude()
 expect("Claude skips a transcript line that isn't an object and keeps the rest",
-       [record["totalPrompts"], record["todayTotalTokens"]], [2, 30], record)
+       record["todayTotalTokens"], 30, record)
 
 # Only a missing time is today's: a time of 0, false or "" is untrusted and
 # counts nowhere.
@@ -188,7 +242,7 @@ sandbox()
 transcript(message("stamped", 10), *(message(f"falsy-{n}", 99, timestamp=stamp) for n, stamp in enumerate((0, False, ""))))
 record = claude()
 expect("Claude counts a transcript line with a falsy time nowhere",
-       [record["totalPrompts"], record["todayTotalTokens"]], [1, 10], record)
+       [record["todayTotalTokens"], sum(bucket["inputTokens"] for bucket in record["modelUsage"].values())], [10, 10], record)
 
 # Unreadable transcripts are expected when an agent ran as another user, so
 # they make one bounded warning rather than a line each.

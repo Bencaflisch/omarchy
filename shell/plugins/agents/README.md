@@ -103,6 +103,8 @@ Limits come from Anthropic's OAuth usage endpoint, asked with the access token t
 
 Local stats come from the CLI's transcripts under `projects/`, falling back to `stats-cache.json` and `history.jsonl` (the cache's days are UTC dates that stop at yesterday, so its daily tokens are approximate and rarely cover today), plus pi and omp sessions (honouring `PI_CODING_AGENT_DIR` and `PI_CODING_AGENT_SESSION_DIR`) and opencode sessions on the `anthropic` provider.
 
+A prompt is one a person sent: a main-thread user line that isn't a tool's result, Claude Code's own meta line, a compaction summary, a task notification or a local command's output, plus a prompt typed mid-turn, which Claude Code queues as a `queued_command` attachment. Each counts once by its uuid, which a resumed or forked transcript keeps, so a tool loop's API requests are tokens, not prompts.
+
 ### Codex
 
 Limits and the plan come from the Codex CLI's own app-server (`codex app-server`, `account/rateLimits/read`), started in each account's home (`CODEX_HOME`, default `~/.codex`) so it answers for that login and refreshes its tokens there. Every rate-limit bucket is read: the general windows, and any model's own allowance shown beside the window of the same span. An individual spend cap, such as a Business seat's, is its own "Spend limit" meter, the share of the cap spent with the reset time the app-server reports, since it names no period; it can come without any rate window. A home with no `auth.json` under the file store and no `CODEX_ACCESS_TOKEN` reads "Waiting for auth" without starting the app-server.
