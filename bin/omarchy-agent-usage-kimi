@@ -51,6 +51,8 @@ OAUTH_CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098"
 ALLOWED_DOMAINS = ("kimi.com", "kimi.ai")
 REFRESH_SKEW_S = 60
 LOCK_WAIT_SECONDS = 15
+# proper-lockfile's own stale age: a lease left this long unrenewed is dead.
+LOCK_STALE_SECONDS = 10
 
 
 def credentials_dir() -> Path:
@@ -204,9 +206,18 @@ def refresh_lock():
       # gone is free, so try again. Only something that isn't a directory
       # blocks the lock for good.
       try:
-        blocked = not stat.S_ISDIR(lock.lstat().st_mode)
+        info = lock.lstat()
       except FileNotFoundError:
         continue
+      blocked = not stat.S_ISDIR(info.st_mode)
+      # A lease nobody renewed is left by a CLI that died holding it, and is
+      # taken over the way proper-lockfile itself does.
+      if not blocked and time.time() - info.st_mtime > LOCK_STALE_SECONDS:
+        try:
+          lock.rmdir()
+          continue
+        except OSError:
+          pass
       if blocked or time.monotonic() >= deadline:
         raise KimiError("Kimi sign-in is busy; start Kimi and try again")
       time.sleep(0.1)

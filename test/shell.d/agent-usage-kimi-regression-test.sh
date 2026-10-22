@@ -153,6 +153,17 @@ def cli_lock(root):
   expect("the collector waits out the Kimi CLI's refresh lock and takes its token", [token, len(reqs)], ["AT_peer", 0])
 
 
+def stale_lock(root):
+  credentials()
+  lock = root / "code home" / "oauth" / "kimi-code.lock"
+  lock.mkdir(parents=True)
+  os.utime(lock, (0, 0))
+  started = time.monotonic()
+  token = scanner.api_key()
+  expect("a lease left by a CLI that died is taken over, not waited out",
+         [token, time.monotonic() - started < 5, lock.exists()], ["AT_new", True, False])
+
+
 def lock_failure(root):
   credentials()
   (root / "code home" / "oauth").write_text("blocked")
@@ -408,7 +419,7 @@ def switched_cache(root):
 
 
 cases = {"contract": contract, "env_key": env_key, "stores": stores, "home": home_isolation, "static": static_token,
-         "refresh": refresh, "cli_lock": cli_lock, "lock_failure": lock_failure, "heartbeat": heartbeat,
+         "refresh": refresh, "cli_lock": cli_lock, "stale_lock": stale_lock,"lock_failure": lock_failure, "heartbeat": heartbeat,
          "private_write": private_write, "concurrent_signin": concurrent_signin, "concurrent_logout": concurrent_logout,
          "invalid_grant": invalid_grant, "refused_refresh": refused_refresh, "key_help": key_help, "refused": refused,
          "waiting_for_auth": waiting_for_auth, "trust": trust, "destination": destination, "redirects": redirects,
