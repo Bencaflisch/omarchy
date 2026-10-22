@@ -2,9 +2,9 @@
 
 # The Kimi collector's own sources: the key in KIMI_API_KEY or the sign-in the
 # Kimi CLI keeps (refreshed under the CLI's own lock), the hosts a token may
-# go to, and Kimi's quota answers. Kimi keeps no local history, so there is
-# no scan cache; the unused-machine record is held centrally by the partition
-# test and the limits cache by the contract checks.
+# go to, and Kimi's quota answers. Kimi Code's local stats are held by
+# agent-usage-kimi-stats-test.sh, the unused-machine record centrally by the
+# partition test, and the limits cache by the contract checks.
 #
 # Each case runs in a fresh sandbox against a real stand-in for Kimi's
 # services, which every https:// request is carried to. Set
@@ -342,8 +342,8 @@ def modern_quota(root):
   expect("the current CLI's quota windows are read, the monthly code allowance titled",
          [[row["percent"] for row in data["limits"]], data["limits"][0]["resetsAt"], data["limits"][-1].get("title")],
          [[0.25, 0.8, 1, 0], RESET_AT, "Code Monthly"], data)
-  expect("Kimi's quota is the account's, not local history",
-         [data["scope"], data["hasLocalStats"], data["hasPromptStats"]], ["account", False, False], data)
+  expect("Kimi's quota stands beside this machine's local stats",
+         [data.get("scope"), data["hasLocalStats"], data["hasPromptStats"]], [None, True, True], data)
   scanner.USAGE_URL = "https://api.kimi.ai/coding/v1/usages"
   record()
   expect("the global Kimi service gets the authorization header too", auth_header(), "Bearer AT_env")
