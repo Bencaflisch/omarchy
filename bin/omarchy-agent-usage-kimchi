@@ -45,6 +45,8 @@ AUTH_HELP = "Start Kimchi and log in, or set KIMCHI_API_KEY."
 REJECTED_HELP = "Kimchi rejected its API key. Log in again in Kimchi, or update KIMCHI_API_KEY."
 OUT_OF_CREDITS_HELP = "Kimchi's gateway is rate limiting requests until the account has credits again."
 REGION_LLM_BASE = {"us": "https://llm.kimchi.dev", "eu": "https://llm.eu.kimchi.dev"}
+# The region a self-hosted login saves; its gateway is the host it names.
+SELF_HOSTED = "self-hosted"
 PLAN_LABELS = {"community": "Community", "coder": "Coder", "teams": "Teams", "enterprise": "Enterprise"}
 BUDGET_LABELS = {
   "API_KEY": "API key budget",
@@ -103,14 +105,22 @@ def local_stats(sessions_root):
 
 # The key and gateway Kimchi itself would use: KIMCHI_API_KEY, KIMCHI_BASE_URL,
 # and KIMCHI_REGION over ~/.config/kimchi/config.json, the region's gateway
-# when nothing names one.
+# when nothing names one. A self-hosted login's gateway is <selfHostedUrl>/llm
+# (KIMCHI_SELF_HOSTED_URL over the saved one), and without one there is none:
+# its key is never sent to Kimchi's public gateway.
 def gateway():
   config = read_json(Path.home() / ".config" / "kimchi" / "config.json")
   key = os.environ.get("KIMCHI_API_KEY") or config.get("apiKey") or config.get("api_key") or ""
-  base = os.environ.get("KIMCHI_BASE_URL") or config.get("llmEndpoint") or ""
+  base = os.environ.get("KIMCHI_BASE_URL") or ""
+  region = next((value.strip().lower() for value in (os.environ.get("KIMCHI_REGION"), config.get("region"))
+                 if isinstance(value, str) and value.strip().lower() in (*REGION_LLM_BASE, SELF_HOSTED)), "us")
+  if not base and region == SELF_HOSTED:
+    self_hosted = os.environ.get("KIMCHI_SELF_HOSTED_URL") or config.get("selfHostedUrl") or ""
+    if not isinstance(self_hosted, str) or not self_hosted.strip():
+      return str(key).strip(), ""
+    base = self_hosted.strip().rstrip("/") + "/llm"
   if not base:
-    region = os.environ.get("KIMCHI_REGION") or config.get("region")
-    base = REGION_LLM_BASE.get(str(region or "").strip().lower(), REGION_LLM_BASE["us"])
+    base = config.get("llmEndpoint") or REGION_LLM_BASE[region]
   base = str(base).strip().rstrip("/")
   if base.lower().endswith("/openai/v1"):
     base = base[: -len("/openai/v1")]
@@ -255,8 +265,12 @@ def collect_billing(force):
   if not key:
     return result
   result["signedIn"] = True
-  # KIMCHI_BASE_URL and llmEndpoint move the gateway, never the key onto a
-  # connection anyone on the way can read.
+  if not base:
+    result["usageStatusText"] = "Balance unavailable"
+    result["authHelpText"] = "Kimchi is set to its self-hosted region but names no self-hosted URL. Local Kimchi stats are still shown."
+    return result
+  # KIMCHI_BASE_URL, llmEndpoint and a self-hosted URL move the gateway,
+  # never the key onto a connection anyone on the way can read.
   if not trusted_endpoint(base):
     result["usageStatusText"] = "Balance unavailable"
     result["authHelpText"] = "Kimchi's gateway must use HTTPS (plain HTTP only for loopback). Local Kimchi stats are still shown."

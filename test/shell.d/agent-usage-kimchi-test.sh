@@ -136,6 +136,25 @@ expect("a plain HTTP llmEndpoint is never sent the key", kimchi.asked, [])
 kimchi(KIMCHI_BASE_URL="http://127.0.0.1:9")
 expect("plain HTTP to loopback still carries the key", kimchi.asked, ["http://127.0.0.1:9/v1/budget", "http://127.0.0.1:9/v1/credits"])
 
+# Kimchi 1.18's self-hosted login saves the region and its host but no
+# llmEndpoint, and its gateway is <host>/llm; KIMCHI_SELF_HOSTED_URL moves it.
+# Without a host the key goes nowhere, never to the public gateway.
+write_json(home() / ".config" / "kimchi" / "config.json", {"apiKey": "key-coder", "region": "self-hosted", "selfHostedUrl": "https://kimchi.example.internal/"})
+kimchi()
+expect("a self-hosted login asks its own host's gateway", kimchi.asked,
+       ["https://kimchi.example.internal/llm/v1/budget", "https://kimchi.example.internal/llm/v1/credits"])
+kimchi(KIMCHI_SELF_HOSTED_URL="https://other.example.internal")
+expect("KIMCHI_SELF_HOSTED_URL moves a self-hosted gateway", kimchi.asked,
+       ["https://other.example.internal/llm/v1/budget", "https://other.example.internal/llm/v1/credits"])
+write_json(home() / ".config" / "kimchi" / "config.json", {"apiKey": "key-coder", "region": "self-hosted"})
+record = kimchi()
+expect("a self-hosted login with no host sends its key nowhere",
+       [kimchi.asked, record["usageStatusText"], record.get("retryAdvised")], [[], "Balance unavailable", None], record)
+signed_in("key-coder")
+kimchi(KIMCHI_REGION="self-hosted", KIMCHI_SELF_HOSTED_URL="https://ci.example.internal")
+expect("KIMCHI_REGION picks the self-hosted region over the saved one", kimchi.asked,
+       ["https://ci.example.internal/llm/v1/budget", "https://ci.example.internal/llm/v1/credits"])
+
 # ------------------------------------------------------------- contract
 
 sandbox()
