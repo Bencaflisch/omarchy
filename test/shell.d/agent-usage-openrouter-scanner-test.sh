@@ -144,7 +144,7 @@ sandbox()
 record = openrouter(OPENROUTER_API_KEY="sk-test", OPENROUTER_MANAGEMENT_KEY="sk-mgmt")
 expect("a management key's history is account-wide, with no prompt counts, beside the balance",
        picked(record, "scope", "hasPromptStats", "todayTotalTokens") + [remaining(record), openrouter.asked],
-       ["account", False, 15, 9.0, ["/activity=sk-mgmt", "/credits=sk-test", "/key=sk-test"]], record)
+       ["account", False, 15, 9.0, ["/activity=sk-mgmt", "/credits=sk-mgmt", "/key=sk-test"]], record)
 
 # A management key alone still collects the history and the balance, with no
 # inference key's meter to show.
@@ -200,14 +200,19 @@ expect("opencode's saved OpenRouter key comes before pi's", openrouter.asked, ["
 
 # A "management" key that /activity refuses (an inference key, or one
 # revoked) falls back to the local scan: machine numbers with prompt counts,
-# and no sign-in asked for, since the inference key still answers.
+# and no sign-in asked for, since the inference key still answers, and reads
+# the balance /credits refuses the other key.
 sandbox()
 write_pi_session(home() / ".pi" / "agent" / "sessions" / "--p--" / "s.jsonl", [pi_reply("openrouter", 100, id="a1", model="anthropic/claude-test")])
 for code in (401, 403):
-  record = openrouter(OPENROUTER_API_KEY="sk-test", OPENROUTER_MANAGEMENT_KEY="sk-refused", routes=with_routes(activity=code))
+  def refused_manager(request, code=code):
+    if request.get_header("Authorization") == "Bearer sk-refused":
+      return FakeHttp.refusal(request.full_url, code, {"error": {"code": code, "message": "refused"}})
+    return CREDITS
+  record = openrouter(OPENROUTER_API_KEY="sk-test", OPENROUTER_MANAGEMENT_KEY="sk-refused", routes=with_routes(activity=code, credits=refused_manager))
   expect(f"a management key /activity refuses ({code}) falls back to the local scan",
-         picked(record, "scope", "hasPromptStats", "totalPrompts", "todayTotalTokens", "usageStatusText", "retryAdvised") + [openrouter.asked],
-         [None, True, 1, 100, "", None, ["/activity=sk-refused", "/credits=sk-test", "/key=sk-test"]], record)
+         picked(record, "scope", "hasPromptStats", "totalPrompts", "todayTotalTokens", "usageStatusText", "retryAdvised") + [remaining(record), openrouter.asked],
+         [None, True, 1, 100, "", None, 9.0, ["/activity=sk-refused", "/credits=sk-refused", "/credits=sk-test", "/key=sk-test"]], record)
 
 # ---------------------------------------------------------- failed checks
 
@@ -232,8 +237,9 @@ for code in (401, 403):
 
 # OpenRouter documents /credits as management-key only, answering an
 # inference key with its 403 example. That key is healthy: the meter shows,
-# with no balance and nothing to sign in to again. A management key, when
-# there is one, reads the balance instead.
+# with no balance and nothing to sign in to again, and the refusal is kept, so
+# later refreshes don't ask again. A management key, when there is one, reads
+# the balance instead, the only /credits request.
 def management_only(request):
   if request.get_header("Authorization") == "Bearer sk-mgmt":
     return CREDITS
@@ -245,11 +251,19 @@ record = openrouter(OPENROUTER_API_KEY="sk-test", routes=with_routes(credits=man
 expect("an inference key /credits refuses still shows its meter, with no balance and no sign-in asked",
        picked(record, "usageStatusText", "authHelpText", "limitsStale", "balance", "retryAdvised") + [len(record["limits"]), openrouter.asked],
        ["", "", False, None, None, 1, ["/credits=sk-test", "/key=sk-test"]], record)
+record = openrouter(OPENROUTER_API_KEY="sk-test", routes=with_routes(credits=management_only))
+expect("an inference key /credits refused isn't asked again on the next refresh",
+       picked(record, "usageStatusText", "limitsStale", "balance") + [len(record["limits"]), openrouter.asked],
+       ["", False, None, 1, ["/key=sk-test"]], record)
 record = openrouter(OPENROUTER_API_KEY="sk-test", OPENROUTER_MANAGEMENT_KEY="sk-mgmt",
                     routes=with_routes(credits=management_only))
 expect("a management key reads the balance an inference key is refused",
        picked(record, "usageStatusText", "limitsStale") + [remaining(record), openrouter.asked],
-       ["", False, 9.0, ["/activity=sk-mgmt", "/credits=sk-mgmt", "/credits=sk-test", "/key=sk-test"]], record)
+       ["", False, 9.0, ["/activity=sk-mgmt", "/credits=sk-mgmt", "/key=sk-test"]], record)
+
+# A key /credits answers, where OpenRouter still lets one read it, in a fresh
+# home, since the refusal above is kept for sk-test.
+sandbox()
 os.environ["OPENROUTER_API_KEY"] = "sk-test"
 
 # A failed /credits keeps the last good balance, marked stale; with none
