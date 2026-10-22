@@ -182,6 +182,14 @@ record = claude()
 expect("Claude skips a transcript line that isn't an object and keeps the rest",
        [record["totalPrompts"], record["todayTotalTokens"]], [2, 30], record)
 
+# Only a missing time is today's: a time of 0, false or "" is untrusted and
+# counts nowhere.
+sandbox()
+transcript(message("stamped", 10), *(message(f"falsy-{n}", 99, timestamp=stamp) for n, stamp in enumerate((0, False, ""))))
+record = claude()
+expect("Claude counts a transcript line with a falsy time nowhere",
+       [record["totalPrompts"], record["todayTotalTokens"]], [1, 10], record)
+
 # Unreadable transcripts are expected when an agent ran as another user, so
 # they make one bounded warning rather than a line each.
 sandbox()

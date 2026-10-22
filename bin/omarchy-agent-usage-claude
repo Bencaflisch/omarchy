@@ -88,8 +88,9 @@ def expand_path(value: str) -> Path:
 
 # Version 5 reads token counts and times the way every collector reads them
 # (a count written as a string is no count, an untrusted time skips its line),
-# so an index parsed the older way is read again.
-INDEX_VERSION = 5
+# so an index parsed the older way is read again. Version 6 stops reading a
+# falsy time (0, false, "") as no time at all, which counted it as today.
+INDEX_VERSION = 6
 
 # How much of each end of what was read the index remembers a hash of, so a
 # file replaced or rewritten with more than it had is not mistaken for an
@@ -198,7 +199,10 @@ def parse_usage_records(path: Path, entry: dict[str, Any] | None) -> dict[str, A
 
       # A line with no time is today's, kept as None so the index stays true
       # past midnight; one whose time can't be trusted counts nowhere.
-      timestamp = parsed.get("timestamp") or message.get("timestamp")
+      # A time of 0, false or "" is present and untrusted, not missing.
+      timestamp = parsed.get("timestamp")
+      if timestamp is None:
+        timestamp = message.get("timestamp")
       day = local_day(timestamp) if timestamp is not None else None
       if timestamp is not None and day is None:
         continue
