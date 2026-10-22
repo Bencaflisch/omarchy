@@ -218,6 +218,13 @@ record = ollama(routes={BALANCE: {
 }, ME: {"Plan": "pro"}})
 expect("Ollama meters a current plan's included credits until the period ends", [record["limits"], record["usageStatusText"]],
        [[{"label": "Included credits", "title": "Monthly", "percent": 0.275, "resetsAt": WEEKLY_RESET}], ""], record)
+expect("Ollama shows the purchased credits left as a balance, with no funded figure to alarm on", record.get("balance"),
+       {"remaining": 25.0, "funded": 0, "spent": 0, "currency": "USD", "estimated": False}, record)
+
+# The balance is kept with the limits: a later failed check shows both, stale.
+record = ollama(mode=500)
+expect("Ollama keeps the purchased balance stale past a failed check",
+       [record.get("balance", {}).get("remaining"), len(record["limits"]), record["limitsStale"]], [25.0, 1, True], record)
 
 # An answer with no usable windows explains itself instead of printing none.
 sandbox()

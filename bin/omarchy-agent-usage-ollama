@@ -218,6 +218,24 @@ def balance_limits(payload: Any) -> list[dict[str, Any]]:
   return out
 
 
+# The credits bought apart from the plan: purchased.balance_usd, what's left
+# of them unexpired. The answer says how much remains but not how much was
+# bought, so the balance shows the remaining figure alone. A plan that never
+# bought any, or used them up, has none to show, and that is no alarm while
+# the plan's included credits still serve.
+def purchased_balance(payload: Any) -> dict[str, Any] | None:
+  purchased = payload.get("purchased") if isinstance(payload, dict) else None
+  remaining = amount(purchased.get("balance_usd")) if isinstance(purchased, dict) else None
+  if remaining is None or remaining <= 0:
+    return None
+  return {"remaining": remaining, "funded": 0, "spent": 0, "currency": "USD", "estimated": False}
+
+
+def kept_balance(cache: LimitsCache) -> dict[str, Any] | None:
+  balance = cache.data.get("balance")
+  return balance if isinstance(balance, dict) else None
+
+
 def probe_limits(access_key: str) -> dict[str, Any]:
   request = urllib.request.Request(
     BALANCE_ENDPOINT,
@@ -242,9 +260,10 @@ def probe_limits(access_key: str) -> dict[str, Any]:
     return {"ok": False, "helpText": "Ollama's balance endpoint returned an invalid answer. Local stats are still shown."}
 
   out = balance_limits(payload)
-  if not out:
+  balance = purchased_balance(payload)
+  if not out and balance is None:
     return {"ok": False, "helpText": "Ollama's balance endpoint returned no limits. Local stats are still shown."}
-  return {"ok": True, "limits": out}
+  return {"ok": True, "limits": out, "balance": balance}
 
 
 def probe_plan(access_key: str) -> str | None:
@@ -290,8 +309,8 @@ def collect_limits(access_key: str, force: bool) -> dict[str, Any]:
   # --force is a person asking for fresh numbers, so it skips the reuse window
   # entirely; the interval is there to absorb repeated panel opens, not to
   # overrule someone who pressed refresh.
-  if cache.fresh(force):
-    result.update(limits=cache.limits, tierLabel=cached_plan, live=True, fetchedAtMs=cache.fetched_at)
+  if cache.fresh(force, allow_empty=kept_balance(cache) is not None):
+    result.update(limits=cache.limits, tierLabel=cached_plan, live=True, fetchedAtMs=cache.fetched_at, balance=kept_balance(cache))
     return result
 
   probe = probe_limits(access_key)
@@ -300,8 +319,8 @@ def collect_limits(access_key: str, force: bool) -> dict[str, Any]:
     # A plan lookup that failed keeps the plan last named, rather than
     # blanking a label the account still has.
     plan = cached_plan if plan is None else plan
-    fetched_at = cache.save(probe["limits"], only_if_newer=True, plan=plan)
-    result.update(limits=probe["limits"], tierLabel=plan, live=True, fetchedAtMs=fetched_at)
+    fetched_at = cache.save(probe["limits"], only_if_newer=True, plan=plan, balance=probe["balance"])
+    result.update(limits=probe["limits"], tierLabel=plan, live=True, fetchedAtMs=fetched_at, balance=probe["balance"])
     return result
 
   # The first probe after login often fires before DHCP has handed out a
@@ -309,12 +328,13 @@ def collect_limits(access_key: str, force: bool) -> dict[str, Any]:
   if probe.get("transport"):
     result["retryAdvised"] = True
   result["authHelpText"] = probe["helpText"]
-  fallback, fetched_at = cache.kept()
-  if fallback:
-    result.update(limits=fallback, tierLabel=cached_plan, fetchedAtMs=fetched_at)
+  fallback = cache.kept()[0]
+  balance = kept_balance(cache)
+  if fallback or balance:
+    result.update(limits=fallback, tierLabel=cached_plan, fetchedAtMs=cache.fetched_at, balance=balance)
   if probe.get("auth"):
     result["usageStatusText"] = "Sign-in expired"
-  elif not fallback:
+  elif not fallback and not balance:
     result["usageStatusText"] = "Ollama limits unavailable"
   return result
 
@@ -347,9 +367,11 @@ def main() -> int:
       usageStatusText=limits["usageStatusText"],
       authHelpText=limits["authHelpText"],
       limits=limits["limits"],
-      limitsStale=bool(limits["limits"]) and not limits["live"],
+      limitsStale=bool(limits["limits"] or limits.get("balance")) and not limits["live"],
       limitsFetchedAt=limits["fetchedAtMs"],
     )
+    if limits.get("balance"):
+      record["balance"] = limits["balance"]
     if limits.get("retryAdvised"):
       record["retryAdvised"] = True
   emit(record, sort_keys=True)
