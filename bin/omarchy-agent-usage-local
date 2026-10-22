@@ -80,7 +80,9 @@ KNOWN_LOCAL_PROVIDERS = {
 # Provider ids the provider collectors count whole, from pi, omp and opencode,
 # each the exact id that collector's filter matches. A local.json naming one
 # of them would count its tokens twice, so they are never local, whatever the
-# configuration says. Two more are claimed only for some models, and only
+# configuration says: the claiming collector wins. Each collector's own
+# provider list must be a subset of this one; agent-usage-partition-test.sh
+# fails when an id is added there and not here. Two more are claimed only for some models, and only
 # those rows are left out: Ollama's cloud-tagged models (cloud_model) and
 # opencode's Antigravity plugin (antigravity_row).
 CLAIMED_PROVIDERS = {
@@ -88,9 +90,10 @@ CLAIMED_PROVIDERS = {
   "deepseek",  # deepseek
   "devin",  # devin
   "fireworks", "fireworks-ai",  # fireworks, which counts the whole account
-  "kimi-coding", "kimi-code-plan-global", "kimi-code-plan-cn", "moonshotai", "moonshotai-cn",  # kimi
+  "kimi-coding", "kimi-code", "kimi-code-plan-global", "kimi-code-plan-cn",  # kimi
+  "moonshotai", "moonshotai-cn", "moonshot",  # kimi
   "google-antigravity",  # agy, pi's Antigravity sign-in
-  "meta",  # muse
+  "meta", "muse-code",  # muse
   "minimax", "minimax-cn", "minimax-coding-plan", "minimax-cn-coding-plan",  # minimax
   "mistral",  # vibe
   "ollama-cloud",  # ollama
@@ -100,7 +103,8 @@ CLAIMED_PROVIDERS = {
   "alibaba-coding-plan", "alibaba-coding-plan-cn", "alibaba-token-plan", "alibaba-token-plan-cn",  # qwen
   "qwen-token-plan", "qwen-token-plan-cn", "qwen-token-plan-individual", "qwen-portal",  # qwen
   "synthetic",  # synthetic
-  "zai", "zhipu",  # zai
+  "zai", "zhipu", "zai-coding-cn", "zai-coding-plan",  # zai
+  "zhipu-coding-plan", "zhipuai", "zhipuai-coding-plan",  # zai
 }
 
 def model_name(raw):

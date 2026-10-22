@@ -1172,3 +1172,107 @@ if [[ -z $alibaba_report ]]; then
 else
   fail "each Claude Code reply sent to Model Studio's Anthropic API is counted once, by qwen" "$alibaba_report"
 fi
+
+# ------------------------------------------------- local.json and claimed ids
+
+# The local collector drops every id another collector claims from what
+# local.json names (CLAIMED_PROVIDERS), so the claimer counts its rows and
+# local never does. That list is kept by hand: each collector's own provider
+# ids (its PROVIDERS, PROVIDER or NATIVE_PROVIDER, the exact id in its pi/omp
+# pattern and its opencode prefilter) must all be in it.
+claimed_report=$(python3 - "$ROOT" <<'PY'
+import ast
+import re
+import sys
+from pathlib import Path
+
+bin_dir = Path(sys.argv[1]) / "bin"
+
+def literals(node):
+  if isinstance(node, ast.Constant) and isinstance(node.value, str):
+    return [node.value]
+  if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+    return [value for item in node.elts for value in literals(item)]
+  return []
+
+def assigned(tree, names):
+  return [node.value for node in tree.body if isinstance(node, ast.Assign) and any(getattr(target, "id", "") in names for target in node.targets)]
+
+local = ast.parse((bin_dir / "omarchy-agent-usage-local").read_text())
+claimed = {pid for value in assigned(local, ("CLAIMED_PROVIDERS",)) for pid in literals(value)}
+missing = [] if claimed else ["CLAIMED_PROVIDERS is not found in omarchy-agent-usage-local"]
+for path in sorted(bin_dir.glob("omarchy-agent-usage-*")):
+  cid = path.name.removeprefix("omarchy-agent-usage-")
+  if cid in ("local", "update"):
+    continue
+  tree = ast.parse(path.read_text())
+  ids = {pid for value in assigned(tree, ("PROVIDERS", "PROVIDER", "NATIVE_PROVIDER")) for pid in literals(value)}
+  for node in ast.walk(tree):
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+      ids.update(re.findall(r'"provider"\\s\*:\\s\*"([a-z0-9-]+)"', node.value))
+    if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "scan_opencode" and node.args:
+      ids.update(value[:-1] for value in literals(node.args[0]) if value.endswith('"'))
+  missing += [f"{pid} ({cid})" for pid in sorted(ids - claimed)]
+if missing:
+  print("CLAIMED_PROVIDERS lacks " + ", ".join(missing))
+PY
+)
+if [[ -z $claimed_report ]]; then
+  pass "local's CLAIMED_PROVIDERS holds every provider id another collector claims"
+else
+  fail "local's CLAIMED_PROVIDERS holds every provider id another collector claims" "$claimed_report"
+fi
+
+# A local.json naming each harness's own id for a plan leaves every row to
+# the collector that meters it: counted once, never by local too.
+CLAIMED_IDS_HOME="$WORK/provider-ids-configured"
+cp -a "$IDS_HOME" "$CLAIMED_IDS_HOME"
+rm -rf "$CLAIMED_IDS_HOME/.cache"
+mkdir -p "$CLAIMED_IDS_HOME/.config/omarchy/agents"
+python3 - "$WORK/ids-cells.json" "$CLAIMED_IDS_HOME/.config/omarchy/agents/local.json" <<'PY'
+import json
+import sys
+
+cells = json.load(open(sys.argv[1]))
+json.dump({"providers": sorted({cell["provider"] for cell in cells})}, open(sys.argv[2], "w"))
+PY
+mkdir -p "$CLAIMED_IDS_HOME/.cache" "$CLAIMED_IDS_HOME/.run" "$WORK/ids-configured-results"
+for id in local kimi muse zai; do
+  run_collector "$CLAIMED_IDS_HOME" "$id" "$WORK/ids-configured-results/$id" &
+done
+wait
+
+claimed_ids_report=$(python3 - "$WORK" local kimi muse zai <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+work = Path(sys.argv[1])
+cells = {cell["tag"]: cell for cell in json.load(open(work / "ids-cells.json"))}
+seen = {tag: {} for tag in cells}
+for cid in sys.argv[2:]:
+  try:
+    record = json.loads((work / f"ids-configured-results/{cid}.json").read_text())
+  except ValueError:
+    print(f"{cid} printed no record: {(work / f'ids-configured-results/{cid}.err').read_text()[-300:]}")
+    continue
+  for model, bucket in (record.get("modelUsage") or {}).items():
+    total = sum(bucket.get(key) or 0 for key in ("inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"))
+    for tag in re.findall(r"zq\d{3}", model):
+      if tag in seen and total:
+        seen[tag][cid] = seen[tag].get(cid, 0) + total
+for tag, cell in sorted(cells.items()):
+  owner, tokens = cell["owner"], cell["tokens"]
+  wrong = [f"{cid} counted it {total / tokens:g}x" for cid, total in sorted(seen[tag].items()) if cid != owner or total != tokens]
+  if owner not in seen[tag]:
+    wrong.insert(0, f"{owner} missed it")
+  if wrong:
+    print(f"{cell['harness']}'s {cell['provider']} ({tag}), expected {owner}: {'; '.join(wrong)}")
+PY
+)
+if [[ -z $claimed_ids_report ]]; then
+  pass "a local.json naming a plan's harness ids leaves each row to the collector that meters it, counted once"
+else
+  fail "a local.json naming a plan's harness ids leaves each row to the collector that meters it, counted once" "$claimed_ids_report"
+fi
