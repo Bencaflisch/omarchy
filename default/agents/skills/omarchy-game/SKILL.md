@@ -27,7 +27,7 @@ If the user hasn't said what game they want, ask. Then decide, in one sentence e
 - **Score or winning**: what goes up, and whether the round can be won (a maze, a level) or only survived (a runner, asteroids).
 - **Getting harder**: what changes over time so it stays interesting.
 
-Keep it small enough to finish: one mechanic done well beats three done badly. Pick a short lowercase name of letters, digits and dashes (`snake`, `tilt-maze`).
+Keep it small enough to finish: one mechanic done well beats three done badly. But give it enough to play for a few minutes: a maze has many turns and dead ends, a shooter more than one kind of enemy, a runner obstacles that need different moves. Pick a short lowercase name of letters, digits and dashes (`snake`, `tilt-maze`).
 
 ## 2. Start from the template
 
@@ -57,13 +57,11 @@ Leave the frame alone: the input, sound, screens, loop and `window.omarchyGame` 
 
 `check` opens the game headless, starts a round, pauses and resumes it, plays your `CHECK.play`, ends the round and restarts it. It fails on any page error, a round that won't start, a simulation that doesn't move, a pause that doesn't stop it, or a `CHECK.expect` event that never happened. Fix what it reports and run it again until it says PASSED. Never weaken `CHECK` to make it pass: if the mechanic doesn't happen, the game is broken.
 
-Then look at `check-title.png`, `check-play.png` and `check-over.png` beside the game, every time, with your harness's tool for viewing an image (`view_image` in Codex, Read in Claude Code). Reading the file names in the output is not looking. A pass only proves the game runs; only the pictures show whether it is any good. Ask of each:
+Then look at `check-title.png`, `check-play.png` and `check-over.png` beside the game, every time, with your harness's tool for viewing an image (`view_image` in Codex, Read in Claude Code). Reading the file names in the output is not looking. A pass only proves the game runs; only the pictures show whether it is any good. For each picture, write one line answering each of these, then fix every answer that is no and check again:
 
-- Is the player obvious, and is everything the player needs on screen and not cut off at the edges?
-- Is it readable, with things told apart, in the theme's colours?
-- Does it look like the game you set out to make, not grey boxes on black?
-
-Fix what's wrong and check again.
+- Does the play area fill most of the window, with the player and everything it needs fully on screen and nothing cut off at the edges?
+- Is the player big and obvious, and is everything else told apart, in the theme's colours?
+- Does it look like the game you set out to make, with enough in it to be worth playing, not a few shapes on an empty field?
 
 ## 4. Put it in the launcher
 
@@ -75,7 +73,7 @@ This adds the game to the app launcher (Super + Space) as a web app, with an ico
 
 ## Making it good
 
-- **Feel**: the player responds the moment a key goes down. Movement eases rather than snapping (`THREE.MathUtils.damp`). Every hit, pickup and death has a sound and something visible: a flash, a shake (`shake = 0.4`), a burst of particles, a squash.
+- **Feel**: the player responds the moment a key goes down. Movement eases rather than snapping (`THREE.MathUtils.damp`). Every hit, pickup and death has a sound and something visible: a flash, a shake (`shake = 0.4`), a burst of particles, a squash. Fire them once, at the moment it happens, never on every step while two things touch.
 - **Fairness**: the first ten seconds are easy and it gets harder steadily. A loss is the player's mistake, never something they couldn't see coming: hazards appear far enough away to react, and no single key press ends the round by surprise (a snake ignores a turn straight back into itself; a ball starts on the paddle and leaves when the player launches it).
 - **Clarity**: one player, big enough to find at a glance and the most vivid thing on screen, never a dot. The score is always visible. The camera shows the whole play area at 16:9 and 16:10.
 - **Polish**: the title screen says the goal and the controls in two lines. Game over says the score and whether it was a new best.
