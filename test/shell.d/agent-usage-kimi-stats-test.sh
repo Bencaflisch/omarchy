@@ -270,8 +270,8 @@ expect("Kimi counts every Claude Code reply while Claude Code is pointed at Kimi
 
 # pi, omp and opencode on the Kimi Code plan count here: pi's own
 # `kimi-coding` provider and models.dev's `kimi-code-plan-global` and
-# `kimi-code-plan-cn`. Moonshot's pay-as-you-go API isn't the plan, and a
-# gateway named like it isn't either.
+# `kimi-code-plan-cn`, and so does Moonshot's pay-as-you-go API. A gateway
+# named like one of them doesn't.
 sandbox()
 write_pi_session(home() / ".pi" / "agent" / "sessions" / "project" / "pi.jsonl", [
   {"type": "message", "id": "u1", "timestamp": today_stamp(), "message": {"role": "user", "content": "hi"}},
@@ -285,9 +285,9 @@ opencode_db(message=[
   ("msg_3", "ses_1", oc_v1("moonshotai-cn", 999, model="kimi-k2.6")),
 ])
 record = kimi()
-expect("Kimi counts pi and opencode on the Kimi Code plan ids, never Moonshot's pay-as-you-go API",
-       [record["todayTokensByModel"], record["todayPrompts"], record["ready"], record["usageStatusText"]],
-       [{"k3": 300, "kimi-for-coding": 200, "kimi-for-coding-highspeed": 20}, 3, True, "Waiting for auth"], record)
+expect("Kimi counts pi and opencode on the Kimi Code plan ids and Moonshot's pay-as-you-go API",
+       [record["todayTokensByModel"], record["ready"], record["usageStatusText"]],
+       [{"k3": 300, "kimi-k2.6": 1998, "kimi-for-coding": 200, "kimi-for-coding-highspeed": 20}, True, "Waiting for auth"], record)
 
 # ---------------------------------------------------------------- contract
 

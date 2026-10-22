@@ -182,10 +182,11 @@ PROVIDERS = [
   ("kimi-coding", "kimi-pt", "", "kimi", "kimi"),
   ("kimi-code-plan-global", "kimi-pt", "", "kimi", "kimi"),
   ("kimi-code-plan-cn", "kimi-pt", "", "kimi", "kimi"),
-  # Alibaba's and Moonshot's pay-as-you-go keys carry no plan.
+  # Moonshot's pay-as-you-go API counts under Kimi, as Claude Code's turns
+  # to it do; Alibaba's pay-as-you-go keys carry no plan.
   ("alibaba", "qwen-pt", "", None, None),
-  ("moonshotai", "kimi-pt", "", None, None),
-  ("moonshotai-cn", "kimi-pt", "", None, None),
+  ("moonshotai", "kimi-pt", "", "kimi", "kimi"),
+  ("moonshotai-cn", "kimi-pt", "", "kimi", "kimi"),
   ("acme-unclaimed", "acme-pt", "", None, None),
 ]
 
@@ -868,8 +869,8 @@ fi
 # pi, omp and opencode each name a plan's provider their own way, so a plan
 # a collector meters can reach it under several ids. One home holds a reply
 # on each id below, written as pi 1.4.0, omp 18.12.6 and opencode 1.19.3
-# wrote them for that provider, and each must be counted once, by its owner,
-# or (Moonshot's pay-as-you-go API) by nobody.
+# wrote them for that provider, and each must be counted once, by its owner
+# (Moonshot's pay-as-you-go API by Kimi).
 IDS_HOME="$WORK/provider-ids"
 mkdir -p "$IDS_HOME"
 python3 - "$IDS_HOME" "$WORK/ids-cells.json" <<'PY'
@@ -889,7 +890,7 @@ IDS = [
   ("omp", "zhipu-coding-plan", "zai"),
   ("omp", "kimi-code", "kimi"),
   ("omp", "muse-code", "muse"),
-  ("omp", "moonshot", None),
+  ("omp", "moonshot", "kimi"),
   ("opencode", "zai-coding-plan", "zai"),
   ("opencode", "zhipuai-coding-plan", "zai"),
   ("opencode", "zhipuai", "zai"),
