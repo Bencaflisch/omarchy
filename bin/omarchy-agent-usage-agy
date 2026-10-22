@@ -243,10 +243,13 @@ def extract_tier(data):
   return ""
 
 
-# How much of a bucket is spent, or None when its fraction is missing or
-# isn't a number: a bucket without one has no figure, not an untouched one.
+# How much of a bucket is spent, or None when its fraction isn't a number.
+# Google answers in proto3 JSON, which leaves zero values out, so a bucket
+# with a reset time and no fraction has none left: fully spent.
 def used(bucket):
   remaining = bucket.get("remainingFraction", bucket.get("remaining_fraction"))
+  if remaining is None and reset_of(bucket):
+    return 1.0
   if remaining is None or isinstance(remaining, bool):
     return None
   try:

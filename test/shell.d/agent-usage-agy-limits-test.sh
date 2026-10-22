@@ -100,8 +100,9 @@ read = limits({"buckets": [
 expect("Antigravity collector reads snake_case buckets listed without groups and skips unreadable fractions",
        [(entry["label"], round(entry["percent"], 2), entry["resetsAt"]) for entry in read], [("Session (5-hour)", 0.6, "2026-09-15T19:31:46+00:00")], read)
 
-read = limits({"buckets": [{"window": "5h", "resetTime": "2026-09-15T19:31:46Z"}]})
-expect("Antigravity collector skips a bucket with no remaining fraction rather than read it as untouched", read, [], read)
+read = limits({"buckets": [{"window": "5h", "resetTime": "2026-09-15T19:31:46Z"}, {"window": "weekly"}]})
+expect("Antigravity collector reads a bucket whose zero fraction proto3 JSON left out as fully spent, and skips one with no reset either",
+       [(entry["label"], entry["percent"]) for entry in read], [("Session (5-hour)", 1.0)], read)
 
 # An answer of another shape is no answer, not a plan without quotas; another
 # group's buckets of the wrong shape skip that group alone.
