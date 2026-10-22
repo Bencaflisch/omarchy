@@ -282,11 +282,22 @@ def collect_limits(home, key, force):
     return result
 
   headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-  limit = None
+  limits = []
   try:
-    limit = credits_limit(open_json(urllib.request.Request(CREDITS_URL, headers=headers), timeout=8))
-    if limit is None:
-      limit = monthly_limit(open_json(urllib.request.Request(MONTHLY_URL, headers=headers), timeout=8))
+    credits = open_json(urllib.request.Request(CREDITS_URL, headers=headers), timeout=8)
+    weekly = credits_limit(credits)
+    if weekly is None:
+      limits = [monthly_limit(open_json(urllib.request.Request(MONTHLY_URL, headers=headers), timeout=8))]
+    else:
+      limits = [weekly]
+      # A unified-billing account can carry both: the weekly credits and the
+      # monthly included quota, which Grok's own /usage shows side by side.
+      # The weekly window stands on its own when the monthly one won't come.
+      if credits["config"].get("isUnifiedBillingUser") is True and weekly["label"] == "Weekly":
+        try:
+          limits.append(monthly_limit(open_json(urllib.request.Request(MONTHLY_URL, headers=headers), timeout=8)))
+        except Exception:
+          pass
   except HttpError as error:
     if error.status in (401, 403):
       # The token was turned away before it lapsed: a sign-in to redo.
@@ -305,8 +316,8 @@ def collect_limits(home, key, force):
   except Exception:
     result["authHelpText"] = "Grok's usage endpoint answered without a usable limit. Local Grok stats are still shown."
 
-  if limit:
-    result.update(limits=[limit], live=True, fetchedAtMs=cache.save([limit]), authHelpText="")
+  if limits:
+    result.update(limits=limits, live=True, fetchedAtMs=cache.save(limits), authHelpText="")
   else:
     result["limits"] = fallback
     if not result["usageStatusText"] and not result["limits"]:

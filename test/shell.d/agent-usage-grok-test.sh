@@ -185,6 +185,16 @@ expect("a unified-billing account reads its monthly quota, not a confident 0%",
        [record["limits"][0]["label"], record["limits"][0]["percent"], record["limitsStale"], bool(record["limits"][0]["resetsAt"])],
        ["Monthly", 0.9, False, True], record)
 
+# A unified-billing account can also carry a weekly percentage on the credits
+# answer; Grok's /usage then shows the monthly included quota beside it.
+sandbox()
+signed_in(grok_home(), token="token-unified")
+answer["percent"] = 30
+record = grok()
+answer["percent"] = None
+expect("a unified-billing account with weekly credits shows the monthly quota beside them",
+       [[limit["label"], limit["percent"]] for limit in record["limits"]], [["Weekly", 0.3], ["Monthly", 0.9]], record)
+
 # ------------------------------------------------------------- accounts
 
 sandbox()
