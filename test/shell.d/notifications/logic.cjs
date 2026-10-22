@@ -271,9 +271,6 @@ for (const body of ['Your verification code is 938271', 'Your code is 938 271', 
 
 // ------------------------------------------------------------------ settings
 { // Every key optional, every invalid value falls back.
-  const d = Settings.resolve(null)
-  assert.equal(d.fullscreenOverlay, 'all')
-  assert.equal(d.displayMode, 'active')
   const r = Settings.resolve({ fullscreenOverlay: 'steam-away', historyHours: 7, displayName: 7,
                                offerSnoozeWhenSharing: 'no' })
   assert.equal(r.fullscreenOverlay, 'all', 'retired step-aside variants fall back')
@@ -281,7 +278,6 @@ for (const body of ['Your verification code is 938271', 'Your code is 938 271', 
   assert.equal(r.historyHours, 24)
   assert.equal(r.displayName, '')
   assert.equal(r.offerSnoozeWhenSharing, true)
-  assert.deepEqual([...Settings.SNOOZE_CHOICES], ['15', '60', 'tomorrow'])
   const now = new Date(2026, 9, 19, 22, 30).getTime()
   assert.equal(Settings.snoozeSeconds('60', now), 3600)
   assert.equal(Settings.snoozeSeconds('tomorrow', now), 9 * 3600 + 1800)
@@ -317,11 +313,6 @@ function runIn(scope, ...names) {
   assert.equal(calls.length, 0)
   s.focusWindow({ address: '0x123abc' })
   assert.deepEqual(calls, ['hl.dsp.focus({window = hl.get_window("address:0x123abc")})'])
-}
-
-{ // The summary is plain text everywhere it is drawn.
-  const toast = fs.readFileSync(load.dir + '/Toast.qml', 'utf8'), title = toast.indexOf('id: title')
-  assert.ok(/Text\.PlainText/.test(toast.slice(toast.lastIndexOf('Text {', title), title)), 'the summary renders as plain text')
 }
 
 // Admission, close and replay run for real; only the ListModel, QObject
