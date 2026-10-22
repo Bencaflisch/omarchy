@@ -100,6 +100,18 @@ for payload in ({"five_hour": {"utilization": 78.0}, "limits": [{"kind": "sessio
   read = read_limits(payload)
   check("Claude collector adds no limit when the payload scopes none", not any(" Weekly" in entry["label"] for entry in read["limits"]), read)
 
+# The week is `seven_day`, the row Claude Code's /usage titles "Current week
+# (all models)"; `seven_day_oauth_apps` is a side bucket it never shows as
+# the weekly limit, even when it holds numbers of its own.
+both = read_limits({
+  "five_hour": {"utilization": 11.0, "resets_at": "2026-10-22T15:20:00+00:00"},
+  "seven_day": {"utilization": 13.0, "resets_at": "2026-10-25T06:00:00+00:00"},
+  "seven_day_oauth_apps": {"utilization": 64.0, "resets_at": "2026-10-23T01:00:00+00:00"},
+})
+expect("Claude's weekly meter is the account's seven_day window, not the OAuth apps bucket",
+       [(entry["label"], entry["percent"], entry["resetsAt"]) for entry in both["limits"]],
+       [("Session (5-hour)", 0.11, "2026-10-22T15:20:00+00:00"), ("Weekly (7-day)", 0.13, "2026-10-25T06:00:00+00:00")], both)
+
 # A rate-limited check says when to try again, as Anthropic's refusal does.
 refused = read_limits(None, headers={"retry-after": "42"})
 check("a rate-limited check names Anthropic's retry-after", "(retry after 42s)" in refused["helpText"], refused)

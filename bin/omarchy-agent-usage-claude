@@ -708,7 +708,10 @@ def probe_limits(access_token: str) -> dict[str, Any]:
   if not isinstance(payload, dict):
     payload = {}
 
-  weekly = usage_bucket(payload, "seven_day_oauth_apps") or usage_bucket(payload, "seven_day")
+  # The account's week is `seven_day`, the row Claude Code's own /usage titles
+  # "Current week (all models)". `seven_day_oauth_apps` is a side bucket it
+  # groups with cowork and omelette and never shows as the weekly limit.
+  weekly = usage_bucket(payload, "seven_day")
   session = usage_bucket(payload, "five_hour")
   raw = [session.get("utilization") if session else None, weekly.get("utilization") if weekly else None]
   # One payload speaks one convention, so the scoped entries settle the scale
