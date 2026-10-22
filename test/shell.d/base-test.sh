@@ -101,6 +101,103 @@ require_compositor() {
   exit 0
 }
 
+# For a test that starts Quickshell: a reachable compositor, quickshell itself
+# and jq to read what it reports. Skips the rest of the file without the first
+# two.
+require_quickshell() {
+  local description="$1"
+
+  require_compositor "$description"
+  if ! command -v quickshell >/dev/null 2>&1; then
+    skip "quickshell not installed; skipping $description"
+    exit 0
+  fi
+  require_command jq
+}
+
+QML_FIXTURE_TMP=""
+QML_FIXTURE_PID=""
+QML_FIXTURE_LOG=""
+
+qml_fixture_cleanup() {
+  if [[ -n $QML_FIXTURE_PID ]] && kill -0 "$QML_FIXTURE_PID" 2>/dev/null; then
+    kill "$QML_FIXTURE_PID" 2>/dev/null || true
+    wait "$QML_FIXTURE_PID" 2>/dev/null || true
+  fi
+  QML_FIXTURE_PID=""
+  [[ -n $QML_FIXTURE_TMP && -d $QML_FIXTURE_TMP ]] && rm -rf "$QML_FIXTURE_TMP"
+  return 0
+}
+
+# The scratch directory a QML fixture runs in: home/ is its HOME, and bin/ goes
+# ahead of PATH for stubs. Created on first call, and removed along with the
+# fixture's Quickshell on exit. A test that needs more cleanup sets its own EXIT
+# trap after this and calls qml_fixture_cleanup from it.
+qml_fixture_scratch() {
+  [[ -n $QML_FIXTURE_TMP ]] && return 0
+  QML_FIXTURE_TMP=$(mktemp -d)
+  mkdir -p "$QML_FIXTURE_TMP/home" "$QML_FIXTURE_TMP/bin"
+  trap qml_fixture_cleanup EXIT
+}
+
+# Runs test/shell.d/fixtures/<fixture>/*.qml as a Quickshell config, with each
+# further argument (Ui, Commons, services) linked in from $ROOT/shell, and
+# passes when the fixture writes {"ok": true} to $OMARCHY_QML_TEST_RESULT.
+# Fails with the fixture's result and log otherwise. Extra environment for the
+# fixture goes before the call (FOO=bar run_qml_fixture ...). Quickshell keeps
+# running until exit, and its log stays at $QML_FIXTURE_LOG for later checks.
+run_qml_fixture() {
+  local fixture="$1" description="$2"
+  shift 2
+  local config_dir result link
+
+  qml_fixture_scratch
+  config_dir="$QML_FIXTURE_TMP/$fixture"
+  result="$QML_FIXTURE_TMP/result.json"
+  QML_FIXTURE_LOG="$QML_FIXTURE_TMP/quickshell.log"
+  mkdir -p "$config_dir"
+  cp "$SHELL_TEST_DIR/fixtures/$fixture/"*.qml "$config_dir/"
+  for link in "$@"; do
+    ln -s "$ROOT/shell/$link" "$config_dir/$link"
+  done
+
+  OMARCHY_PATH="$ROOT" \
+  OMARCHY_QML_TEST_RESULT="$result" \
+  HOME="$QML_FIXTURE_TMP/home" \
+  XDG_CONFIG_HOME="$QML_FIXTURE_TMP/home/.config" \
+  XDG_CACHE_HOME="$QML_FIXTURE_TMP/home/.cache" \
+  XDG_STATE_HOME="$QML_FIXTURE_TMP/home/.local/state" \
+  QML2_IMPORT_PATH="$ROOT/shell${QML2_IMPORT_PATH:+:$QML2_IMPORT_PATH}" \
+  QML_IMPORT_PATH="$ROOT/shell${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}" \
+  PATH="$QML_FIXTURE_TMP/bin:$ROOT/bin:$PATH" \
+    quickshell -p "$config_dir" --no-color >"$QML_FIXTURE_LOG" 2>&1 &
+  QML_FIXTURE_PID=$!
+
+  for _ in {1..150}; do
+    [[ -s $result ]] && break
+    if ! kill -0 "$QML_FIXTURE_PID" 2>/dev/null; then
+      sed -n '1,220p' "$QML_FIXTURE_LOG" >&2
+      fail "$description" "The $fixture fixture exited before writing a result."
+    fi
+    sleep 0.1
+  done
+
+  if [[ ! -s $result ]]; then
+    sed -n '1,220p' "$QML_FIXTURE_LOG" >&2
+    fail "$description" "The $fixture fixture timed out."
+  fi
+
+  if ! jq -e '.ok == true' "$result" >/dev/null; then
+    printf '%s result:\n' "$fixture" >&2
+    jq . "$result" >&2
+    printf '%s log:\n' "$fixture" >&2
+    sed -n '1,220p' "$QML_FIXTURE_LOG" >&2
+    fail "$description"
+  fi
+
+  pass "$description"
+}
+
 # Finds the pkgbuilds/ directory of the omarchy-pkgs checkout, which some tests
 # hold Omarchy's scripts against, and sets OMARCHY_PKGS_ROOT to it. The checkout
 # lives in its own repository, wherever this machine keeps it.
