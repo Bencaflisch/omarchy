@@ -113,7 +113,7 @@ Limits and the plan come from the Codex CLI's own app-server (`codex app-server`
 
 Each login keeps its last good limits, keyed by the workspace and user in `auth.json` (or the access token); a keyring login can't be told apart and keeps none. A stalled app-server, or one that couldn't reach OpenAI, is retried soon.
 
-Local stats come from native session files on the built-in `openai` provider, pi and omp sessions on `openai-codex` (honouring `PI_CODING_AGENT_DIR` and `PI_CODING_AGENT_SESSION_DIR`), and opencode sessions on `openai`, from both of opencode's message stores and the database `OPENCODE_DB` names.
+Local stats come from native session files on the built-in `openai` provider, pi and omp sessions on `openai-codex` (honouring `PI_CODING_AGENT_DIR` and `PI_CODING_AGENT_SESSION_DIR`), and opencode sessions on `openai`, from both of opencode's message stores and the database `OPENCODE_DB` names. A native session's prompts are the ones typed (a `UserMessage` item, or a legacy rollout's `user_message` event), not the requests that answered them, and a subagent's or guardian's thread types none.
 
 Codex CLI will front any OpenAI-compatible backend — `--oss`, or a custom `model_provider` in `config.toml` aimed at Ollama, LM Studio, or a gateway — and those rollouts sit in the same sessions directory as OpenAI-backed ones. The Codex collector skips a rollout whose first `session_meta.model_provider` names anything but the built-in `openai` provider. Rollouts written before Codex recorded that field carry no provider and still count.
 

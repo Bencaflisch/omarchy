@@ -114,23 +114,30 @@ def tokens(input, output, cached=0, total=None, kind="event_msg", **extra):
   return {"type": kind, "payload": {"type": "token_count", "info": info}}
 
 
+def typed(text="hello", **extra):
+  # A prompt as Codex 0.163 writes it in a paginated rollout.
+  item = {"type": "UserMessage", "id": "u1", "content": [{"type": "text", "text": text, "text_elements": []}]}
+  return {"type": "event_msg", **extra, "payload": {"type": "item_completed", "thread_id": "t1", "turn_id": "turn1", "item": item}}
+
+
 # ---------------------------------------------------------- native rollouts
 
-# A turn counts once: a quota notification repeats the last turn's usage under
-# an unchanged running total, and is no prompt either. Cached input and
-# reasoning are parts of input and output, not more of them.
+# A request counts once: a quota notification repeats the last request's usage
+# under an unchanged running total. Cached input and reasoning are parts of
+# input and output, not more of them, and the two requests one typed prompt
+# took are still one prompt.
 new_home()
 first = {"input_tokens": 100, "cached_input_tokens": 60, "output_tokens": 20, "reasoning_output_tokens": 5, "total_tokens": 120}
 second = {"input_tokens": 180, "cached_input_tokens": 110, "output_tokens": 30, "reasoning_output_tokens": 8, "total_tokens": 210}
-rollout("rollout.jsonl", context("gpt-test"),
+rollout("rollout.jsonl", context("gpt-test"), typed(),
         tokens(100, 20, 60, first, reasoning_output_tokens=5, total_tokens=120),
         tokens(80, 10, 50, second, reasoning_output_tokens=3, total_tokens=90),
         {**tokens(80, 10, 50, second, reasoning_output_tokens=3, total_tokens=90), "rate_limits": {"primary": {"used_percent": 10}}})
 record = codex("--force", env={"CODEX_ARGS_FILE": home() / "codex-args"})
-expect("Codex counts each turn once, without a quota notification as a prompt or cache and reasoning twice", {
+expect("Codex counts each request once, without a quota notification or cache and reasoning twice, and a prompt once", {
   "today": record["todayTotalTokens"], "prompts": record["todayPrompts"], "usage": record["modelUsage"]["gpt-test"], "help": record["authHelpText"],
 }, {
-  "today": 210, "prompts": 2, "usage": {"inputTokens": 70, "outputTokens": 30, "cacheReadInputTokens": 110, "cacheCreationInputTokens": 0}, "help": "",
+  "today": 210, "prompts": 1, "usage": {"inputTokens": 70, "outputTokens": 30, "cacheReadInputTokens": 110, "cacheCreationInputTokens": 0}, "help": "",
 }, record)
 # Separate arguments, not "-a on-request" as one, which is no policy Codex
 # accepts.
@@ -172,9 +179,10 @@ expect("Codex skips lines that aren't usage and tracks the model across turn_con
 # object, loses that line alone: the turns after it still count.
 new_home()
 rollout("shaped.jsonl", '[{"type": "session_meta"}]', {"type": "session_meta", "payload": [1]},
-        {"type": "turn_context", "payload": ["gpt-x"]}, context("gpt-test"), tokens(10, 1),
+        {"type": "turn_context", "payload": ["gpt-x"]}, context("gpt-test"), typed(), tokens(10, 1),
         {"type": "event_msg", "payload": {"type": "token_count", "info": [1]}},
-        {"type": "event_msg", "payload": {"type": "token_count", "info": {"last_token_usage": [1]}}}, tokens(20, 2))
+        {"type": "event_msg", "payload": {"type": "item_completed", "item": [1]}},
+        {"type": "event_msg", "payload": {"type": "token_count", "info": {"last_token_usage": [1]}}}, typed(), tokens(20, 2))
 record = codex()
 expect("Codex skips a wrong-shaped rollout line and keeps reading the file",
        [record["todayTotalTokens"], record["todayPrompts"]], [33, 2], record)
@@ -182,10 +190,33 @@ expect("Codex skips a wrong-shaped rollout line and keeps reading the file",
 # Only a line with no time at all takes the file's; a time of 0, false, or ""
 # is one that can't be trusted, so it counts nowhere.
 new_home()
-rollout("falsy.jsonl", context("gpt-test"), *(json.dumps({"timestamp": falsy, **tokens(100, 0)}) for falsy in (0, False, "")), tokens(10, 1))
+rollout("falsy.jsonl", context("gpt-test"), *(json.dumps({"timestamp": falsy, **tokens(100, 0)}) for falsy in (0, False, "")),
+        *(json.dumps({"timestamp": falsy, **typed()}) for falsy in (0, False, "")), typed(), tokens(10, 1))
 record = codex()
 expect("Codex counts a rollout line with a time of 0, false, or empty nowhere, not on the file's day",
        [record["todayTotalTokens"], record["todayPrompts"]], [11, 1], record)
+
+# Prompts are the ones typed, as Codex 0.163 records them: one prompt whose
+# tool call took two requests is one, as is a legacy rollout's user_message
+# event; the context Codex adds itself, and a subagent's or guardian's
+# messages, are none, though the tokens they spent count.
+new_home()
+rollout("rollout-paginated.jsonl", meta(model_provider="openai", source="exec", thread_source="user"),
+        {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "turn1"}}, context("gpt-test"),
+        {"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "<environment_context>"}]}},
+        typed("run ls"), tokens(10, 1, total={"input_tokens": 10}),
+        {"type": "event_msg", "payload": {"type": "item_completed", "item": {"type": "CommandExecution", "id": "c1"}}},
+        tokens(20, 2, total={"input_tokens": 30}), {"type": "event_msg", "payload": {"type": "task_complete", "turn_id": "turn1"}})
+rollout("rollout-legacy.jsonl", meta(model_provider="openai", source="cli"), context("gpt-test"),
+        {"type": "event_msg", "payload": {"type": "user_message", "message": "<user_instructions>", "kind": "user_instructions"}},
+        {"type": "event_msg", "payload": {"type": "user_message", "message": "fix it", "kind": "plain"}},
+        {"type": "event_msg", "payload": {"type": "user_message", "message": "and test it"}}, tokens(40, 4))
+rollout("rollout-review.jsonl", meta(model_provider="openai", source={"subagent": "review"}, thread_source="subagent"), context("gpt-test"), typed(), tokens(100, 10))
+rollout("rollout-guardian.jsonl", meta(model_provider="openai", source={"subagent": {"other": "guardian"}}, thread_source="guardian_review"),
+        context("gpt-test"), typed(), tokens(200, 20))
+record = codex()
+expect("Codex counts the prompts typed, not the requests answering them or a subagent's",
+       [record["todayTotalTokens"], record["todayPrompts"], record["totalSessions"]], [407, 3, 4], record)
 
 # Session history only grows, so a refresh reads the files that changed and
 # replays its per-file totals for the rest. pi sessions stay out of that
