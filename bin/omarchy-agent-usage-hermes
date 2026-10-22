@@ -83,10 +83,12 @@ def scan(path, totals, today):
     totals["prompts"] += conn.execute("SELECT COUNT(*) FROM messages WHERE role = 'user'").fetchone()[0]
     totals["todayPrompts"] += conn.execute("SELECT COUNT(*) FROM messages WHERE role = 'user' AND " + today_only.format("timestamp"), span).fetchone()[0]
 
-    # A start time SQLite can't read as an epoch dates to NULL and names no day.
-    for date in conn.execute("SELECT DISTINCT date(started_at, 'unixepoch', 'localtime') FROM sessions WHERE started_at > 0"):
-      if date[0]:
-        totals["dates"].add(date[0])
+    # A start time SQLite can't read as an epoch dates to NULL and names no
+    # day, and so does one outside 2000-2100, as local_day reads times: a
+    # stray 1 is a damaged stamp, not a day in 1969.
+    for (date,) in conn.execute("SELECT DISTINCT date(started_at, 'unixepoch', 'localtime') FROM sessions WHERE started_at > 0"):
+      if date and "2000" <= date[:4] <= "2100":
+        totals["dates"].add(date)
 
     # A Hermes that keeps no usage table yet still has its sessions and
     # prompts to count.

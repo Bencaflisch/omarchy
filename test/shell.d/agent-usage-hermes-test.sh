@@ -167,6 +167,18 @@ record = hermes()
 expect("Hermes emits every active date", [record["activeDays"], len(record["activeDates"])], [451, 451], record)
 expect("Hermes skips broken token counts, and counts an untimed session's in the totals", sorted(record["modelUsage"]), ["untimed"], record)
 
+# A start time outside 2000-2100 is a damaged stamp: the session counts, but
+# names no day.
+sandbox()
+db = state_db(home() / ".hermes" / "state.db")
+conn = sqlite3.connect(db)
+conn.executemany("INSERT INTO sessions VALUES (?, ?)", [("stray", 1), ("far", 12307334400)])
+conn.commit()
+conn.close()
+record = hermes()
+expect("a start time outside 2000-2100 names no active day",
+       [record["totalSessions"], record["activeDates"]], [3, [dt.date.today().isoformat()]], record)
+
 # ---------------------------------------------------------------- contract
 
 sandbox()
