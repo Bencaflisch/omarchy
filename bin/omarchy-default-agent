@@ -109,7 +109,13 @@ else
   agent_install() {
     user_install && return
     if omarchy-mise-default-tools declares "$agent_tool"; then
-      mise install "$agent_tool"
+      # An npm-backed agent needs node, itself a lazy tool, and mise won't
+      # install it as the agent's dependency on a machine without it yet.
+      if [[ $(mise tool "$agent_tool" --backend 2>/dev/null) == npm:* ]]; then
+        mise install node "$agent_tool"
+      else
+        mise install "$agent_tool"
+      fi
     elif [[ ${agent_prereleases:-} == "true" ]]; then
       MISE_PRERELEASES=true mise use -g "$agent_package"
     else

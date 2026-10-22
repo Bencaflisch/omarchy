@@ -75,6 +75,16 @@ if [[ -n ${MISE_PRERELEASES:-} ]]; then
   printf 'prereleases=%s %s\n' "$MISE_PRERELEASES" "$*" >>"$OMARCHY_TEST_MISE_HISTORY"
 fi
 
+if [[ $1 == "tool" && $3 == "--backend" ]]; then
+  case "$2" in
+  npm:*) printf '%s\n' "$2" ;;
+  amp) printf '%s\n' "npm:@ampcode/cli" ;;
+  qwen) printf '%s\n' "npm:@qwen-code/qwen-code" ;;
+  *) printf '%s\n' "aqua:example/$2" ;;
+  esac
+  exit 0
+fi
+
 if [[ $1 == "where" || $1 == "which" ]]; then
   [[ ${OMARCHY_TEST_AGENT_INSTALLED:-false} == "true" ]]
   exit
@@ -855,7 +865,12 @@ for agent in qwen dsh mcode kiro-cli freebuff kilo devin amp commandcode; do
   declared_tool=${!tool_var:-${!package_var}}
   : >"$mise_history"
   omarchy-default-agent --install "$agent" >/dev/null
-  grep -Fx "install $declared_tool" "$mise_history" >/dev/null || fail "visible $agent installation installs Omarchy's declaration"
+  # npm-backed agents bring node along, which a fresh machine doesn't have yet.
+  case "$agent" in
+  kiro-cli | devin) expected_install="install $declared_tool" ;;
+  *) expected_install="install node $declared_tool" ;;
+  esac
+  grep -Fx "$expected_install" "$mise_history" >/dev/null || fail "visible $agent installation installs Omarchy's declaration (expected: $expected_install)"
   : >"$mise_history"
   OMARCHY_TEST_AGENT_INSTALLED=true omarchy-default-agent "$agent" >/dev/null
   grep -Fx "where $declared_tool" "$mise_history" >/dev/null || fail "$agent selection looks for Omarchy's declaration"
