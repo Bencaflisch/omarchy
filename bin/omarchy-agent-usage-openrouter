@@ -81,6 +81,7 @@ AGENT_ID = "openrouter"
 AGENT_NAME = "OpenRouter"
 PROVIDER = "openrouter"
 AUTH_HELP = "Set OPENROUTER_API_KEY, or sign in to OpenRouter in opencode, pi or omp. For the 30-day history, add a management key as OPENROUTER_MANAGEMENT_KEY (openrouter.ai/settings/management-keys)."
+MANAGEMENT_AUTH_HELP = "Replace OPENROUTER_MANAGEMENT_KEY (or managementKey in ~/.config/omarchy/agents/openrouter.json) with a working one from openrouter.ai/settings/management-keys."
 API_BASE = "https://openrouter.ai/api/v1"
 
 
@@ -486,9 +487,10 @@ def collect_billing(key: str, manager: str, force: bool) -> dict[str, Any]:
   # refused itself (revoked, or no management key at all) leaves the
   # inference key to ask; when that key has no balance either, the
   # management key's refusal stands, with its last good balance kept.
-  error = None
+  error = manager_error = None
   if manager:
     parts["credits"], error = probe("/credits", manager, "credits", lambda data: {"balance": credits_balance(data)}, force)
+    manager_error = error
   if key and (not manager or isinstance(error, OpenRouterAuthError)):
     managed = parts.get("credits"), error
     refusal = LimitsCache(AGENT_ID, key, kind="credits")
@@ -520,7 +522,12 @@ def collect_billing(key: str, manager: str, force: bool) -> dict[str, Any]:
   result["retryAdvised"] = any(isinstance(error, OpenRouterTransportError) for error in errors.values())
 
   refused = [error for error in errors.values() if isinstance(error, OpenRouterAuthError)]
-  if refused:
+  if refused and refused == [manager_error]:
+    # Only the management key was refused; the inference key, if any, still
+    # works, so the help names the key to replace.
+    result["usageStatusText"] = "Sign-in expired"
+    result["authHelpText"] = "OpenRouter refused the management key. " + MANAGEMENT_AUTH_HELP
+  elif refused:
     result["usageStatusText"] = "Sign-in expired"
     result["authHelpText"] = "OpenRouter refused the API key. " + AUTH_HELP
   elif "key" in errors and meter is None:

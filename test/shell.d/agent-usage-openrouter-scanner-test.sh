@@ -277,6 +277,20 @@ for attempt in ("afresh", "by its kept refusal"):
                       routes=with_routes(activity=401, credits=revoked_manager))
   expect(f"a revoked management key asks to sign in again and keeps its balance, the inference key refused {attempt}",
          picked(record, "usageStatusText", "limitsStale") + [remaining(record)], ["Sign-in expired", True, 9.0], record)
+  # The inference key still answers /key, so the help names the management
+  # key to replace, not OPENROUTER_API_KEY.
+  expect(f"a revoked management key's help names the management key, the inference key refused {attempt}",
+         [record["authHelpText"].startswith("OpenRouter refused the management key. "), "OPENROUTER_MANAGEMENT_KEY" in record["authHelpText"]],
+         [True, True], record)
+
+# A management key alone, revoked, names that key too; with the inference
+# key refused as well, the help names the inference key.
+record = openrouter(OPENROUTER_MANAGEMENT_KEY="sk-mgmt", routes=with_routes(activity=401, credits=revoked_manager))
+expect("a revoked management key with no inference key names the management key",
+       [record["usageStatusText"], record["authHelpText"].startswith("OpenRouter refused the management key. ")], ["Sign-in expired", True], record)
+record = openrouter(OPENROUTER_API_KEY="sk-test", OPENROUTER_MANAGEMENT_KEY="sk-mgmt", routes=with_routes(activity=401, key=401, credits=revoked_manager))
+expect("both keys refused names the API key",
+       [record["usageStatusText"], record["authHelpText"].startswith("OpenRouter refused the API key. ")], ["Sign-in expired", True], record)
 
 # A key /credits answers, where OpenRouter still lets one read it, in a fresh
 # home, since the refusal above is kept for sk-test.
