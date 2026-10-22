@@ -281,7 +281,7 @@ wait "$session"
 signal_status=$?
 set -e
 active_session=""
-wait_for_fresh_attack || fail "the detached opam child kept polling sudo after termination"
+wait_for_fresh_attack || fail "the detached opam child did not exercise sudo after termination"
 stop_attackers
 (( signal_status != 0 )) || fail "terminated OCaml removal unexpectedly succeeded"
 [[ ! -e $token ]] || fail "terminated OCaml removal left a reusable sudo credential"
