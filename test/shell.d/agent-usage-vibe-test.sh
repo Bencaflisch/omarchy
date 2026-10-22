@@ -232,6 +232,18 @@ after = vibe("--limits-only")
 expect("a Vibe route change reaches Vibe's cached scan at once",
        [before["todayTokensByModel"], after["todayTokensByModel"], after["todayPrompts"]], [{"devstral-mock": 67896}, {}, 0], after)
 
+# A session whose alias config.toml no longer names isn't Mistral's because
+# Vibe would now fall back to its default: no one can say who served it.
+sandbox()
+(home() / ".vibe").mkdir(parents=True, exist_ok=True)
+(home() / ".vibe" / "config.toml").write_text('[[models]]\nname = "qwen"\nprovider = "llamacpp"\nalias = "local"\n')
+write_unified("ses_dropped", usage(5000, 5000), entries=[message("d1", "user", "turn_start")], alias="removed-local")
+with contextlib.redirect_stderr(io.StringIO()):
+  record = vibe("--force")
+  local = collect("local", "--force")
+expect("a Unified Harness session on an alias config.toml dropped is billed to no one",
+       [record["todayTokensByModel"], local["todayTokensByModel"]], [{}, {}], [record, local])
+
 # ------------------------------------------------------- model resolution
 
 sandbox()

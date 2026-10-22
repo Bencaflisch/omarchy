@@ -63,10 +63,11 @@ PROVIDER = "mistral"
 # Vibe's own resolve_default_model_alias does.
 DEFAULT_MODEL_ALIAS = "mistral-medium-3.5"
 
-# Version 1 kept only the sessions Mistral served, so it named no owner, and
+# Version 1 kept only the sessions Mistral served, so it named no owner,
 # version 2 gave a mistral-backend provider to Mistral wherever its api_base
-# pointed.
-INDEX_VERSION = 3
+# pointed, and version 3 gave a Unified Harness session whose alias config.toml
+# dropped to the default model.
+INDEX_VERSION = 4
 
 # Times read from Vibe's meta.json are untrusted. Anything past these bounds
 # is a corrupt or crafted field, not usage.
@@ -388,15 +389,18 @@ def unified_model(alias, config):
   """The model label a Unified Harness session ran on and who bills it, as
   session_model() reads them. The session names only the model's alias, so
   the model and its provider come from config.toml, over Vibe's built-in
-  default."""
+  default. An alias the config no longer names keeps its label and goes
+  to no one, rather than to whichever model Vibe would fall back to."""
   models = config.get("models")
   if isinstance(models, dict):
     models = list(models.values())
-  return session_model({"config": {
-    "active_model": alias,
-    "models": [*(models if isinstance(models, list) else []), DEFAULT_MODEL],
-    "providers": config.get("providers"),
-  }})
+  models = [*(models if isinstance(models, list) else []), DEFAULT_MODEL]
+  if isinstance(alias, str) and alias:
+    known = {str(entry.get("alias") or entry.get("name") or "") for entry in models if isinstance(entry, dict)}
+    if alias not in known:
+      label = model_label(alias)
+      return None if label is None else (label, None)
+  return session_model({"config": {"active_model": alias, "models": models, "providers": config.get("providers")}})
 
 
 def parse_unified(session_dir, config):
