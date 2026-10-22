@@ -292,9 +292,8 @@ expect("a budget cached under its old name is read, elapsed at zero and an unclo
 
 # Tokens come from assistant messages in the harness's pi session files:
 # cached input kept apart, a repeated entry counted once, user turns and other
-# entries skipped, whatever the provider. The one typed prompt today books on
-# its first reply, not on each step; a file without user messages keeps one
-# per reply.
+# entries skipped. The one typed prompt today books on its first reply, not
+# on each step; a file without user messages keeps one per reply.
 sandbox()
 sessions = harness() / "sessions" / "--home-me--"
 now = iso_in(0)
@@ -318,6 +317,21 @@ expect("Kimchi's tokens by model keep cached input apart", record["modelUsage"],
   "minimax-m3": {"inputTokens": 400, "outputTokens": 50, "cacheReadInputTokens": 800, "cacheCreationInputTokens": 5},
   "glm-5.3": {"inputTokens": 85, "outputTokens": 5, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0},
 }, record)
+
+# Kimchi 1.18 names a reply's route as kimchi-dev/<upstream> on its gateway,
+# but `kimchi --provider openrouter` (or a custom provider in models.json)
+# runs a session that provider bills, which isn't Kimchi's usage.
+write_pi_session(sessions / "routed.jsonl", [
+  {"type": "session", "id": "s-3"},
+  pi_reply("kimchi-dev/moonshotai", id="r-1", model="kimi-k2.6", usage={"input": 1234, "output": 51, "cacheRead": 71, "totalTokens": 1356}),
+  pi_reply("kimchi-experimental", id="r-2", model="glm-5.3", usage={"input": 4, "output": 1}),
+  pi_reply("openrouter", id="r-3", model="z-ai/glm-4.6", usage={"input": 5234, "output": 55, "cacheRead": 75, "totalTokens": 5364}),
+  pi_reply("kimchi-devious", id="r-4", model="glm-5.3", usage={"input": 999}),
+])
+record = kimchi(key="key-coder")
+expect("Kimchi counts only replies on its own gateway routes",
+       [record["todayTotalTokens"], record["todayTokensByModel"]], [1015 + 1356 + 5, {"minimax-m3": 925, "glm-5.3": 95, "kimi-k2.6": 1356}], record)
+(sessions / "routed.jsonl").unlink()
 
 # KIMCHI_CODING_AGENT_DIR moves the harness, as it does for the CLI.
 write_pi_session(home() / "elsewhere" / "sessions" / "--elsewhere--" / "s.jsonl", [reply("x-1", "kimi-k2.6", {"input": 7, "output": 3})])

@@ -91,12 +91,20 @@ def harness_dir():
   return Path(os.environ.get("KIMCHI_CODING_AGENT_DIR") or (Path.home() / ".config" / "kimchi" / "harness"))
 
 
+# Kimchi's own gateway routes, as its isKimchiProvider names them: kimchi-dev,
+# kimchi-dev/<upstream> and kimchi-experimental. `--provider` runs a session on
+# any other pi provider (OpenRouter, a custom one in harness/models.json),
+# which that provider bills.
+def billed_here(provider, model, entry):
+  return provider in ("", "kimchi-dev", "kimchi-experimental") or provider.startswith("kimchi-dev/")
+
+
 # Every session file under <harness>/sessions, in pi's format, read the way
-# the shared reader reads pi's own: every assistant reply with usage counts,
-# whatever its provider, and a message a fork or resumed session repeats
-# counts once. Returns the stats and whether every source was read.
+# the shared reader reads pi's own: every assistant reply with usage on a
+# Kimchi route counts, and a message a fork or resumed session repeats counts
+# once. Returns the stats and whether every source was read.
 def local_stats(sessions_root):
-  rows, complete = scan_pi_sessions(r'"usage"', lambda provider, model, entry: True, [sessions_root])
+  rows, complete = scan_pi_sessions(r'"usage"', billed_here, [sessions_root])
   stats = Stats()
   for row in rows:
     stats.add_row(row, row.model or AGENT_ID)
