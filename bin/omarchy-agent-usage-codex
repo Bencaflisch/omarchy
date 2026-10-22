@@ -309,7 +309,8 @@ def read_native_codex_session(path, stat_result):
           previous_total_usage = total_usage
         # A line with no time is the file's; one whose time can't be trusted
         # counts nowhere.
-        day = local_day(entry.get("timestamp") or stat_result.st_mtime)
+        stamped = entry.get("timestamp")
+        day = local_day(stat_result.st_mtime if stamped is None else stamped)
         if day is None:
           continue
         record_usage(record, day, current_model, input_tokens, output_tokens, cache_read, cache_write)

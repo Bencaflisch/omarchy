@@ -179,6 +179,14 @@ record = codex()
 expect("Codex skips a wrong-shaped rollout line and keeps reading the file",
        [record["todayTotalTokens"], record["todayPrompts"]], [33, 2], record)
 
+# Only a line with no time at all takes the file's; a time of 0, false, or ""
+# is one that can't be trusted, so it counts nowhere.
+new_home()
+rollout("falsy.jsonl", context("gpt-test"), *(json.dumps({"timestamp": falsy, **tokens(100, 0)}) for falsy in (0, False, "")), tokens(10, 1))
+record = codex()
+expect("Codex counts a rollout line with a time of 0, false, or empty nowhere, not on the file's day",
+       [record["todayTotalTokens"], record["todayPrompts"]], [11, 1], record)
+
 # Session history only grows, so a refresh reads the files that changed and
 # replays its per-file totals for the rest. pi sessions stay out of that
 # cache: a fork repeats its parent's messages, so they are only deduplicated
