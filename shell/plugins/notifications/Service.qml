@@ -1182,11 +1182,12 @@ Item {
   // while, but only if it is still what is on the clipboard.
   property string secretHeld: ""
 
-  function copyText(text, sensitive) {
+  function copyCode(text) {
     var value = String(text || "")
-    if (!value || value.length > (sensitive ? 64 : 4096)) return
-    runClip(["wl-copy"].concat(sensitive ? ["--sensitive"] : [], ["--", value]))
-    if (sensitive) { secretHeld = value; secretLife.restart() }
+    if (!value || value.length > 64) return
+    runClip(["wl-copy", "--sensitive", "--", value])
+    secretHeld = value
+    secretLife.restart()
   }
 
   Timer {
@@ -1214,12 +1215,11 @@ Item {
       var at = rowIndexFor(String(key || ""))
       var codes = at >= 0 ? String(toasts.get(at).codes) : ""
       if (at < 0 || codes.split(" ").indexOf(String(value)) < 0) return
-      copyText(value, true)
+      copyCode(value)
       // A copied code finishes its card unless it carried several, a moment
       // after the press so the button's tick is seen.
       if (codes.indexOf(" ") <= 0) codeTaken.keys = codeTaken.keys.concat([String(key)])
     }
-    else if (kind === "phone") copyText(value, false)
     else Security.openExternalUrl(value)
   }
 

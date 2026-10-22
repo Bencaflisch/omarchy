@@ -136,16 +136,15 @@ for (const body of ['Your verification code is 938271', 'Your code is 938 271', 
   }
 }
 
-{ // Restore recomputes link/meeting/phone from the text under today's policy,
+{ // Restore recomputes link/meeting from the text under today's policy,
   // never trusting fields on the stored entry.
   const entry = body => ({ key: 'n1', app: 'Chat', summary: 'New message', body, rawBody: body, urgency: 1 })
-  const row = Store.restored(entry('Join https://meet.google.com/abc-defg-hij or call +44 7911 123456'))
+  const row = Store.restored(entry('Join https://meet.google.com/abc-defg-hij'))
   assert.equal(row.link, 'https://meet.google.com/abc-defg-hij')
   assert.equal(row.meeting, true)
-  assert.equal(row.phone, '+44 7911 123456')
   assert.equal(row.restored, true)
-  const tampered = Store.restored({ ...entry('Nothing to see here'), link: 'https://evil.example/phish', meeting: true, phone: '+1 555 0100' })
-  assert.deepEqual([tampered.link, tampered.meeting, tampered.phone], ['', false, ''])
+  const tampered = Store.restored({ ...entry('Nothing to see here'), link: 'https://evil.example/phish', meeting: true })
+  assert.deepEqual([tampered.link, tampered.meeting], ['', false])
   assert.equal(Store.restored(entry('See http://127.0.0.1/admin for details')).link, '')
 }
 
@@ -781,10 +780,10 @@ const plain = value => JSON.parse(JSON.stringify(value))
 // Arrays from the module's own realm compare by value.
 const eq = (actual, expected, message) => assert.deepEqual(plain(actual), plain(expected), message)
 
-{ // A stored row keeps only its scalar fields: no codes, links, phones,
-  // images or derived text.
-  const saved = Store.persistable({ key: 'n1', app: 'Chat', summary: 'Hi', body: 'Call +44 7911 123456 or https://example.com',
-    code: '1234', codes: '1234', link: 'https://example.com', meeting: true, phone: '+44 7911 123456', image: '/tmp/a.png',
+{ // A stored row keeps only its scalar fields: no codes, links, images or
+  // derived text.
+  const saved = Store.persistable({ key: 'n1', app: 'Chat', summary: 'Hi', body: 'See https://example.com',
+    code: '1234', codes: '1234', link: 'https://example.com', meeting: true, image: '/tmp/a.png',
     bodyRich: '<b>x</b>', transient: true })
   eq(Object.keys(saved).sort(), [...Store.STORED].sort())
   assert.equal(saved.rawBody, '', 'a raw body the same as the body is not stored twice')
@@ -879,9 +878,9 @@ const eq = (actual, expected, message) => assert.deepEqual(plain(actual), plain(
   eq(Store.parseLive(' '.repeat(Store.LIVE_LIMIT * Store.LIVE_ROW_CHARS * 2 + 1) + '[{"key":"a"}]'), [],
                    'an oversized file is not parsed at all')
   const [row] = Store.parseLive(JSON.stringify([{ key: '__proto__', summary: 's', image: '/tmp/a.png', bodyRich: '<img src=x>',
-    link: 'https://evil.example/', meeting: true, phone: '+1 555 0100', urgency: 'high', ts: 'soon', glyph: '\n' }]))
-  eq([row.key, row.image, row.link, row.phone, row.urgency, row.ts, row.glyph, 'bodyRich' in row],
-                   ['__proto__', undefined, undefined, undefined, 1, 0, '', false])
+    link: 'https://evil.example/', meeting: true, urgency: 'high', ts: 'soon', glyph: '\n' }]))
+  eq([row.key, row.image, row.link, row.urgency, row.ts, row.glyph, 'bodyRich' in row],
+                   ['__proto__', undefined, undefined, 1, 0, '', false])
   assert.equal(Store.parseLive('[{"key":"a","summary":"first"},{"key":"a","summary":"second"}]').length, 1)
   // The previous engine's rows had no key; rows without a close time are not history.
   eq(Store.parseHistory('[{"id":7,"summary":"Legacy","timestamp":1},{"key":"n1","summary":"open"}]'), [])

@@ -11,7 +11,7 @@ The shell is the notification daemon: `shell/plugins/notifications/Service.qml` 
 | `NotificationPanel.qml`, `Picker.qml` | The panel and its preferences page, opened from the bar's Dnd indicator (`shell/plugins/bar/indicators/Dnd.qml`) |
 | `Store.js` | Notification snapshots, normalisation, what a stored row keeps, the stored file formats, restore |
 | `Markup.js` | Safe body markup, source lifting (`web:app.slack.com`), one-line previews |
-| `Detect.js` | Verification codes, links, meeting links and phone numbers |
+| `Detect.js` | Verification codes, links and meeting links |
 | `Security.js` | URL policy, bounds, the sender image path policy, the `omarchy-exec-argv` and glyph checks |
 | `Icons.js` | The names a card's icon may go by: site names, overrides, symbolic icons |
 | `Layout.js` | Pure deck layout: rows in, placements out |
@@ -44,7 +44,7 @@ The shell keeps its state in `~/.local/state/omarchy/notifications/` (0700), thr
 - `history.json`: closed rows, newest first, each with `closed_ts` and `closed_reason`. Capped at 100 entries and `historyHours` (default 24; `0` keeps none). Rows whose reason is `snoozed` or `silenced` were held back by quiet and are what the panel lists under each source.
 - `quiet.json`: `{ snoozes, dnd, silencedSince, codesBypassQuiet }`. While it is still empty, Do Not Disturb is read from the previous engine's `~/.local/state/omarchy/notifications.json`.
 
-`Store.persistable` decides what a row keeps: its scalar fields, never images, detected links or phone numbers, or derived text. Text with a verification code is stored only as the redacted placeholder, the click command and glyph included. A live row is cut to 16K characters and a history row, shown as a one-line preview, to 4K. Rows keep `execArgv` and `glyph`, so a card restored after a shell restart clicks through like the live one. Rows are re-checked the same way when read back; a file that is not an array of keyed objects, or is oversized, reads as empty, and a file that does not read back exactly as it would be written is rewritten.
+`Store.persistable` decides what a row keeps: its scalar fields, never images, detected links, or derived text. Text with a verification code is stored only as the redacted placeholder, the click command and glyph included. A live row is cut to 16K characters and a history row, shown as a one-line preview, to 4K. Rows keep `execArgv` and `glyph`, so a card restored after a shell restart clicks through like the live one. Rows are re-checked the same way when read back; a file that is not an array of keyed objects, or is oversized, reads as empty, and a file that does not read back exactly as it would be written is rewritten.
 
 Writes go through one short timer, started (not restarted) by a change, so a burst of arrivals writes each file once and a flood writes at most four times a second; no file is written before it has been read. `FileView` writes atomically, which keeps the mode of the file it replaces, so the files are created at 0600 before anything writes them.
 

@@ -113,8 +113,6 @@ Item {
       out.push({ kind: row.meeting ? "meeting" : "link",
                  label: row.meeting ? I18n.t("notifications.join") : I18n.t("notifications.openLink"),
                  value: String(row.link) })
-    if (String(row.phone || ""))
-      out.push({ kind: "phone", label: I18n.t("notifications.copyNumber"), value: String(row.phone) })
     for (var i = 0; i < actions.length; i++)
       out.push({ kind: "action", label: String(actions[i].text || ""), value: String(actions[i].id) })
     return out
@@ -126,7 +124,6 @@ Item {
     var out = []
     if (String(row.code || "")) out.push("\u{f0306}")
     if (String(row.link || "")) out.push(row.meeting ? "\u{f0567}" : "\u{f0339}")
-    if (String(row.phone || "")) out.push("\u{f03f2}")
     if (actions.length > 0) out.push("\u{f0cfd}")
     return out
   }
