@@ -2246,9 +2246,18 @@ def _dsh_rows(path: Path, accept: Accept) -> tuple[list[UsageRow], bool]:
   # fold dsh's own token meter runs.
   slots: list[list[Any]] = []
   last: tuple[Any, Any] | None = None
+  # The messages someone typed (a user message whose source is `user`, as
+  # dsh's own session title reads them) since the last attempt: the next
+  # attempt answers them. A tool step, a retry, and a turn dsh starts on its
+  # own (a schedule, a goal round) answer none.
+  typed = 0
   for index, event in enumerate(events):
     kind = event.get("type")
     data = obj(event.get("data"))
+    if kind == "user/message":
+      if index >= start and obj(data.get("source")).get("kind") == "user":
+        typed += 1
+      continue
     if kind == "request/header":
       request = obj(obj(data.get("header")).get("config"))
       provider, model = str(request.get("provider") or ""), str(request.get("model") or "")
@@ -2271,23 +2280,25 @@ def _dsh_rows(path: Path, accept: Accept) -> tuple[list[UsageRow], bool]:
     ]
     entry = [index >= start and accept(provider, model, request), local_day(event.get("time")), provider, model, sample]
     if last == slot and slots:
-      slots[-1] = entry
+      slots[-1] = entry + [slots[-1][5]]
     else:
-      slots.append(entry)
+      slots.append(entry + [typed])
+      typed = 0
     last = slot
 
   rows = []
-  for counted, day, slot_provider, slot_model, (input_tokens, output_tokens, cache_read, cache_write) in slots:
-    if counted and day is not None and (input_tokens or output_tokens or cache_read or cache_write):
-      # Each billed attempt answers the prompt that started it.
-      rows.append(UsageRow(day, session, slot_provider, slot_model, input_tokens, output_tokens, cache_read, cache_write))
+  for counted, day, slot_provider, slot_model, (input_tokens, output_tokens, cache_read, cache_write), prompts in slots:
+    if counted and day is not None and (input_tokens or output_tokens or cache_read or cache_write or prompts):
+      rows.append(UsageRow(day, session, slot_provider, slot_model, input_tokens, output_tokens, cache_read, cache_write, prompts))
   return rows, complete
 
 
 def scan_dsh_sessions(accept: Accept) -> tuple[list[UsageRow], bool]:
   """The billed attempts in every dsh session log on a route `accept`
   (provider, model, request config) takes, a fork's inherited history left
-  out, and whether every log was read in full."""
+  out, and whether every log was read in full. Each attempt carries the
+  typed messages it answered as its prompts: the first attempt of a typed
+  turn answers them, its tool steps and retries none."""
   root = dsh_home() / "sessions"
   if not root.is_dir():
     return [], True

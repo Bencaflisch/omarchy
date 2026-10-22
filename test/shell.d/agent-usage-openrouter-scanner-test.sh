@@ -307,6 +307,7 @@ dsh_log = home() / "dsh" / "sessions" / "--home-me--" / "s1" / "session.v4.jsonl
 dsh_log.parent.mkdir(parents=True)
 dsh_log.write_text("".join(json.dumps(line) + "\n" for line in (
   {"type": "session", "version": 4, "id": "s1", "createdAt": ms_in(0), "isSeeded": False},
+  {"type": "user/message", "seq": 0, "time": ms_in(0), "data": {"source": {"kind": "user"}, "role": "user", "id": "u1"}},
   {"type": "request/header", "seq": 1, "time": ms_in(0), "data": {"header": {"config": {"provider": "openrouter", "model": "z-ai/glm-mock"}}}},
   {"type": "assistant/message", "seq": 2, "time": ms_in(0), "data": {"turn": 1, "step": 1, "usage": {"inputTokens": 5234, "outputTokens": 55, "cacheReadTokens": 75}}},
   {"type": "request/header", "seq": 3, "time": ms_in(0), "data": {"header": {"config": {"provider": "deepseek-official", "model": "deepseek-flash"}}}},
