@@ -61,6 +61,12 @@ TIER_LABEL = "Token Plan"
 # The pi/omp and opencode provider names MiniMax bills, by region. Exact
 # names: a custom gateway in front of MiniMax is not this account.
 PROVIDERS = ("minimax", "minimax-cn", "minimax-coding-plan", "minimax-cn-coding-plan")
+# MiniMax Code's own routes: `minimax` is its signed-in Token Plan (or a key
+# set on it), `minimax_api` the MiniMax API key it reserves, and
+# `minimax_oauth` the name its provider list gives the sign-in. Every other
+# route is `custom_provider:<name>` (a custom endpoint or a models.dev preset
+# such as Z.AI or OpenRouter) and is billed by whoever runs it.
+MCODE_PROVIDERS = ("minimax", "minimax_api", "minimax_oauth")
 # base_resp codes MiniMax answers a bad key with: 1004 is an authentication
 # failure, 2049 an invalid API key.
 AUTH_STATUS_CODES = {1004, 2049}
@@ -391,6 +397,11 @@ def scan_mcode(stats: Stats) -> bool:
   for path in sorted(found):
     # One directory per session; its messages carry no session id of their own.
     session = "mcode:" + str(path.parent)
+    # A prompt waits for the reply that answers it: one answered on another
+    # route is that route's. One left unanswered goes with the session's last
+    # route, so a file with no route named still counts its prompts.
+    pending: list[str] = []
+    billed = True
     try:
       with path.open("r", encoding="utf-8", errors="replace") as handle:
         for raw in handle:
@@ -409,16 +420,28 @@ def scan_mcode(stats: Stats) -> bool:
           # MiniMax Code books a typed prompt and the assistant's usage on
           # lines of their own.
           if message.get("role") == "user":
-            stats.add_prompts(day, session)
+            pending.append(day)
             continue
+          if message.get("role") != "assistant":
+            continue
+          # A reply names the route it ran on; one that names none predates
+          # third-party routes and ran on MiniMax.
+          billed = message.get("provider") in (None, "", *MCODE_PROVIDERS)
+          if billed:
+            for prompt_day in pending:
+              stats.add_prompts(prompt_day, session)
+          pending = []
           usage = message.get("usage")
-          if message.get("role") != "assistant" or not isinstance(usage, dict):
+          if not billed or not isinstance(usage, dict):
             continue
           inp, out, cread, cwrite = pi_style_tokens(usage)
           if not (inp or out or cread or cwrite):
             continue
           model = str(message.get("model") or entry.get("model") or "minimax").strip() or "minimax"
           stats.add(day, session, model, inp, out, cread, cwrite, prompts=0)
+      if billed:
+        for prompt_day in pending:
+          stats.add_prompts(prompt_day, session)
     except OSError:
       complete = False
   return complete

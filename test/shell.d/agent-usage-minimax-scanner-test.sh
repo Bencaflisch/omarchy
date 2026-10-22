@@ -32,8 +32,11 @@ def mcode_session(root, name, lines):
   return path
 
 
-def mcode_reply(usage, timestamp=None, model="MiniMax-M2"):
-  return {"message": {"role": "assistant", "timestamp": ms_in(0) if timestamp is None else timestamp, "model": model, "usage": usage}}
+def mcode_reply(usage, timestamp=None, model="MiniMax-M2", provider=None):
+  message = {"role": "assistant", "timestamp": ms_in(0) if timestamp is None else timestamp, "model": model, "usage": usage}
+  if provider is not None:
+    message["provider"] = provider
+  return {"message": message}
 
 
 def sessions():
@@ -124,6 +127,31 @@ if os.geteuid() != 0:
   expect("MiniMax does not cache a scan that couldn't list a MiniMax Code session directory", record["totalPrompts"], 5, record)
 else:
   print("ok - MiniMax does not cache a scan that missed a MiniMax Code file # SKIP root reads anything")
+
+# MiniMax Code 0.6 names each reply's route, as `minimax` (its Token Plan),
+# `minimax_api`, or `custom_provider:<name>` for a custom endpoint or a Z.AI or
+# OpenRouter preset. Only MiniMax's own routes count, and a prompt goes with
+# the route of the reply that answered it.
+sandbox()
+mcode_session(home() / ".minimax", "routed", [
+  {"message": {"role": "user", "timestamp": ms_in(0), "content": [{"type": "text", "text": "one"}]}},
+  mcode_reply({"input": 1234, "output": 51, "cacheRead": 71, "cacheWrite": 31, "totalTokens": 1387}, provider="custom_provider:mockanth"),
+  {"message": {"role": "user", "timestamp": ms_in(0), "content": [{"type": "text", "text": "two"}]}},
+  mcode_reply({"input": 2234, "output": 52, "cacheRead": 72, "cacheWrite": 0, "totalTokens": 2358}, model="glm-5", provider="custom_provider:zai-coding-plan"),
+  {"message": {"role": "user", "timestamp": ms_in(0), "content": [{"type": "text", "text": "three"}]}},
+  mcode_reply({"input": 10, "output": 5, "totalTokens": 15}, provider="minimax"),
+  {"message": {"role": "user", "timestamp": ms_in(0), "content": [{"type": "text", "text": "four"}]}},
+  mcode_reply({"input": 20, "output": 5, "totalTokens": 25}, provider="minimax_api"),
+])
+mcode_session(home() / ".minimax", "elsewhere", [
+  {"message": {"role": "user", "timestamp": ms_in(0), "content": "unanswered, after a custom route"}},
+  mcode_reply({"input": 999, "output": 1}, model="glm-mock", provider="custom_provider:mockoai"),
+  {"message": {"role": "user", "timestamp": ms_in(0), "content": "still waiting"}},
+])
+record = minimax()
+expect("MiniMax counts only MiniMax Code replies on MiniMax's own routes, and the prompts they answered",
+       {key: record[key] for key in ("todayTotalTokens", "todayPrompts", "todaySessions", "todayTokensByModel")},
+       {"todayTotalTokens": 40, "todayPrompts": 2, "todaySessions": 1, "todayTokensByModel": {"MiniMax-M2": 40}}, record)
 
 # ---------------------------------------------------------------- contract
 
