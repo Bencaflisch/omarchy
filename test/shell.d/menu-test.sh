@@ -243,7 +243,7 @@ assertEqual(
   'menu lists Reset Computer last under Setup'
 )
 const expectedAgents = {
-  agy: { icon: '\ue91b', iconFont: 'omarchy', label: 'Antigravity' },
+  agy: { icon: '\ue91c', iconFont: 'omarchy', label: 'Antigravity' },
   pi: { icon: '\ue901', iconFont: 'omarchy', label: 'Pi' },
   omp: { icon: '\ue903', iconFont: 'omarchy', label: 'omp' },
   opencode: { icon: '\ue902', iconFont: 'omarchy', label: 'OpenCode' },
@@ -251,21 +251,21 @@ const expectedAgents = {
   claude: { icon: '\ue90e', iconFont: 'omarchy', label: 'Claude' },
   codex: { icon: '\ue905', iconFont: 'omarchy', label: 'Codex' },
   grok: { icon: '\ue904', iconFont: 'omarchy', label: 'Grok' },
-  kimi: { icon: '\ue91c', iconFont: 'omarchy', label: 'Kimi' },
-  qwen: { icon: '\ue90f', iconFont: 'omarchy', label: 'Qwen Code' },
-  dsh: { icon: '\ue910', iconFont: 'omarchy', label: 'DeepSeek Harness' },
-  mcode: { icon: '\ue911', iconFont: 'omarchy', label: 'MiniMax Code' },
-  'kiro-cli': { icon: '\ue913', iconFont: 'omarchy', label: 'Kiro CLI' },
-  freebuff: { icon: '\ue915', iconFont: 'omarchy', label: 'Freebuff' },
-  kilo: { icon: '\ue916', iconFont: 'omarchy', label: 'Kilo' },
-  devin: { icon: '\ue917', iconFont: 'omarchy', label: 'Devin CLI' },
-  amp: { icon: '\ue918', iconFont: 'omarchy', label: 'Amp' },
-  commandcode: { icon: '\ue919', iconFont: 'omarchy', label: 'Command Code' },
+  kimi: { icon: '\ue91d', iconFont: 'omarchy', label: 'Kimi' },
+  qwen: { icon: '\ue910', iconFont: 'omarchy', label: 'Qwen Code' },
+  dsh: { icon: '\ue911', iconFont: 'omarchy', label: 'DeepSeek Harness' },
+  mcode: { icon: '\ue912', iconFont: 'omarchy', label: 'MiniMax Code' },
+  'kiro-cli': { icon: '\ue914', iconFont: 'omarchy', label: 'Kiro CLI' },
+  freebuff: { icon: '\ue916', iconFont: 'omarchy', label: 'Freebuff' },
+  kilo: { icon: '\ue917', iconFont: 'omarchy', label: 'Kilo' },
+  devin: { icon: '\ue918', iconFont: 'omarchy', label: 'Devin CLI' },
+  amp: { icon: '\ue919', iconFont: 'omarchy', label: 'Amp' },
+  commandcode: { icon: '\ue91a', iconFont: 'omarchy', label: 'Command Code' },
   hermes: { icon: '\ue90a', iconFont: 'omarchy', label: 'Hermes' },
   openclaw: { icon: '\ue90c', iconFont: 'omarchy', label: 'OpenClaw' },
   copilot: { icon: '', label: 'Copilot' },
-  crush: { icon: '\ue91d', iconFont: 'omarchy', label: 'Crush' },
-  muse: { icon: '\ue91e', iconFont: 'omarchy', label: 'Muse Code' },
+  crush: { icon: '\ue91e', iconFont: 'omarchy', label: 'Crush' },
+  muse: { icon: '\ue91f', iconFont: 'omarchy', label: 'Muse Code' },
   'cursor-agent': { icon: '\ue90d', iconFont: 'omarchy', label: 'Cursor CLI' },
 }
 assert(
@@ -937,5 +937,5 @@ assert(
 JS
 
 font_charset=$(fc-query --format='%{charset}' "$ROOT/default/fonts/omarchy/omarchy.ttf")
-[[ $font_charset == *"e900-e91e"* ]] || fail "Omarchy icon font includes every custom menu glyph"
+[[ $font_charset == *"e900-e91f"* ]] || fail "Omarchy icon font includes every custom menu glyph"
 pass "Omarchy icon font includes the official agent marks"
