@@ -106,6 +106,19 @@ record, _ = minimax({"model_remains": [
 ]})
 expect("MiniMax collector skips media quota rows when choosing the plan's row", [entry["percent"] for entry in record["limits"]], [0.75], record)
 
+# Each window's status outranks its percentage, as in mmx and omp: 2 is
+# exhausted however much the stale percentage says remains, 3 is unlimited,
+# with nothing to fill. A row in mmx's "not in plan" shape (both windows
+# unlimited, nothing allotted) is never the plan's row.
+record, _ = minimax({"model_remains": [
+  {"model_name": "general", "current_interval_total_count": 0, "current_interval_remaining_percent": 100, "current_interval_status": 3,
+   "current_weekly_total_count": 0, "current_weekly_remaining_percent": 100, "current_weekly_status": 3},
+  {"model_name": "MiniMax-M2", "current_interval_total_count": 1500, "current_interval_remaining_percent": 40, "current_interval_status": 2,
+   "current_weekly_total_count": 0, "current_weekly_remaining_percent": 100, "current_weekly_status": 3},
+], "base_resp": {"status_code": 0, "status_msg": "success"}})
+expect("MiniMax reads an exhausted window as spent, drops an unlimited one, and skips a model outside the plan",
+       [(entry["label"], entry["percent"]) for entry in record["limits"]], [("Session (5-hour)", 1.0)], record)
+
 # The bearer never follows a redirect to another host.
 elsewhere, stolen = stub_server(lambda request: {"model_remains": []})
 origin, _ = stub_server(lambda request: (302, b"", {"Location": elsewhere + "/steal"}))
