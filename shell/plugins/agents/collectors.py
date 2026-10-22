@@ -1111,6 +1111,9 @@ def scan_opencode(providers: Iterable[str], accept: Accept) -> tuple[list[UsageR
   seen: set[str] = set()
   # A subagent's session: the prompts in it are the model's, not typed.
   children: set[str] = set()
+  # The original store's first step answering each user message, whichever
+  # provider took it, by (session, parentID).
+  firsts: dict[tuple[str, str], str] = {}
 
   def take(message_id: Any, session_id: Any, raw: Any, row_type: str, created: Any, since: Any = None, turn: Any = "") -> None:
     # `turn` is the prompt the row answers, None for none, or "" to read it
@@ -1137,6 +1140,9 @@ def scan_opencode(providers: Iterable[str], accept: Accept) -> tuple[list[UsageR
         turn = None
       elif isinstance(parent, str) and parent:
         turn = (str(session_id), parent)
+        # A later step, even one another provider's first, answers none.
+        if firsts.get(turn, str(message_id)) != str(message_id):
+          turn = None
       else:
         turn = ("message", str(message_id))
     if str(session_id) in children:
@@ -1204,6 +1210,23 @@ def scan_opencode(providers: Iterable[str], accept: Accept) -> tuple[list[UsageR
         # a message older than its session was spent in the source.
         source += " LEFT JOIN session s ON s.id = m.session_id"
         session_created = "s.time_created"
+      # The first step that spent tokens on each user message across every
+      # provider, so a tool loop that switches providers books its prompt
+      # once, on whichever collector took that step. Only valid JSON is read,
+      # so one odd row can't fail the query.
+      spent = " + ".join(f"COALESCE(json_extract(j, '$.tokens.{key}'), 0)" for key in ("input", "output", "reasoning", "cache.read", "cache.write"))
+      for session_id, parent, first_id in conn.execute(
+        "SELECT session_id, parent, id FROM (SELECT session_id, parent, id,"
+        " ROW_NUMBER() OVER (PARTITION BY session_id, parent ORDER BY created, CAST(id AS TEXT)) AS n"
+        " FROM (SELECT id, session_id, j, since, json_extract(j, '$.parentID') AS parent, json_extract(j, '$.time.created') AS created"
+        f" FROM (SELECT {row_id} AS id, m.session_id, CASE WHEN json_valid(m.data) THEN m.data END AS j, {session_created} AS since"
+        f" FROM {source} WHERE m.data LIKE '%\"parentID\"%' AND m.data LIKE '%\"role\"%:%\"assistant\"%'))"
+        " WHERE typeof(parent) = 'text' AND parent != '' AND (created IS NULL OR created > 0)"
+        " AND (since IS NULL OR created IS NULL OR created >= since)"
+        " AND json_extract(j, '$.summary') IS NOT 1 AND json_extract(j, '$.mode') IS NOT 'compaction'"
+        f" AND {spent} > 0) WHERE n = 1"
+      ):
+        firsts[(str(session_id), str(parent))] = str(first_id)
       gate = " OR ".join("m.data LIKE ?" for _ in patterns)
       for message_id, session_id, raw, since in conn.execute(
         f"SELECT {row_id}, m.session_id, m.data, {session_created} FROM {source}"
