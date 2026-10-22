@@ -195,6 +195,23 @@ record = grok()
 expect("a list-shaped modelUsage and a non-object settings read as empty",
        [record["ready"], record["tierLabel"], record["todayPrompts"], record["modelUsage"]], [True, "", 1, {}], record)
 
+# A session or turn time out of range (year 1, before 2000, past 2100) is an
+# untrusted stamp: it skips that session or turn, never the record.
+sandbox()
+signed_in(grok_home())
+summary(grok_home(), "good", iso_in(0), 2)
+write_json(grok_home() / "sessions" / "%2Fhome%2Fme" / "good" / "usage.json", {"turns": [
+  {"endedAt": iso_in(0), "modelUsage": {"grok-4.7-build": {"inputTokens": 10, "outputTokens": 1}}},
+  {"endedAt": "0001-01-01T00:00:00+00:00", "modelUsage": {"grok-4.7-build": {"inputTokens": 500}}},
+  {"endedAt": "9999-12-31T23:59:59+00:00", "modelUsage": {"grok-4.7-build": {"inputTokens": 500}}},
+]})
+for name, stamp in (("year1", "0001-01-01T00:00:00+00:00"), ("1970", "1970-01-01T00:00:00Z"), ("far", "2999-01-01T00:00:00Z")):
+  summary(grok_home(), name, stamp, 7)
+record = grok()
+expect("Grok skips sessions and turns with out-of-range times",
+       [record["totalSessions"], record["totalPrompts"], record["todayPrompts"], record["todayTotalTokens"], record["activeDates"]],
+       [1, 2, 1, 11, [datetime.now().date().isoformat()]], record)
+
 # ---------------------------------------------------------- local stats
 
 # Sessions come from each session's summary; tokens and today's prompts from

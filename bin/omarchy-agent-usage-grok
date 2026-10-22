@@ -34,6 +34,7 @@ from collectors import (  # noqa: E402
   cached_scan,
   emit,
   empty_bucket,
+  local_day,
   number,
   obj,
   open_json,
@@ -66,6 +67,13 @@ def default_home():
   return Path(os.environ.get("GROK_HOME") or (Path.home() / ".grok"))
 
 
+# The local day a session or turn was active on, or None to skip it: a
+# missing time is no activity here, and one local_day() can't trust (out of
+# range, before 2000 or after 2100) counts nowhere.
+def active_day(value):
+  return None if value is None else local_day(value)
+
+
 # Every session under <home>/sessions/<folder>/<session>/: its summary says
 # when it was last active and how many prompts it had, and its usage.json
 # lists each finished turn with its tokens by model. Added accounts link
@@ -85,9 +93,8 @@ def local_stats(home):
   for session in (Path(home) / "sessions").glob("*/*/"):
     summary = read_json(session / "summary.json")
     if isinstance(summary, dict):
-      active = parse_time(summary.get("last_active_at"))
-      if active:
-        day = active.astimezone().date().isoformat()
+      day = active_day(summary.get("last_active_at"))
+      if day:
         sessions += 1
         prompts += number(summary.get("num_messages"))
         days.add(day)
@@ -97,10 +104,9 @@ def local_stats(home):
     usage = read_json(session / "usage.json")
     turns = usage.get("turns") if isinstance(usage, dict) else None
     for turn in turns if isinstance(turns, list) else []:
-      ended = parse_time(turn.get("endedAt")) if isinstance(turn, dict) else None
-      if not ended:
+      day = active_day(turn.get("endedAt")) if isinstance(turn, dict) else None
+      if not day:
         continue
-      day = ended.astimezone().date().isoformat()
       days.add(day)
       if day == today:
         today_prompts += 1
