@@ -368,7 +368,7 @@ record = codex(env={"CODEX_ACCOUNT_READ_HANGS": 1, "CODEX_RATE_LIMITS": '{"planT
 elapsed = time.monotonic() - started
 expect("Codex reads limits naming their plan without waiting on account/read", {
   "tier": record["tierLabel"], "status": record["usageStatusText"], "limits": [[entry["label"], entry["percent"]] for entry in record["limits"]], "quick": elapsed < 1.8,
-}, {"tier": "pro", "status": "", "limits": [["Weekly (7-day)", 0.36]], "quick": True}, record)
+}, {"tier": "Pro 200", "status": "", "limits": [["Weekly (7-day)", 0.36]], "quick": True}, record)
 
 # Free full resets ride along: only available ones count, and the soonest to
 # lapse is the one worth mentioning.
@@ -427,7 +427,7 @@ done
 record = codex()
 expect("Codex reads replies batched with notifications", {
   "tier": record["tierLabel"], "status": record["usageStatusText"], "limits": [[entry["label"], entry["percent"]] for entry in record["limits"]],
-}, {"tier": "plus", "status": "", "limits": [["5h window", 0.05]]}, record)
+}, {"tier": "Plus", "status": "", "limits": [["5h window", 0.05]]}, record)
 
 # Without temporary space the probe still runs, only without Codex's error
 # text.
