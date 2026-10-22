@@ -69,9 +69,13 @@ def default_home():
 
 # The local day a session or turn was active on, or None to skip it: a
 # missing time is no activity here, and one local_day() can't trust (out of
-# range, before 2000 or after 2100) counts nowhere.
+# range, before 2000 or after 2100) counts nowhere. A time without a zone is
+# UTC, as parse_time() reads it.
 def active_day(value):
-  return None if value is None else local_day(value)
+  if value is None:
+    return None
+  parsed = parse_time(value) if isinstance(value, str) else None
+  return local_day(parsed.isoformat() if parsed else value)
 
 
 # Every session under <home>/sessions/<folder>/<session>/: its summary says
