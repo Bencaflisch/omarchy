@@ -62,8 +62,10 @@ PROVIDER = "mistral"
 # Vibe's own resolve_default_model_alias does.
 DEFAULT_MODEL_ALIAS = "mistral-medium-3.5"
 
-# Version 1 kept only the sessions Mistral served, so it named no owner.
-INDEX_VERSION = 2
+# Version 1 kept only the sessions Mistral served, so it named no owner, and
+# version 2 gave a mistral-backend provider to Mistral wherever its api_base
+# pointed.
+INDEX_VERSION = 3
 
 # Times read from Vibe's meta.json are untrusted. Anything past these bounds
 # is a corrupt or crafted field, not usage.
@@ -191,17 +193,18 @@ def provider_owner(name, providers, model):
   run, unless the model is a Claude or an Ollama cloud one it only forwards,
   and None for one nothing here can place.
 
-  Vibe marks Mistral's providers with the `mistral` backend; a generic one
-  pointed at a mistral.ai host is the same API. A provider the config doesn't
-  describe is one of Vibe's built-in ones, or no one's.
+  Vibe's `mistral` backend sends to the provider's api_base too, so the
+  api_base decides for it as for a generic one: a mistral.ai host is Mistral's
+  API, and so is a mistral-backend provider that names none. A provider the
+  config doesn't describe is one of Vibe's built-in ones, or no one's.
   """
   api_base = DEFAULT_API_BASES.get(name, "")
   for provider in providers if isinstance(providers, list) else []:
     if not isinstance(provider, dict) or str(provider.get("name") or "") != name:
       continue
-    if str(provider.get("backend") or "").lower() == "mistral":
+    api_base = str(provider.get("api_base") or "").strip()
+    if not api_base and str(provider.get("backend") or "").lower() == "mistral":
       return AGENT_ID
-    api_base = str(provider.get("api_base") or "")
     break
   host = (urlparse(api_base).hostname or "").lower()
   if host == "mistral.ai" or host.endswith(".mistral.ai"):

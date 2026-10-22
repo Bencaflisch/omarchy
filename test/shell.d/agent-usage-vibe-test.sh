@@ -241,9 +241,20 @@ write_meta(session_root() / "session_4", NOW, 80, 0, 0, {
   "active_model": "x", "models": {"x": {"name": "x", "provider": "proxy", "alias": "x"}},
   "providers": [{"name": "proxy", "api_base": "https://mistral.ai.example.com/v1", "backend": "generic"}],
 })
+# The mistral backend sends to its api_base too: one aimed at a server you
+# run is the local collector's, and one at another provider's host is not
+# Mistral's, as Vibe 3.0.1 wrote them against a local mock.
+for n, api_base in ((5, "http://127.0.0.1:18083/v1"), (6, "https://api.deepseek.com/v1")):
+  write_meta(session_root() / f"session_{n}", NOW, 1000 * n, 0, 0, {
+    "active_model": "devstral-mock", "models": [{"name": "devstral-2", "provider": "mistral", "alias": "devstral-mock"}],
+    "providers": [{"name": "mistral", "api_base": api_base, "api_key_env_var": "MISTRAL_API_KEY", "backend": "mistral"}],
+  })
 record = vibe()
 expect("Vibe resolves the session model and its provider as Vibe does",
        {model: usage["inputTokens"] for model, usage in record["modelUsage"].items()}, {"mistral-medium-3.5": 10, "devstral": 20, "codestral": 40}, record)
+local = collect("local", "--force")
+expect("Local counts a mistral-backend session on a server you run",
+       local["todayTokensByModel"], {"devstral-mock": 5000}, local)
 
 # --------------------------------------------------------- untrusted fields
 
