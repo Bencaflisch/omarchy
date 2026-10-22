@@ -228,14 +228,15 @@ expect("a split segment's totals stay whole", record["modelUsage"]["claude-sonne
        {"inputTokens": 600, "outputTokens": 100, "cacheReadInputTokens": 600, "cacheCreationInputTokens": 100}, record)
 
 # A transcript time that can't be trusted (digits int() refuses, zero,
-# negative, boolean, or outside 2000-2100) falls back to the file's time,
-# never failing the record or counting on a day that never happened.
+# negative, boolean, empty, or outside 2000-2100) counts nowhere, never
+# failing the record; only a line with no time at all takes the file's.
 sandbox()
 configured(remote=False)
-damaged = ["9" * 5000, "\u00b2", 0, -1, True, "1970-01-01T00:00:00Z", "2200-01-01T00:00:00Z"]
-transcript("sess-damaged", [("user.message", {"content": "prompt"}, at) for at in damaged])
+damaged = ["9" * 5000, "\u00b2", 0, -1, True, "", "1970-01-01T00:00:00Z", "2200-01-01T00:00:00Z"]
+transcript("sess-damaged", [("user.message", {"content": "prompt"}, at) for at in damaged + [None]])
 record = copilot()
-expect("an untrusted transcript time counts on the file's day", [record["totalPrompts"], record["activeDates"]], [len(damaged), [TODAY]], record)
+expect("an untrusted transcript time counts nowhere, and a missing one on the file's day",
+       [record["totalPrompts"], record["activeDates"]], [1, [TODAY]], record)
 
 # --------------------------------------------------------------- contract
 

@@ -442,7 +442,12 @@ def scan_transcript(event_file: Path, session_key: str, tally: UsageTally) -> No
       if not isinstance(data, dict):
         continue
 
-      parsed = parse_event_time(entry.get("timestamp"))
+      # A line with no time is the file's; one whose time can't be trusted
+      # counts nowhere, as in every other collector.
+      stamped = entry.get("timestamp")
+      parsed = parse_event_time(stamped)
+      if parsed is None and stamped is not None:
+        continue
       if parsed is None and session_mtime > 0:
         parsed = dt.datetime.fromtimestamp(
           session_mtime, dt.timezone.utc
