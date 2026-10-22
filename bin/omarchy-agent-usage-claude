@@ -83,8 +83,9 @@ def expand_path(value: str) -> Path:
 
 # Claude Code's transcripts are read by the shared reader, through the index
 # every collector that reads them shares. Claude Code fronts whatever
-# ANTHROPIC_BASE_URL names, and Z.ai, Ollama, MiniMax, DeepSeek, Kimi and
-# OpenRouter each document pointing it at their own Anthropic-compatible API;
+# ANTHROPIC_BASE_URL names, and Z.ai, Ollama, MiniMax, DeepSeek, Kimi,
+# OpenRouter and Alibaba's Model Studio each document pointing it at their
+# own Anthropic-compatible API;
 # only what Anthropic served is Claude's, and claude_code_owner() hands the
 # rest to the collector that bills it.
 
