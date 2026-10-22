@@ -52,7 +52,7 @@ NOTIFICATIONS = [
   dict(web="x.com", summary="3 people liked your post",
        body="“the notification daemon is the whole desktop in miniature”"),
   dict(app="Signal", icon="signal-desktop", summary="DHH",
-       body="seriously, you are going to want to see this one", actions=["read=Mark as read"]),
+       body="seriously, you are going to want to see this one"),
   dict(app="Omarchy", icon="system-software-update", summary="Updates available",
        body="14 packages, including linux 7.2.8 and hyprland 0.56.2"),
   dict(app="Snapshots", icon="LimineSnapperSync", summary="Snapshot complete",
