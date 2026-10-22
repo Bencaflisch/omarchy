@@ -320,13 +320,6 @@ Item {
   // Past a year is a mistake, and an infinite snooze would persist as null.
   readonly property int maxSnoozeSeconds: 366 * 86400
 
-  // Minutes from IPC: a finite positive number, capped, else the default.
-  function snoozeMinutes(value, fallback) {
-    var minutes = Number(value)
-    if (!isFinite(minutes) || minutes <= 0) return fallback
-    return Math.min(minutes, maxSnoozeSeconds / 60)
-  }
-
   // `fromNow` re-snoozes rather than extending what was already left.
   function snoozeSource(groupKey, label, seconds, fromNow) {
     var key = String(groupKey || "")
@@ -968,19 +961,6 @@ Item {
     return keys.length
   }
 
-  // The deck the pointer has open, else the newest card's.
-  function clearDeck(reason) {
-    var decks = layout.decks
-    if (decks.length === 0) return 0
-    var deck = decks[0]
-    if (expanded)
-      for (var i = 0; i < decks.length; i++)
-        if (decks[i].key === openDeck) { deck = decks[i]; break }
-    var keys = deck.rows.map(function(row) { return row.key })
-    for (var k = 0; k < keys.length; k++) closeToast(keys[k], reason || "dismissed")
-    return keys.length
-  }
-
   function dismissNewest() {
     for (var i = 0; i < toasts.count; i++) {
       var key = String(toasts.get(i).key)
@@ -1516,7 +1496,6 @@ Item {
     var what = String(action || "toggle")
     if (openPanel) {
       if (what === "close" || what === "toggle") openPanel.close()
-      else if (what === "settings") openPanel.openSettings()
       return "ok"
     }
     if (what !== "close") panelRequested(what, String(screenName || focusedDisplayName))
@@ -1538,18 +1517,17 @@ Item {
 
     function ping(): string { return "ok" }
 
-    function dndState(): string { return service.doNotDisturb ? "on" : "off" }
-    function isDnd(): string { return dndState() }
+    function isDnd(): string { return service.doNotDisturb ? "on" : "off" }
 
     function toggleDnd(): string {
       service.setDoNotDisturb(!service.doNotDisturb)
-      return dndState()
+      return isDnd()
     }
 
     function setDnd(value: string): string {
       var v = String(value || "").toLowerCase()
       service.setDoNotDisturb(v === "true" || v === "1" || v === "on" || v === "yes")
-      return dndState()
+      return isDnd()
     }
 
     // Dismiss the newest card on screen.
@@ -1557,9 +1535,6 @@ Item {
 
     // Every card, every stack.
     function dismissAll(): string { service.clearAll("dismissed"); return "ok" }
-
-    // One stack: the deck the pointer has open, else the newest card's.
-    function dismissStack(): string { service.clearDeck("dismissed"); return "ok" }
 
     // Click the newest card, as the pointer would.
     function invokeLast(): string {
@@ -1570,15 +1545,6 @@ Item {
 
     // Put the last few back on screen.
     function showHistory(): string { service.replayHistory(); return "ok" }
-
-    // Forget what was recorded. What is on screen stays.
-    function clear(): string {
-      service.historyEntries = []
-      service.saveSoon("history")
-      service.refreshHeld()
-      service.refreshHistory()
-      return "ok"
-    }
 
     // Take cards off the screen by summary substring, used by the first-run
     // notifications once their action has been clicked.
@@ -1612,72 +1578,7 @@ Item {
       return service.expanded ? "expanded" : "collapsed"
     }
 
-    // Snooze the front card's source, in minutes.
-    function snooze(minutes: string): string {
-      if (toasts.count === 0) return "nothing"
-      var row = toasts.get(0)
-      var mins = service.snoozeMinutes(minutes, 60)
-      var until = service.snoozeSource(String(row.groupKey || ""),
-                                       String(row.source || row.app || ""), mins * 60)
-      return until ? String(row.source || row.app) + " until " + new Date(until * 1000).toTimeString().slice(0, 5) : "no source"
-    }
-
-    // Snooze everything, or wake it again when it already is.
-    function snoozeAll(minutes: string): string {
-      if (service.globalSnoozeUntil) {
-        service.unsnooze(service.globalKey)
-        return "awake"
-      }
-      var mins = service.snoozeMinutes(minutes, 60)
-      var until = service.snoozeSource(service.globalKey, "", mins * 60, true)
-      return until ? "everything until " + new Date(until * 1000).toTimeString().slice(0, 5) : "no"
-    }
-
-    // Wake one source by key, or everything with an empty key.
-    function unsnooze(key: string): string {
-      if (!String(key || "")) { service.unsnoozeAll(); return "all" }
-      service.unsnooze(String(key))
-      return String(key)
-    }
-
-    function snoozes(): string { return JSON.stringify(service.liveSnoozes()) }
-
-    // Whether verification codes get through the quiet: on, off, or "" to ask.
-    function codes(state: string): string {
-      var want = String(state || "").toLowerCase()
-      if (want === "on" || want === "off")
-        service.setCodesBypassQuiet(want === "on")
-      return service.codesBypassQuiet ? "on" : "off"
-    }
-
-    // Invoke one of the sender's actions on the front card, by identifier.
-    function act(identifier: string): string {
-      if (toasts.count === 0) return "nothing"
-      var key = String(toasts.get(0).key)
-      var available = service.actionsOf(key, service.refsRevision)
-      var wanted = String(identifier || "")
-      if (!wanted && available.length > 0) wanted = available[0].id
-      if (!wanted) return "no actions"
-      service.invokeAction(key, wanted)
-      return wanted
-    }
-
-    // Take one of the front card's offers: code, link or phone.
-    function offer(kind: string): string {
-      if (toasts.count === 0) return "nothing"
-      var row = toasts.get(0)
-      var want = String(kind || "code")
-      var value = want === "code" ? String(row.code || "")
-                : want === "phone" ? String(row.phone || "")
-                : String(row.link || "")
-      if (!value) return "none"
-      service.takeOffer(want, value, String(row.key))
-      return "performed"
-    }
-
-    function togglePanel(): string { return service.requestPanel("toggle") }
     function openPanel(): string { return service.requestPanel("open") }
-    function openSettings(): string { return service.requestPanel("settings") }
     function closePanel(): string { return service.requestPanel("close") }
 
     // What the daemon thinks is true, for scripts to check.

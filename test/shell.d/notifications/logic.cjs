@@ -325,14 +325,6 @@ function runIn(scope, ...names) {
   assert.deepEqual(calls, ['hl.dsp.focus({window = hl.get_window("address:0x123abc")})'])
 }
 
-{ // Snooze lengths from IPC are finite and bounded before anything changes.
-  const s = runIn({ maxSnoozeSeconds: 366 * 86400, Number, Math, isFinite }, 'snoozeMinutes')
-  for (const v of ['Infinity', '1e309', 'NaN', '-5', '0', '', 'abc']) assert.equal(s.snoozeMinutes(v, 60), 60, v)
-  assert.equal(s.snoozeMinutes('1e308', 60), 366 * 1440, 'capped, not overflowed')
-  assert.equal(s.snoozeMinutes('30', 60), 30)
-  assert.ok(/isFinite\(seconds\)/.test(fn('snoozeSource')) && /maxSnoozeSeconds/.test(fn('snoozeSource')), 'snoozeSource bounds its own input')
-}
-
 { // The summary is plain text everywhere it is drawn.
   const toast = fs.readFileSync(load.dir + '/Toast.qml', 'utf8'), title = toast.indexOf('id: title')
   assert.ok(/Text\.PlainText/.test(toast.slice(toast.lastIndexOf('Text {', title), title)), 'the summary renders as plain text')
@@ -343,7 +335,7 @@ function runIn(scope, ...names) {
 const capacityFunctions = ['pinDeckDisplay', 'showsOn', 'fullscreenOn', 'rememberRecent', 'recentForPanel',
   'durationFor', 'liveCount', 'reserveLive', 'releaseLive',
   'nextKey', 'rowIndexFor', 'keyForOriginal', 'handleNotification', 'watchNotification', 'showRow', 'release', 'closeToast',
-  'finishClose', 'clearAll', 'clearDeck', 'dismissNewest', 'releaseHeld', 'restoreRows', 'actionsOf', 'dismissOne',
+  'finishClose', 'clearAll', 'dismissNewest', 'releaseHeld', 'restoreRows', 'actionsOf', 'dismissOne',
   'storePut', 'storeClose', 'storeDrop', 'storeRecord', 'saveSoon', 'loadLive']
 
 function newCapacityScope() {
@@ -452,36 +444,6 @@ const summaries = rows => Array.from(rows, row => row.summary)
   assert.equal(senders[3].expiries, 1)
   for (const sender of senders.slice(0, 3)) assert.equal(sender.dismissals, 1)
   for (const sender of senders) assert.equal(sender.closeAttempts, 1)
-}
-
-{ // Dismiss the visible deck, including across exit animations.
-  function fixture(expanded, openDeck) {
-    const s = newCapacityScope()
-    Object.assign(s, { expanded, openDeck })
-    for (const [key, groupKey] of [['old', 'chat'], ['build', 'build'], ['new', 'chat']]) {
-      s.reserveLive(key)
-      s.toasts.insert(0, { key, groupKey })
-    }
-    Object.defineProperty(s, 'layout', { get: () => Layout.compute(
-      s.toasts.rows.filter(row => !s.leaving[row.key]),
-      { expanded: s.expanded, openDeck: s.openDeck }) })
-    return s
-  }
-  const leaving = s => Object.keys(s.leaving).sort()
-  const collapsed = fixture(false, '')
-  assert.equal(collapsed.clearDeck('dismissed'), 2)
-  assert.deepEqual(leaving(collapsed), ['new', 'old'])
-  // Departing rows remain in the model, but must not consume the next press.
-  assert.equal(collapsed.clearDeck('dismissed'), 1)
-  assert.deepEqual(leaving(collapsed), ['build', 'new', 'old'])
-  assert.equal(collapsed.clearDeck('dismissed'), 0)
-  const open = fixture(true, 'build')
-  assert.equal(open.clearDeck('dismissed'), 1)
-  assert.deepEqual(leaving(open), ['build'])
-  assert.equal(open.clearDeck('dismissed'), 2)
-  const unmatched = fixture(true, 'all')
-  assert.equal(unmatched.clearDeck('dismissed'), 2)
-  assert.deepEqual(leaving(unmatched), ['new', 'old'])
 }
 
 { // Expired notifications remain readable, newest first, without unbounded retention.

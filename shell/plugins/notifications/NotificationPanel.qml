@@ -24,10 +24,6 @@ Item {
     settingsView = false
     controller.show()
   }
-  function openSettings() {
-    settingsView = true
-    controller.show()
-  }
   function close() { controller.hide() }
   function toggle() {
     if (controller.open) controller.hide()

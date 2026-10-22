@@ -68,7 +68,7 @@ Images are decoded in the shell process like every other image it draws. A sende
 
 ## Silencing and snoozing
 
-Do Not Disturb is a boolean in `quiet.json`, toggled via `omarchy-shell notifications toggleDnd` / `setDnd` / `dndState`; `omarchy-toggle-notification-silencing` wraps the toggle. A snooze is the same quiet with an end time, per source (`groupKey`) or for everything (key `*`, which replaces Do Not Disturb).
+Do Not Disturb is a boolean in `quiet.json`, toggled via `omarchy-shell notifications toggleDnd` / `setDnd` / `isDnd`; `omarchy-toggle-notification-silencing` wraps the toggle. A snooze is the same quiet with an end time, per source (`groupKey`) or for everything (key `*`, which replaces Do Not Disturb).
 
 Three kinds of notification get through every kind of quiet:
 
@@ -185,7 +185,7 @@ Keybindings live in `default/hypr/bindings/utilities.lua`: `Super+comma`
 variants map to the IPC methods `dismissOne`, `dismissAll`, `invokeLast`,
 `showHistory` (put the last few back on screen), and the silencing toggle.
 
-The `notifications` IPC target also answers `dismissStack`, `count`, `expand`, `snooze <minutes>`, `snoozeAll <minutes>`, `unsnooze <key>`, `snoozes`, `codes <on|off>`, `act <identifier>`, `offer <code|link|phone>`, `togglePanel`, `openPanel`, `openSettings`, `closePanel`, `probe`, and `clear` (forget history). `omarchy-dev-notification-demo` sends test scenes through it.
+The `notifications` IPC target also answers `ping` (used by `omarchy-notification-wait`), `dismiss <summary>`, `count`, `openPanel`, `closePanel`, and two for scripts and visual checks: `expand` (open the deck and hover its front card, as the pointer would) and `probe` (what the daemon thinks is true).
 
 ## How subsystems plug in
 
