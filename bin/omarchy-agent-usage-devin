@@ -72,8 +72,8 @@ LIMITS_CURRENT_ENOUGH_SECONDS = 900
 # when the plan carries no name of its own.
 TEAMS_TIER = {
   1: "Teams", 2: "Pro", 3: "Enterprise Saas", 4: "Hybrid", 5: "Enterprise Self Hosted",
-  6: "Waitlist Pro", 7: "Teams Ultimate", 9: "Trial", 10: "Enterprise Self Serve",
-  12: "Devin Enterprise", 14: "Devin Teams", 15: "Devin Teams V2", 16: "Devin Pro",
+  6: "Waitlist Pro", 7: "Teams Ultimate", 8: "Pro Ultimate", 9: "Trial", 10: "Enterprise Self Serve",
+  11: "Enterprise Saas Pooled", 12: "Devin Enterprise", 14: "Devin Teams", 15: "Devin Teams V2", 16: "Devin Pro",
   17: "Devin Max", 18: "Max", 19: "Devin Free", 20: "Devin Trial",
 }
 
@@ -325,8 +325,7 @@ def parse_user_status(payload):
   status = proto_fields(payload)
   plan_status = message(status, 13)
   plan = message(plan_status, 1)
-  devin_info = message(plan, 33)
-  tier = text(devin_info, 2) or text(plan, 2) or TEAMS_TIER.get(varint(plan, 1)) or TEAMS_TIER.get(varint(status, 10)) or ""
+  tier = text(plan, 2) or TEAMS_TIER.get(varint(plan, 1)) or TEAMS_TIER.get(varint(status, 10)) or ""
 
   limits = []
   if plan_status:
