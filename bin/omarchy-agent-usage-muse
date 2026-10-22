@@ -13,8 +13,9 @@ session counts, per-day and per-model breakdowns. Sources (all local):
   - opencode sessions with providerID == "meta" (any Muse Spark model).
     Muse Spark served through OpenCode Zen (providerID == "opencode") is
     Zen usage, and the opencode record counts it.
-  - pi/omp sessions on the `meta` provider, in every session root (profiles
-    and PI_CODING_AGENT_DIR included).
+  - pi/omp sessions on the `meta` provider, or omp's `muse-code` (its Muse
+    Code sign-in), in every session root (profiles and PI_CODING_AGENT_DIR
+    included).
 
 Subscription windows (additive, authoritative only): when the CLI is signed
 in via `muse login`, the collector probes the client's own key endpoint
@@ -430,18 +431,22 @@ def scan_native_muse_sessions(stats, indexed=frozenset()):
 
 # pi, omp, and opencode alike: the meta provider is Meta's own Muse Spark API
 # and only serves Muse Spark models, so any model on it counts (muse-spark
-# 1.1/1.2/1.3, ...). Muse Spark through the Zen gateway (providerID
-# "opencode") is OpenCode usage, so the opencode record keeps it.
+# 1.1/1.2/1.3, ...), and so does omp's `muse-code`, the same API reached
+# through a Muse Code sign-in. Muse Spark through the Zen gateway
+# (providerID "opencode") is OpenCode usage, so the opencode record keeps it.
+PROVIDERS = ("meta", "muse-code")
+
+
 def billed_here(provider, model, entry):
-  return provider == "meta"
+  return provider in PROVIDERS
 
 
 def scan_shared_stores(stats):
-  """pi/omp and opencode replies on the meta provider. Returns whether every
+  """pi/omp and opencode replies on Meta's providers. Returns whether every
   source was read in full (safe to cache)."""
-  pi_rows, pi_complete = scan_pi_sessions(r'"provider"\s*:\s*"meta"', billed_here)
+  pi_rows, pi_complete = scan_pi_sessions(r'"provider"\s*:\s*"(' + "|".join(PROVIDERS) + r')"', billed_here)
   # The closing quote makes the database's prefilter match the whole id.
-  db_rows, db_complete = scan_opencode(['meta"'], billed_here)
+  db_rows, db_complete = scan_opencode([provider + '"' for provider in PROVIDERS], billed_here)
   for row in db_rows + pi_rows:
     model = model_name(row.model)
     if model is not None:

@@ -862,3 +862,116 @@ done
 if (( ${#failed[@]} > 0 )); then
   fail "agent usage collectors partition tokens by provider (failing: ${failed[*]})" "$details"
 fi
+
+# ------------------------------------------------------- harness provider ids
+
+# pi, omp and opencode each name a plan's provider their own way, so a plan
+# a collector meters can reach it under several ids. One home holds a reply
+# on each id below, written as pi 1.4.0, omp 18.12.6 and opencode 1.19.3
+# wrote them for that provider, and each must be counted once, by its owner,
+# or (Moonshot's pay-as-you-go API) by nobody.
+IDS_HOME="$WORK/provider-ids"
+mkdir -p "$IDS_HOME"
+python3 - "$IDS_HOME" "$WORK/ids-cells.json" <<'PY'
+import json
+import sqlite3
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+home = Path(sys.argv[1])
+stamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+now_ms = int(time.time() * 1000) - 1000
+# (harness, provider, owner)
+IDS = [
+  ("pi", "zai-coding-cn", "zai"),
+  ("omp", "zhipu-coding-plan", "zai"),
+  ("omp", "kimi-code", "kimi"),
+  ("omp", "muse-code", "muse"),
+  ("omp", "moonshot", None),
+  ("opencode", "zai-coding-plan", "zai"),
+  ("opencode", "zhipuai-coding-plan", "zai"),
+  ("opencode", "zhipuai", "zai"),
+]
+cells = []
+rows = []
+for n, (harness, provider, owner) in enumerate(IDS):
+  tag = f"zq{700 + n}"
+  model = f"ids-{tag}"
+  tokens = 70000 + 100 * n
+  usage = {"input": tokens, "output": 0, "cacheRead": 0, "cacheWrite": 0, "totalTokens": tokens, "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0}}
+  if harness == "opencode":
+    rows.append((f"msg_{tag}", f"ses_{tag}", now_ms, now_ms, json.dumps({
+      "parentID": f"msg_{tag}_u", "role": "assistant", "mode": "build", "agent": "build", "cost": 0,
+      "tokens": {"total": tokens, "input": tokens, "output": 0, "reasoning": 0, "cache": {"write": 0, "read": 0}},
+      "modelID": model, "providerID": provider, "time": {"created": now_ms, "completed": now_ms}, "finish": "stop"})))
+  elif harness == "omp":
+    runtime = {"version": "18.12.6"}
+    lines = [
+      {"type": "session", "version": 3, "id": f"s-{tag}", "timestamp": stamp, "cwd": "/home/me"},
+      {"type": "model_change", "id": f"mc-{tag}", "parentId": None, "timestamp": stamp, "runtime": runtime, "model": f"{provider}/{model}", "resolvedModelIsFallback": False},
+      {"type": "message", "id": f"u-{tag}", "parentId": f"mc-{tag}", "timestamp": stamp, "runtime": runtime, "message": {"role": "user", "content": [{"type": "text", "text": "Say hi"}], "attribution": "user", "timestamp": now_ms}},
+      {"type": "message", "id": f"a-{tag}", "parentId": f"u-{tag}", "timestamp": stamp, "runtime": runtime, "message": {
+        "role": "assistant", "content": [{"type": "text", "text": "hi"}], "api": "openai-completions", "provider": provider, "model": model,
+        "usage": usage, "stopReason": "stop", "timestamp": now_ms}},
+    ]
+    path = home / f".omp/agent/sessions/-/{tag}.jsonl"
+  else:
+    lines = [
+      {"type": "session", "version": 3, "id": f"s-{tag}", "timestamp": stamp, "cwd": "/home/me"},
+      {"type": "model_change", "id": f"mc-{tag}", "parentId": None, "timestamp": stamp, "provider": provider, "modelId": model},
+      {"type": "message", "id": f"u-{tag}", "parentId": f"mc-{tag}", "timestamp": stamp, "message": {"role": "user", "content": [{"type": "text", "text": "Say hi"}], "timestamp": now_ms}},
+      {"type": "message", "id": f"a-{tag}", "parentId": f"u-{tag}", "timestamp": stamp, "message": {
+        "role": "assistant", "content": [{"type": "text", "text": "hi"}], "api": "openai-completions", "provider": provider, "model": model,
+        "usage": usage, "stopReason": "stop", "timestamp": now_ms}},
+    ]
+    path = home / f".pi/agent/sessions/--home-me--/{tag}.jsonl"
+  if harness != "opencode":
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(line) + "\n" for line in lines))
+  cells.append({"tag": tag, "harness": harness, "provider": provider, "tokens": tokens, "owner": owner})
+
+db = home / ".local/share/opencode/opencode.db"
+db.parent.mkdir(parents=True)
+conn = sqlite3.connect(db)
+conn.execute("CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)")
+conn.executemany("INSERT INTO message VALUES (?, ?, ?, ?, ?)", rows)
+conn.commit()
+conn.close()
+Path(sys.argv[2]).write_text(json.dumps(cells))
+PY
+run_all "$IDS_HOME" "$WORK/ids-results"
+
+python3 - "$WORK" "${collectors[@]}" >"$WORK/ids-report.txt" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+work = Path(sys.argv[1])
+cells = {cell["tag"]: cell for cell in json.load(open(work / "ids-cells.json"))}
+seen = {tag: {} for tag in cells}
+for cid in sys.argv[2:]:
+  try:
+    record = json.loads((work / f"ids-results/{cid}.json").read_text())
+  except ValueError:
+    print(f"{cid} printed no record: {(work / f'ids-results/{cid}.err').read_text()[-300:]}")
+    continue
+  for model, bucket in (record.get("modelUsage") or {}).items():
+    total = sum(bucket.get(key) or 0 for key in ("inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"))
+    for tag in re.findall(r"zq\d{3}", model):
+      if tag in seen and total:
+        seen[tag][cid] = seen[tag].get(cid, 0) + total
+for tag, cell in sorted(cells.items()):
+  owner, tokens = cell["owner"], cell["tokens"]
+  wrong = [f"{cid} counted it {total / tokens:g}x" for cid, total in sorted(seen[tag].items()) if cid != owner or total != tokens]
+  if owner and owner not in seen[tag]:
+    wrong.insert(0, f"{owner} missed it")
+  if wrong:
+    print(f"{cell['harness']}'s {cell['provider']} ({tag}), expected {owner or 'nobody'}: {'; '.join(wrong)}")
+PY
+if [[ -s $WORK/ids-report.txt ]]; then
+  fail "each harness's own id for a plan is counted once, by the collector that meters it" "$(cat "$WORK/ids-report.txt")"
+fi
+pass "each harness's own id for a plan is counted once, by the collector that meters it"

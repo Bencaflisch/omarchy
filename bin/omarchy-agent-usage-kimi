@@ -475,11 +475,12 @@ def code_home() -> Path:
 
 
 # The Kimi Code plan as pi, omp and opencode name it: pi's own `kimi-coding`
-# provider (api.kimi.com/coding/v1, the plan's endpoint) and models.dev's
-# `kimi-code-plan-global` (kimi.ai) and `kimi-code-plan-cn` (kimi.com).
-# Exact ids: Moonshot's pay-as-you-go API (`moonshotai`, `moonshotai-cn`) is
-# not the plan these limits meter.
-PROVIDERS = ("kimi-coding", "kimi-code-plan-global", "kimi-code-plan-cn")
+# provider and omp's `kimi-code` (both api.kimi.com/coding/v1, the plan's
+# endpoint), and models.dev's `kimi-code-plan-global` (kimi.ai) and
+# `kimi-code-plan-cn` (kimi.com). Exact ids: Moonshot's pay-as-you-go API
+# (pi's and opencode's `moonshotai` and `moonshotai-cn`, omp's `moonshot`)
+# is not the plan these limits meter.
+PROVIDERS = ("kimi-coding", "kimi-code", "kimi-code-plan-global", "kimi-code-plan-cn")
 
 
 def billed_here(provider: str, model: str, entry: dict) -> bool:

@@ -11,7 +11,7 @@ generic pay-as-you-go key gets "no coding plan" and the record shows local
 stats alone, which is no trouble.
 
 Local stats come from pi/omp sessions and from opencode's message database
-(both of its stores) that ran through the Z.ai provider (the `glm-*` models). Both the local scan and the network probe are cached: the
+(both of its stores) that ran through a Z.ai or Zhipu provider (the `glm-*` models). Both the local scan and the network probe are cached: the
 panel fires `--limits-only` on every open, so a repeated open must reuse a
 recent scan and must not re-probe Z.ai more than once every few seconds. The
 agents panel only ever reads the JSON this prints.
@@ -75,9 +75,12 @@ AUTH_ERROR_CODES = {"1000", "1001", "1003", "1005"}
 # --force asks at once, for someone who just subscribed.
 NO_PLAN_RECHECK_SECONDS = 3600
 
-# The pi/omp provider names whose turns this subscription bills. Exact names:
-# a custom `zai-proxy` gateway is not this subscription.
-PROVIDERS = ("zai", "zhipu")
+# The pi, omp and opencode provider ids for Z.ai's and Zhipu's APIs, whose
+# turns this collector counts: pi's `zai` and `zai-coding-cn`, omp's `zai`
+# and `zhipu-coding-plan`, and models.dev's (opencode's) `zai`, `zhipuai`,
+# `zai-coding-plan` and `zhipuai-coding-plan`, plus `zhipu`. Exact names: a
+# custom `zai-proxy` gateway is not this subscription.
+PROVIDERS = ("zai", "zhipu", "zai-coding-cn", "zhipu-coding-plan", "zhipuai", "zai-coding-plan", "zhipuai-coding-plan")
 
 # Coding-plan limit windows are tagged by (unit, number); the monitor endpoint
 # reports one CREDIT_LIMIT row per window (older responses used TOKENS_LIMIT).
