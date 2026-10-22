@@ -272,6 +272,8 @@ The Local models section counts work that ran on hardware you own: Codex rollout
 { "providers": ["homelab", "my-gateway"] }
 ```
 
+A Codex rollout records its provider's id but not the URL it reached, so the collector remembers each `model_providers` endpoint it has seen in `/etc/codex/config.toml`, `config.toml` or a profile's `<name>.config.toml` (in `~/.local/state/omarchy/agents/local-codex-providers.json`), and a provider's history stays local after it leaves the config. A provider only ever given with `codex -c model_providers...` or in a project's `.codex/config.toml` is never seen there, so name it in `local.json`.
+
 It is the exact complement of the provider collectors: a provider id another collector counts is never counted here, whatever `local.json` says, and the Codex collector keeps every rollout on the built-in `openai` provider. Two providers are claimed only for some models, and only those rows are left out: Ollama's cloud models (a `:cloud` or `-cloud` tag) run on Ollama's servers even through the local daemon, so they count under Ollama Cloud instead, and opencode's Antigravity plugin records a `google` provider with `antigravity-` models, which the Antigravity collector counts. A Codex rollout's prompts are the ones typed, read as the Codex collector reads them. There are no limits or balance.
 
 ## Interactions

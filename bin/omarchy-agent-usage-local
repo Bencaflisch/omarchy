@@ -134,10 +134,9 @@ def codex_home():
   return Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
 
 
-def codex_endpoints():
-  """provider id -> base_url, from the Codex CLI's own config."""
+def config_endpoints(path):
   try:
-    with (codex_home() / "config.toml").open("rb") as handle:
+    with path.open("rb") as handle:
       config = tomllib.load(handle)
   except (OSError, UnicodeError, tomllib.TOMLDecodeError):
     return {}
@@ -145,6 +144,51 @@ def codex_endpoints():
   if not isinstance(providers, dict):
     return {}
   return {str(name).lower(): str(entry.get("base_url") or "") for name, entry in providers.items() if isinstance(entry, dict)}
+
+
+def codex_endpoints():
+  """provider id -> base_url, from the Codex CLI's own config: the system
+  layer, the user's config.toml over it, and the profiles
+  (<name>.config.toml) Codex layers over that when one is selected."""
+  home = codex_home()
+  endpoints = {}
+  for path in (Path("/etc/codex/config.toml"), home / "config.toml", *sorted(home.glob("*.config.toml"))):
+    endpoints.update(config_endpoints(path))
+  return endpoints
+
+
+def remembered_endpoints_path():
+  return Path(os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state")) / "omarchy" / "agents" / "local-codex-providers.json"
+
+
+def remembered_endpoints():
+  """provider id -> base_url, for every Codex provider config.toml has named.
+
+  A rollout records only its provider's id, never the URL it reached, so a
+  custom provider that leaves config.toml would take its history with it.
+  Each run remembers the endpoints the config names, per Codex home, and a
+  provider the config no longer has keeps the last one it had. The current
+  config always wins. A provider only ever given on the command line (`-c
+  model_providers...`) or in a project's .codex/config.toml is never seen
+  here: local.json names those.
+  """
+  path = remembered_endpoints_path()
+  homes = read_json(path).get("homes")
+  homes = homes if isinstance(homes, dict) else {}
+  key = str(codex_home())
+  known = homes.get(key)
+  known = {str(pid): url for pid, url in known.items() if isinstance(url, str) and url} if isinstance(known, dict) else {}
+  endpoints = {**known, **codex_endpoints()}
+  remembered = {pid: url for pid, url in endpoints.items() if url}
+  if remembered != known:
+    try:
+      path.parent.mkdir(parents=True, exist_ok=True)
+      write_json(path, {"homes": {**homes, key: remembered}}, sort_keys=True)
+    except OSError as exc:
+      # Remembering costs nothing when it fails: the current config still
+      # classifies.
+      warn(f"could not remember Codex providers ({exc})")
+  return endpoints
 
 
 def is_self_hosted(url):
@@ -189,7 +233,7 @@ def antigravity_row(provider, model):
 class Classifier:
   def __init__(self):
     self.configured = configured_providers()
-    self.endpoints = codex_endpoints()
+    self.endpoints = remembered_endpoints()
     ids = set(KNOWN_LOCAL_PROVIDERS) | self.configured
     ids |= {pid for pid, url in self.endpoints.items() if url and is_self_hosted(url)}
     self.local_ids = ids - CLAIMED_PROVIDERS

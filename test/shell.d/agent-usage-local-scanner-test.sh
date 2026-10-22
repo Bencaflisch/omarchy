@@ -131,13 +131,13 @@ turn("mystery", "mystery", "qwen-custom")
 record = collect("local")
 expect("Local counts the providers local.json names", record["modelUsage"].get("qwen-custom", {}).get("inputTokens"), 1000, record)
 
-# A Codex config that isn't UTF-8 names no endpoints, like a missing one,
-# and costs only the LAN rollouts it would have named.
+# A Codex config that isn't UTF-8 names no endpoints, like a missing one, and
+# the ones it named before stay remembered.
 config = Path(os.environ["CODEX_HOME"]) / "config.toml"
 saved = config.read_bytes()
 config.write_bytes(b'a = "\xff\xfe"\n')
 record = local()
-expect("Local reads past a Codex config that isn't UTF-8", models(record), ["qwen-custom", "qwen-here"], record)
+expect("Local reads past a Codex config that isn't UTF-8", models(record), ["qwen-custom", "qwen-here", "qwen-net"], record)
 config.write_bytes(saved)
 
 # A provider collector's id is never local, whatever local.json says.
@@ -177,6 +177,28 @@ record = local()
 expect("Local counts the prompts typed, under the model that answered them", {
   "prompts": record["todayPrompts"], "sessions": record["totalSessions"], "models": models(record), "ready": record["ready"],
 }, {"prompts": 2, "sessions": 3, "models": ["qwen-legacy", "qwen-review", "qwen-tools"], "ready": True}, record)
+
+# A rollout records its provider's id, never the URL it reached, so a custom
+# provider's endpoint is remembered from config.toml: its history stays local
+# after the provider leaves the config, as in a real Codex 0.163 run on a
+# provider since removed. A profile's <name>.config.toml names providers too.
+# One the config never named is still nobody's, and a config that moves an id
+# to a hosted URL wins over what was remembered.
+use_home()
+codex_config = Path(os.environ["CODEX_HOME"]) / "config.toml"
+codex_config.parent.mkdir(parents=True, exist_ok=True)
+codex_config.write_text('model_provider = "mocklocal"\n\n[model_providers.mocklocal]\nname = "mock"\nbase_url = "http://127.0.0.1:18441/v1"\n'
+                        '\n[model_providers.boxed]\nbase_url = "http://192.168.1.20:8000/v1"\n')
+turn("mocklocal", "mocklocal", "gpt-5.1-codex")
+turn("boxed", "boxed", "qwen-boxed")
+turn("unseen", "unseen", "qwen-unseen")
+(codex_config.parent / "work.config.toml").write_text('[model_providers.profiled]\nbase_url = "http://gpu-box:8080/v1"\n')
+turn("profiled", "profiled", "qwen-profiled")
+before = local()
+codex_config.write_text('model = "gpt-5.1-codex"\n\n[model_providers.boxed]\nbase_url = "https://api.example.com/v1"\n')
+after = local()
+expect("Local keeps a custom Codex provider's history after it leaves config.toml", [models(before), models(after)],
+       [["gpt-5.1-codex", "qwen-boxed", "qwen-profiled"], ["gpt-5.1-codex", "qwen-profiled"]], after)
 
 # Only a turn with no time at all takes the file's day; a time of 0, false or
 # "" can't be trusted, so that turn counts nowhere, as in the Codex collector.
