@@ -14,10 +14,15 @@ fi
 
 card=mt8901soundwire
 state_file="${OMARCHY_ALSA_STATE:-/var/lib/alsa/asound.state}"
+card_path="${OMARCHY_PROC_ROOT:-/proc}/asound/$card"
 
-if ! amixer -c "$card" info >/dev/null 2>&1; then
+# amixer can't find a card the user has no seat ACL for (an update over SSH),
+# so ask the kernel whether it exists, and fail rather than complete unrepaired.
+if [[ ! -e $card_path ]]; then
   exit 0
 fi
+
+amixer -c "$card" info >/dev/null
 
 live_route() {
   amixer -c "$card" sget "$1" | sed -n "s/^  Item0: '\(.*\)'$/\1/p"

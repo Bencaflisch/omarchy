@@ -8,14 +8,16 @@ migration="$ROOT/migrations/1792634594.sh"
 test_tmp=$(mktemp -d)
 trap 'rm -rf "$test_tmp"' EXIT
 
-mkdir -p "$test_tmp/bin"
+mkdir -p "$test_tmp/bin" "$test_tmp/proc/asound"
 
 # The card's live routes live in one file per control; a missing directory is
-# a missing card.
+# a missing card, and the kernel's /proc/asound link to it dangles.
+ln -s ../../mixer "$test_tmp/proc/asound/mt8901soundwire"
+
 cat >"$test_tmp/bin/amixer" <<'SH'
 #!/bin/bash
 [[ $1 == "-q" ]] && shift
-[[ $1 == "-c" && $2 == "mt8901soundwire" && -d $MIXER ]] || exit 1
+[[ $1 == "-c" && $2 == "mt8901soundwire" && -d $MIXER && ${NO_SEAT:-0} == 0 ]] || exit 1
 case $3 in
   info) ;;
   sget) printf "Simple mixer control '%s',0\n  Item0: '%s'\n" "$4" "$(cat "$MIXER/$4")" ;;
@@ -76,7 +78,7 @@ saved() {
 run_migration() {
   : >"$test_tmp/log"
   N1X=${N1X:-1} MIXER="$test_tmp/mixer" LOG="$test_tmp/log" ALSA_STATE="$test_tmp/asound.state" \
-    OMARCHY_ALSA_STATE="$test_tmp/asound.state" PATH="$test_tmp/bin:$PATH" \
+    OMARCHY_ALSA_STATE="$test_tmp/asound.state" OMARCHY_PROC_ROOT="$test_tmp/proc" PATH="$test_tmp/bin:$PATH" \
     bash -euo pipefail "$migration" >/dev/null
 }
 
@@ -129,6 +131,16 @@ N1X=0 run_migration
 [[ ! -s $test_tmp/log && $(route "PDI2 Demux") == "DP3" ]] ||
   fail "the migration leaves other machines alone" "$(cat "$test_tmp/log")"
 pass "the migration leaves other machines alone"
+
+# Without the seat's ACL (an update over SSH) amixer can't open the card; the
+# run must fail and stay pending rather than complete with the routes stale.
+set_routes "${proart_leftovers[@]}"
+if NO_SEAT=1 run_migration 2>/dev/null; then
+  fail "the migration fails when it can't open a present card"
+fi
+[[ ! -s $test_tmp/log && $(saved "PDI2 Demux") == "DP3" ]] ||
+  fail "the migration changes nothing when it can't open the card" "$(cat "$test_tmp/log")"
+pass "the migration stays pending when it can't open the card"
 
 rm -rf "$test_tmp/mixer"
 run_migration
