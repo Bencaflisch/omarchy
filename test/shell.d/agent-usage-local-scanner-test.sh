@@ -149,6 +149,17 @@ with contextlib.redirect_stderr(io.StringIO()):
 os.environ["XDG_CACHE_HOME"] = cache_home
 expect("Local still prints its record when the cache can't be written", models(record), ["qwen-here", "qwen-net"], record)
 
+# Only a turn with no time at all takes the file's day; a time of 0, false or
+# "" can't be trusted, so that turn counts nowhere, as in the Codex collector.
+use_home()
+untimed = dict(token_count(9000))
+del untimed["timestamp"]
+rollout("falsy", meta("ollama"), {"timestamp": STAMP, "type": "turn_context", "payload": {"model": "qwen-falsy"}},
+        *({**token_count(1000 * n), "timestamp": falsy} for n, falsy in enumerate((0, False, ""), 1)), untimed)
+record = local()
+expect("Local counts a Codex turn with an untrusted time nowhere, and one with none on the file's day",
+       [record["todayTotalTokens"], record["modelUsage"].get("qwen-falsy", {}).get("inputTokens")], [1100, 1000], record)
+
 # ------------------------------------------------------------- pi and opencode
 
 # Runtimes known by name, whatever their case, are local; Ollama's cloud

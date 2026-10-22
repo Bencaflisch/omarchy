@@ -106,8 +106,9 @@ CODEX_NATIVE_PROVIDER = "openai"
 NATIVE_WINDOW_DAYS = 30
 
 # Per-file totals of Codex rollouts survive between runs, so a rescan only
-# reads the files that changed. Bumping it retires every older record.
-FILE_CACHE_SCHEMA = 1
+# reads the files that changed. Bumping it retires every older record; version
+# 2 drops totals cached while an untrusted time still counted on the file's day.
+FILE_CACHE_SCHEMA = 2
 
 
 def model_name(raw):
@@ -344,9 +345,10 @@ def read_codex_rollout(path, stat_result):
           if total_usage == previous_total_usage:
             continue
           previous_total_usage = total_usage
-        # A turn with no time, or an untrusted one, is dated by the file.
+        # A turn with no time is dated by the file; one whose time can't be
+        # trusted counts nowhere, as in the Codex collector.
         timestamp = entry.get("timestamp")
-        day = (local_day(timestamp) if timestamp is not None else None) or local_day(stat_result.st_mtime)
+        day = local_day(stat_result.st_mtime if timestamp is None else timestamp)
         if day is None:
           continue
         totals = record["days"].setdefault(day, {}).setdefault(current_model, [0, 0, 0, 0, 0])
