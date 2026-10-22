@@ -1774,9 +1774,9 @@ def _claude_code_index_fresh(index: dict[str, Any], files: list[Path]) -> bool:
   return True
 
 
-def _claude_code_read_transcripts(files: list[Path], previous: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-  """Each transcript's index entry, reusing `previous`, and the order they
-  were read in."""
+def _claude_code_read_transcripts(files: list[Path], previous: dict[str, Any]) -> tuple[dict[str, Any], list[str], bool]:
+  """Each transcript's index entry, reusing `previous`, the order they were
+  read in, and whether every one could be read."""
   current: dict[str, Any] = {}
   order: list[str] = []
   unreadable_count = 0
@@ -1798,7 +1798,7 @@ def _claude_code_read_transcripts(files: list[Path], previous: dict[str, Any]) -
   if unreadable_count:
     examples = "; ".join(unreadable_examples)
     print(f"Ignoring {unreadable_count} unreadable Claude project files (examples: {examples})", file=sys.stderr)
-  return current, order
+  return current, order, not unreadable_count
 
 
 _DEFAULT_INDEX = object()
@@ -1811,8 +1811,21 @@ def scan_claude_code(
   base_url: str | None = None,
   reread: bool = False,
 ) -> list[UsageRow]:
-  """The Claude Code usage `owner` counts, as rows: each reply once (with no
-  prompts of its own), each typed prompt once (no tokens), and a tokenless
+  """claude_code_usage()'s rows alone."""
+  return claude_code_usage(owner, projects, index_file, base_url, reread)[0]
+
+
+def claude_code_usage(
+  owner: str,
+  projects: Path | None = None,
+  index_file: Any = _DEFAULT_INDEX,
+  base_url: str | None = None,
+  reread: bool = False,
+) -> tuple[list[UsageRow], bool]:
+  """The Claude Code usage `owner` counts, and whether every transcript was
+  read: one that can't be read keeps what was read of it before, and a scan
+  missing the rest is not one to cache. The rows are each reply once (with
+  no prompts of its own), each typed prompt once (no tokens), and a tokenless
   row for every session in use on a day, for Stats.add_row(). A prompt's row
   names the model that answered it ("" for none yet), so a collector that
   keeps some models alone can keep their prompts alone too.
@@ -1844,18 +1857,18 @@ def scan_claude_code(
   # the numbers must not move because the scan got faster.
   files = list(projects.rglob("*.jsonl")) if projects.is_dir() else []
   if not index_file:
-    current, order = _claude_code_read_transcripts(files, {})
+    current, order, complete = _claude_code_read_transcripts(files, {})
   else:
     lock_file = index_file.with_name(index_file.name + ".lock")
 
-    def build(previous: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-      current, order = _claude_code_read_transcripts(files, previous)
+    def build(previous: dict[str, Any]) -> tuple[dict[str, Any], list[str], bool]:
+      current, order, complete = _claude_code_read_transcripts(files, previous)
       if current != previous:
         try:
           write_json(index_file, {"version": CLAUDE_CODE_INDEX_VERSION, "zone": _claude_code_index_zone(), "files": current}, sort_keys=True)
         except Exception as exc:
           warn(f"could not write the Claude scan index {index_file} ({exc})")
-      return current, order
+      return current, order, complete
 
     loaded = _claude_code_index_stamp(index_file)
     previous = {} if reread else _claude_code_load_index(index_file)
@@ -1871,7 +1884,8 @@ def scan_claude_code(
         if not _claude_code_index_fresh(previous, files):
           with exclusive_lock(lock_file):
             built = build(_claude_code_load_index(index_file))
-    current, order = built or (previous, [str(path) for path in files])
+    # An index fresh for every transcript read them all.
+    current, order, complete = built or (previous, [str(path) for path in files], True)
 
   owners: dict[Any, str | None] = {}
 
@@ -1934,7 +1948,7 @@ def scan_claude_code(
       rows.append(UsageRow(day or scan_day, session_key, owner, model or "", 0, 0, 0, 0, prompts=1))
   for day, session_key, model in sorted(active, key=lambda item: (str(item[0]), item[1], item[2])):
     rows.append(UsageRow(day or scan_day, session_key, owner, model, 0, 0, 0, 0, prompts=0))
-  return rows
+  return rows, complete
 
 
 def _claude_code_unrecorded(
@@ -2804,9 +2818,10 @@ def scan_routed(owner: str, reuse: bool = True) -> tuple[list[UsageRow], bool]:
   """Claude Code's, MiniMax Code's and Codex's usage that `owner` bills, and
   whether every session was read. `reuse=False` reads every Codex rollout
   again rather than from its per-file cache."""
-  mcode_rows, complete = scan_mcode(owner)
+  claude_rows, claude_complete = claude_code_usage(owner)
+  mcode_rows, mcode_complete = scan_mcode(owner)
   codex_rows, codex_complete = ([], True) if owner == "local" else scan_codex_routed(owner, reuse)
-  return scan_claude_code(owner) + mcode_rows + codex_rows, complete and codex_complete
+  return claude_rows + mcode_rows + codex_rows, claude_complete and mcode_complete and codex_complete
 
 
 # ------------------------------------------------------------------ limits
