@@ -165,6 +165,40 @@ record = claude()
 expect("Claude counts the prompts a person typed, once each, not the API requests they made",
        [record["todayPrompts"], record["totalPrompts"], record["todayTotalTokens"]], [5, 5, 6321], record)
 
+# A built-in that runs locally asks the model nothing, so it is no prompt:
+# Claude Code 2.1.308 answers its `<command-name>` line with a
+# `<local-command-stdout>` child, a user line (/compact, /model) or a
+# `local_command` system line (/clear). A custom slash command expands into a
+# prompt the model answers, and counts. An output read after its command, in
+# a later scan, still takes the command back.
+sandbox()
+
+
+def command(uuid, name, parent=None):
+  return user(uuid, f"<command-name>/{name}</command-name>\n            <command-message>{name}</command-message>\n            <command-args></command-args>", parentUuid=parent)
+
+
+def stdout(uuid, parent, text=""):
+  return user(uuid, f"<local-command-stdout>{text}</local-command-stdout>", parentUuid=parent)
+
+
+transcript(
+  user("typed-1", "hello", promptSource="typed"), tool_reply("msg_1", 51, "text"),
+  command("compact-1", "compact", "typed-1"), stdout("compact-out", "compact-1", "Compacted (ctrl+o to see full summary)"),
+  {**user("summary-1", "This session is being continued from a previous conversation.", isCompactSummary=True), "parentUuid": "compact-out"},
+  command("clear-1", "clear"),
+  {"type": "system", "subtype": "local_command", "uuid": "clear-out", "parentUuid": "clear-1", "isSidechain": False, "sessionId": "session-1",
+   "timestamp": STAMP, "content": "<local-command-stdout></local-command-stdout>", "isMeta": False, "commandRun": {"command": "clear", "args": ""}},
+  user("review-1", "<command-message>review is running…</command-message>\n<command-name>/review</command-name>"),
+  user("review-meta", "Review the current diff.", isMeta=True, parentUuid="review-1"), tool_reply("msg_2", 52, "text"),
+  command("model-1", "model"),
+)
+record = rescan()
+transcript(stdout("model-out", "model-1", "Set model to Opus 5"), mode="a")
+grown = rescan()
+expect("Claude counts no built-in local command as a prompt, a custom command still",
+       [record["todayPrompts"], grown["todayPrompts"], grown["todayTotalTokens"]], [3, 2, 2103], grown)
+
 # A transcript replaced by a larger one, rewritten in place with more than it
 # had, or rewritten at its end or in its middle with both ends matching, is a
 # new file rather than an append, read from its start.

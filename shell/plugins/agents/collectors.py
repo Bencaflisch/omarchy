@@ -1330,8 +1330,9 @@ def claude_code_owner(model: Any, base_url: str = "") -> str | None:
 # reply was counted as one before. Version 8 keys a reply by its request too,
 # and keeps its bare message id and whether a sidechain wrote it. Version 9
 # reads the advisor iterations a reply carries. Version 10 keeps the model
-# that answered each prompt.
-CLAUDE_CODE_INDEX_VERSION = 10
+# that answered each prompt. Version 11 stops counting a built-in local
+# command (/model, /clear, /compact) as a prompt.
+CLAUDE_CODE_INDEX_VERSION = 11
 
 # How much of each end of what was read the index remembers a hash of, so a
 # file replaced or rewritten with more than it had is not mistaken for an
@@ -1342,6 +1343,9 @@ CLAUDE_CODE_INDEX_HEAD_BYTES = 4096
 # reporting back, a local command's output and its caveat, and the marker an
 # interruption leaves.
 CLAUDE_CODE_MACHINE_PROMPTS = ("<task-notification>", "<local-command-stdout>", "<local-command-stderr>", "<local-command-caveat>", "[Request interrupted")
+# What a local command's output starts with, which says the command it
+# answers was no prompt.
+CLAUDE_CODE_LOCAL_OUTPUT = ("<local-command-stdout>", "<local-command-stderr>")
 # Who sent a prompt, where Claude Code records it (a user line's
 # promptSource, a queued one's origin.kind): the system (a task notification)
 # and another agent are not a person asking.
@@ -1393,18 +1397,40 @@ def claude_code_typed_prompt(line: dict[str, Any]) -> bool:
     return not (isinstance(origin, dict) and origin.get("kind") in CLAUDE_CODE_MACHINE_SOURCES)
   if line.get("type") != "user" or line.get("promptSource") in CLAUDE_CODE_MACHINE_SOURCES:
     return False
+  text = _claude_code_user_text(line)
+  return text is not None and not text.lstrip().startswith(CLAUDE_CODE_MACHINE_PROMPTS)
+
+
+def _claude_code_user_text(line: dict[str, Any]) -> str | None:
+  """The text of a user line, None for a tool's result or no content."""
   message = line.get("message")
   content = message.get("content") if isinstance(message, dict) else None
   if isinstance(content, str):
-    text = content
-  elif isinstance(content, list):
+    return content
+  if isinstance(content, list):
     blocks = [block for block in content if isinstance(block, dict)]
     if not blocks or any(block.get("type") == "tool_result" for block in blocks):
-      return False
-    text = next((str(block.get("text") or "") for block in blocks if block.get("type") == "text"), "")
+      return None
+    return next((str(block.get("text") or "") for block in blocks if block.get("type") == "text"), "")
+  return None
+
+
+def claude_code_local_command(line: dict[str, Any]) -> str | None:
+  """The uuid of the command a transcript line is the local output of. A
+  built-in that runs on its own (/model, /clear, /compact, /exit) answers its
+  `<command-name>` line with a `<local-command-stdout>` or `-stderr` child,
+  a user line or a `local_command` system line, and asks the model nothing;
+  a custom command or skill expands into a prompt instead, and has none."""
+  if line.get("type") == "system":
+    text = line.get("content") if isinstance(line.get("content"), str) else None
+  elif line.get("type") == "user":
+    text = _claude_code_user_text(line)
   else:
-    return False
-  return not text.lstrip().startswith(CLAUDE_CODE_MACHINE_PROMPTS)
+    return None
+  parent = line.get("parentUuid")
+  if text is not None and isinstance(parent, str) and text.lstrip().startswith(CLAUDE_CODE_LOCAL_OUTPUT):
+    return parent
+  return None
 
 
 def _claude_code_line_day(parsed: dict[str, Any], message: dict[str, Any]) -> tuple[bool, str | None]:
@@ -1474,7 +1500,7 @@ def read_claude_code_transcript(path: Path, entry: dict[str, Any] | None) -> dic
 
       # Cheap pre-filter before JSON parsing keeps files with unrelated
       # lines inexpensive.
-      if b'"usage":' not in raw and b'"user"' not in raw and b'"queued_command"' not in raw:
+      if b'"usage":' not in raw and b'"user"' not in raw and b'"queued_command"' not in raw and b"<local-command-std" not in raw:
         continue
 
       try:
@@ -1489,6 +1515,17 @@ def read_claude_code_transcript(path: Path, entry: dict[str, Any] | None) -> dic
 
       # A prompt copied into a resumed or forked transcript keeps its uuid,
       # so the uuid counts it once.
+      # A local command's output takes back the prompt its command line
+      # looked like.
+      command = claude_code_local_command(parsed)
+      if command is not None:
+        held = next((prompt for prompt in prompts if prompt[0] == command), None)
+        if held is not None:
+          prompts.remove(held)
+          if held in unanswered:
+            unanswered.remove(held)
+        continue
+
       if parsed.get("type") in ("user", "attachment"):
         if claude_code_typed_prompt(parsed):
           trusted, day = _claude_code_line_day(parsed, message)
