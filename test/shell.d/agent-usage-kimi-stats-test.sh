@@ -117,6 +117,87 @@ expect("Kimi counts every billed request, subagents' and compactions' too, and o
   "models": sorted(record["modelUsage"]),
 }, {"today": [3, 1, 1880], "two days ago": 10, "models": ["kimi-code/kimi-for-coding", "mock/kimi-k2"]}, record)
 
+# A request counts where it was billed. Each usage.record names its model
+# alias, and config.toml where that alias goes: the Kimi Code plan /login
+# provisions is Kimi's, as is an alias the config doesn't name (KIMI_MODEL_NAME
+# makes one up for a run), a server you run is the local collector's, and an
+# Anthropic-type provider or a gateway nobody's here, a Claude model on a
+# local proxy included. A prompt goes with the request that answered it.
+# Shaped as Kimi Code 2.3.0 wrote them, `kimi -m anth/claude-via-kimi -p`
+# included.
+sandbox()
+(home() / ".kimi-code").mkdir()
+(home() / ".kimi-code" / "config.toml").write_text("""default_model = "kimi-code/kimi-for-coding"
+
+[providers."managed:kimi-code"]
+type = "kimi"
+base_url = "https://api.kimi.com/coding/v1"
+api_key = ""
+
+[models."kimi-code/kimi-for-coding"]
+provider = "managed:kimi-code"
+model = "kimi-for-coding"
+max_context_size = 262144
+
+[providers.mock]
+type = "kimi"
+base_url = "http://127.0.0.1:18472/v1"
+api_key = "sk-test-dummy"
+
+[models."mock/kimi-k2"]
+provider = "mock"
+model = "kimi-k2"
+max_context_size = 131072
+
+[providers.anth]
+type = "anthropic"
+base_url = "http://127.0.0.1:18491"
+api_key = "sk-ant-dummy-kimi"
+
+[models."anth/claude-via-kimi"]
+provider = "anth"
+model = "claude-via-kimi"
+max_context_size = 131072
+
+[providers.claude]
+type = "anthropic"
+api_key = "sk-ant-dummy"
+
+[models."claude/opus"]
+provider = "claude"
+model = "claude-opus-4-1"
+max_context_size = 200000
+
+[providers.gateway]
+type = "openai"
+base_url = "https://llm.acme.example/v1"
+api_key = "sk-acme"
+
+[models."gateway/k2"]
+provider = "gateway"
+model = "kimi-k2"
+max_context_size = 131072
+""")
+wire("session_routes", [
+  prompt("plan", "msg_r1", NOW_MS),
+  usage(NOW_MS + 10, 1000, 10, 0, model="kimi-code/kimi-for-coding"),
+  prompt("local", "msg_r2", NOW_MS + 20),
+  usage(NOW_MS + 30, 2162, 52, 72, model="mock/kimi-k2"),
+  prompt("anthropic", "msg_r3", NOW_MS + 40),
+  usage(NOW_MS + 50, 11234, 60, 80, 40, model="anth/claude-via-kimi"),
+  usage(NOW_MS + 60, 5000, 50, 0, model="claude/opus"),
+  usage(NOW_MS + 70, 4000, 40, 0, model="gateway/k2"),
+  prompt("env", "msg_r4", NOW_MS + 80),
+  usage(NOW_MS + 90, 100, 1, 0, model="env-model"),
+  prompt("unanswered", "msg_r5", NOW_MS + 100),
+])
+record = kimi()
+expect("Kimi counts only the requests Kimi billed, with their prompts", [record["todayTokensByModel"], record["todayPrompts"]],
+       [{"kimi-code/kimi-for-coding": 1010, "env-model": 101}, 3], record)
+local = collect("local", "--force")
+expect("Local counts the Kimi Code requests a server you run answered, and their prompts",
+       [local["todayTokensByModel"], local["todayPrompts"]], [{"mock/kimi-k2": 2286}, 1], local)
+
 # A fork copies its source's wire, then marks it forked; the copies count
 # once, under the source's session, while what the fork did after counts too.
 # A fork with nothing of its own is no session of its own.

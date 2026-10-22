@@ -10,7 +10,8 @@ sessions): the Unified Harness store current Vibe keeps under unified/, and
 the per-session meta.json files older releases wrote, plus pi/omp and opencode
 sessions that ran on the `mistral` provider. Vibe also drives other providers
 (a local llama.cpp server out of the box), so a Vibe session only counts when
-the model it ran on is served by Mistral. The plan comes from the whoami
+the model it ran on is served by Mistral; one on a server you run is the
+local collector's, which reads it through harness_rows(). The plan comes from the whoami
 answer Vibe caches in whoami_cache.json. Mistral publishes no usage limits
 to read, so the record carries no meters. The agents panel only ever reads
 the JSON this prints.
@@ -32,8 +33,10 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.join(os.environ["OMARCHY_PATH"], "shell", "plugins", "agents"))
 from collectors import (  # noqa: E402
   Stats,
+  UsageRow,
   base_record,
   cached_scan,
+  claude_code_owner,
   emit,
   obj,
   opencode_db,
@@ -59,7 +62,8 @@ PROVIDER = "mistral"
 # Vibe's own resolve_default_model_alias does.
 DEFAULT_MODEL_ALIAS = "mistral-medium-3.5"
 
-INDEX_VERSION = 1
+# Version 1 kept only the sessions Mistral served, so it named no owner.
+INDEX_VERSION = 2
 
 # Times read from Vibe's meta.json are untrusted. Anything past these bounds
 # is a corrupt or crafted field, not usage.
@@ -176,32 +180,46 @@ def resolve_model(config):
   return next(iter(by_alias.values()), None)
 
 
-def is_mistral_provider(name, providers):
-  """Whether the named provider is Mistral's own API.
+# Vibe's built-in providers, which a config that lists none still has.
+DEFAULT_API_BASES = {PROVIDER: "https://api.mistral.ai/v1", "llamacpp": "http://127.0.0.1:8080/v1"}
+
+
+def provider_owner(name, providers, model):
+  """The collector that bills `model` on the named provider: this one for
+  Mistral's own API, else whoever runs its api_base, read the way every
+  collector reads Claude Code's (claude_code_owner): local for a server you
+  run, unless the model is a Claude or an Ollama cloud one it only forwards,
+  and None for one nothing here can place.
 
   Vibe marks Mistral's providers with the `mistral` backend; a generic one
   pointed at a mistral.ai host is the same API. A provider the config doesn't
-  describe only counts under Vibe's default `mistral` name.
+  describe is one of Vibe's built-in ones, or no one's.
   """
+  api_base = DEFAULT_API_BASES.get(name, "")
   for provider in providers if isinstance(providers, list) else []:
     if not isinstance(provider, dict) or str(provider.get("name") or "") != name:
       continue
     if str(provider.get("backend") or "").lower() == "mistral":
-      return True
-    host = (urlparse(str(provider.get("api_base") or "")).hostname or "").lower()
-    return host == "mistral.ai" or host.endswith(".mistral.ai")
-  return name == PROVIDER
+      return AGENT_ID
+    api_base = str(provider.get("api_base") or "")
+    break
+  host = (urlparse(api_base).hostname or "").lower()
+  if host == "mistral.ai" or host.endswith(".mistral.ai"):
+    return AGENT_ID
+  return claude_code_owner(model, api_base) if api_base else None
 
 
 def session_model(meta):
-  """The model label a session ran on when Mistral served it, else None."""
+  """The model label a session ran on and the collector that bills it, or
+  None when it names no model."""
   config = obj(meta.get("config"))
   model = resolve_model(config)
   if not isinstance(model, dict):
     return None
-  if not is_mistral_provider(str(model.get("provider") or ""), config.get("providers")):
+  label = model_label(model.get("alias") or model.get("name"))
+  if label is None:
     return None
-  return model_label(model.get("alias") or model.get("name"))
+  return label, provider_owner(str(model.get("provider") or ""), config.get("providers"), str(model.get("name") or ""))
 
 
 def count_prompts(messages_path):
@@ -234,7 +252,7 @@ def file_signature(path):
 
 def parse_meta(meta_path, count_session_prompts):
   """One session's index row: [startSeconds, model, input, output, cacheRead,
-  prompts], or None when it ran on another provider or used nothing.
+  prompts, owner], or None when it names no model or used nothing.
 
   Vibe keeps running totals per session, so the whole session is booked on
   the day it started.
@@ -242,10 +260,11 @@ def parse_meta(meta_path, count_session_prompts):
   meta = json.loads(meta_path.read_text(encoding="utf-8"))
   if not isinstance(meta, dict):
     return None
-  model = session_model(meta)
+  routed = session_model(meta)
   started = epoch_seconds(meta.get("start_time"))
-  if model is None or started is None:
+  if routed is None or started is None:
     return None
+  model, owner = routed
   stats = obj(meta.get("stats"))
   prompt_tokens = token_count(stats.get("session_prompt_tokens"))
   # Mistral reports cached prompt tokens inside prompt_tokens, as OpenAI does.
@@ -257,7 +276,7 @@ def parse_meta(meta_path, count_session_prompts):
     prompts = count_prompts(messages)
   if prompt_tokens + completion <= 0 and prompts <= 0:
     return None
-  return [started, model, prompt_tokens - cached, completion, cached, prompts]
+  return [started, model, prompt_tokens - cached, completion, cached, prompts, owner]
 
 
 # ------------------------------------------------------- Unified Harness
@@ -362,9 +381,10 @@ def apply_projection_op(op, entries, envelope):
 
 
 def unified_model(alias, config):
-  """The model label a Unified Harness session ran on when Mistral served
-  it, else None. The session names only the model's alias, so the model
-  and its provider come from config.toml, over Vibe's built-in default."""
+  """The model label a Unified Harness session ran on and who bills it, as
+  session_model() reads them. The session names only the model's alias, so
+  the model and its provider come from config.toml, over Vibe's built-in
+  default."""
   models = config.get("models")
   if isinstance(models, dict):
     models = list(models.values())
@@ -377,8 +397,8 @@ def unified_model(alias, config):
 
 def parse_unified(session_dir, config):
   """One Unified Harness session's index row: [startSeconds, model, input,
-  output, cacheRead, prompts, session], or None when it ran on another
-  provider or used nothing.
+  output, cacheRead, prompts, session, owner], or None when it names no
+  model or used nothing.
 
   A subagent is a session of its own in the store. It counts toward the
   session that spawned it, and its prompts are that session's instructions
@@ -391,9 +411,10 @@ def parse_unified(session_dir, config):
   # meta.json names the model Vibe resolved for the session; without one, the
   # session's own pin, else the configured model, is the one it ran on.
   alias = obj(meta.get("config")).get("active_model") or metadata.get("active_model") or config.get("active_model")
-  model = unified_model(alias, config)
-  if model is None:
+  routed = unified_model(alias, config)
+  if routed is None:
     return None
+  model, billed = routed
   session = obj(envelope.get("session"))
   started = epoch_seconds(meta.get("start_time")) or epoch_seconds(session.get("createdAt"))
   if started is None:
@@ -415,7 +436,7 @@ def parse_unified(session_dir, config):
   if input_tokens + output_tokens <= 0 and prompts <= 0:
     return None
   owner = session_dir.parent / owner
-  return [started, model, input_tokens - cached, output_tokens, cached, prompts, str(owner)]
+  return [started, model, input_tokens - cached, output_tokens, cached, prompts, str(owner), billed]
 
 
 def unified_signature(session_dir, config_path):
@@ -436,23 +457,35 @@ def load_index(path):
   return {}
 
 
-def scan_vibe_sessions(stats, index_file):
-  """Add Vibe sessions that ran on Mistral, from the Unified Harness store
-  and the session folders older releases wrote. Returns whether every
-  session was read, so a partial scan is never cached.
+def harness_sources():
+  return scan_sources()
+
+
+def harness_rows(owner, index_file=False):
+  """Vibe sessions that `owner` bills, from the Unified Harness store and the
+  session folders older releases wrote, and whether every session was read,
+  so a partial scan is never cached. With no index file named, the one
+  beside this collector's scan cache keeps the parsed sessions.
 
   A session's subagents keep their own meta.json under its agents/ directory
   with their own totals; they count toward the session that spawned them, and
   their prompts are the parent's instructions rather than anything typed.
   """
+  if index_file is False:
+    try:
+      index_file = index_path(scan_sources())
+    except Exception as exc:
+      warn(f"session index unavailable ({exc})")
+      index_file = None
   save_dir, prefix = session_logging()
   previous = load_index(index_file) if index_file else {}
   current = {}
   complete = True
+  rows = []
   try:
     session_dirs = sorted(path for path in save_dir.glob(f"{prefix}_*") if path.is_dir())
   except OSError:
-    return False
+    return rows, False
 
   for session_dir in session_dirs:
     metas = [session_dir / "meta.json"]
@@ -481,12 +514,13 @@ def scan_vibe_sessions(stats, index_file):
       if row is None:
         continue
       try:
-        started, model, input_tokens, output_tokens, cache_read, prompts = row
+        started, model, input_tokens, output_tokens, cache_read, prompts, billed = row
         day = start_day(float(started))
         counts = [int(input_tokens), int(output_tokens), int(cache_read), int(prompts)]
       except (TypeError, ValueError, OverflowError, OSError):
         continue
-      stats.add(day, str(session_dir), str(model), counts[0], counts[1], counts[2], 0, prompts=counts[3])
+      if billed == owner:
+        rows.append(UsageRow(day, str(session_dir), "", str(model), counts[0], counts[1], counts[2], 0, prompts=counts[3]))
 
   config = vibe_config()
   config_path = vibe_home() / "config.toml"
@@ -518,19 +552,20 @@ def scan_vibe_sessions(stats, index_file):
     if row is None:
       continue
     try:
-      started, model, input_tokens, output_tokens, cache_read, prompts, owner = row
+      started, model, input_tokens, output_tokens, cache_read, prompts, session, billed = row
       day = start_day(float(started))
       counts = [int(input_tokens), int(output_tokens), int(cache_read), int(prompts)]
     except (TypeError, ValueError, OverflowError, OSError):
       continue
-    stats.add(day, str(owner), str(model), counts[0], counts[1], counts[2], 0, prompts=counts[3])
+    if billed == owner:
+      rows.append(UsageRow(day, str(session), "", str(model), counts[0], counts[1], counts[2], 0, prompts=counts[3]))
 
   if index_file and current != previous:
     try:
       write_json(index_file, {"version": INDEX_VERSION, "files": current})
     except Exception as exc:
       warn(f"could not write session index ({exc})")
-  return complete
+  return rows, complete
 
 
 def tier_label():
@@ -600,7 +635,9 @@ def index_path(sources):
 
 def run_scans(index_file):
   stats = Stats()
-  complete = scan_vibe_sessions(stats, index_file)
+  rows, complete = harness_rows(AGENT_ID, index_file)
+  for row in rows:
+    stats.add_row(row, row.model)
   complete = add_harness_rows(stats) and complete
   return stats.snapshot(), complete
 

@@ -71,7 +71,8 @@ write_messages(main_session, [
 subagent = main_session / "agents" / "explore_20260101_120100_bbbb"
 write_meta(subagent, NOW, 300, 0, 50)
 write_messages(subagent, [{"role": "user", "content": "Look around"}])
-# A session on the local llama.cpp provider is not Mistral usage.
+# A session on the local llama.cpp provider is not Mistral usage, but the
+# local collector's.
 write_meta(session_root() / "session_20260101_130000_cccc", NOW, 9000, 0, 9000, LOCAL_CONFIG)
 write_messages(session_root() / "session_20260101_130000_cccc", [{"role": "user", "content": "local"}])
 # Running totals are booked on the day the session started.
@@ -90,6 +91,9 @@ expect("Vibe counts Mistral sessions, their subagents, and typed prompts only, b
   "models": {"mistral-medium-3.5": {"inputTokens": 1000, "outputTokens": 260, "cacheReadInputTokens": 400, "cacheCreationInputTokens": 0}},
   "two days ago": 110,
 }, record)
+local = collect("local", "--force")
+expect("Local counts the Vibe session on the llama.cpp server, with its prompt",
+       [local["todayTokensByModel"], local["todayPrompts"], local["todaySessions"]], [{"local": 18000}, 1, 1], local)
 
 # A zoneless start at the edge of the calendar, in a zone off UTC, is no
 # start to book; the scan still completes, and is cached.
@@ -184,7 +188,8 @@ write_unified("ses_child", usage(300, 50), entries=[message("t1", "user", "turn_
 # A fork starts from no usage of its own, and what it copied is not its prompts.
 write_unified("ses_fork", usage(40, 10), entries=[message("c1", "user", "harness"), message("f1", "user", "turn_start")],
               metadata={"root_session_id": "ses_main", "parent_session_id": "ses_main"})
-# A session on the local llama.cpp model config.toml adds is not Mistral usage.
+# A session on the local llama.cpp model config.toml adds is not Mistral
+# usage, but the local collector's.
 (home() / ".vibe").mkdir(parents=True, exist_ok=True)
 (home() / ".vibe" / "config.toml").write_text('[[models]]\nname = "qwen"\nprovider = "llamacpp"\nalias = "local"\n\n[[providers]]\nname = "llamacpp"\napi_base = "http://127.0.0.1:8080/v1"\n')
 write_unified("ses_local", usage(9000, 9000), entries=[message("l1", "user", "turn_start")], alias="local")
@@ -197,6 +202,10 @@ expect("Vibe counts Unified Harness sessions from the store's newest state, fold
   "modelUsage": {"mistral-medium-3.5": {"inputTokens": 3340, "outputTokens": 760, "cacheReadInputTokens": 2000, "cacheCreationInputTokens": 0}},
 }, record)
 check("Vibe caches a Unified Harness scan whose torn last journal record is still being written", bool(scan_cache_files("vibe")))
+with contextlib.redirect_stderr(io.StringIO()):
+  local = collect("local", "--force")
+expect("Local counts the Unified Harness session on the llama.cpp server, with its prompt",
+       [local["todayTokensByModel"], local["todayPrompts"]], [{"local": 18000}, 1], local)
 
 # A store whose CURRENT names a generation that isn't there leaves the scan
 # incomplete, so it isn't cached.

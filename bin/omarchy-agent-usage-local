@@ -6,8 +6,9 @@
 
 Every other collector counts what a subscription or a provider bills. This
 one counts the turns that ran on hardware you own: Codex CLI pointed at
-Ollama, opencode on a local gateway, pi on llama.cpp, whether the endpoint is
-this machine or a box down the hall. It is the exact complement of the
+Ollama, opencode on a local gateway, pi on llama.cpp, Kimi Code, Qwen Code,
+Hermes or Mistral Vibe on a server of your own, whether the endpoint is this
+machine or a box down the hall. It is the exact complement of the
 provider collectors: a provider id another collector counts is never counted
 here, and the Codex collector's own `openai` rollouts never are either.
 
@@ -27,6 +28,8 @@ electricity bill. The agents panel only ever reads the JSON this prints.
 
 import argparse
 import hashlib
+import importlib.machinery
+import importlib.util
 import json
 import os
 import re
@@ -228,6 +231,52 @@ def accept_opencode(provider, model, entry):
   return classifier().accepts(provider, model) and not antigravity_row(provider, model)
 
 
+# --------------------------------------------------- harnesses of their own
+
+# Kimi Code, Qwen Code, Hermes and Mistral Vibe keep their sessions in stores
+# of their own, and record where each request went. Each one's collector
+# reads its store and says who bills each row (harness_rows), so this one
+# takes the rows a server you run answered from the same reader.
+HARNESSES = ("hermes", "kimi", "qwen", "vibe")
+
+
+def harness(name):
+  path = os.path.join(os.environ["OMARCHY_PATH"], "bin", f"omarchy-agent-usage-{name}")
+  loader = importlib.machinery.SourceFileLoader(f"omarchy_agent_usage_{name}", path)
+  module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+  loader.exec_module(module)
+  return module
+
+
+HARNESS_MODULES = {}
+
+
+def harness_modules():
+  if not HARNESS_MODULES:
+    HARNESS_MODULES.update((name, harness(name)) for name in HARNESSES)
+  return HARNESS_MODULES
+
+
+def scan_harnesses(stats):
+  complete = True
+  for name, module in harness_modules().items():
+    try:
+      rows, read = module.harness_rows(AGENT_ID)
+    except Exception as exc:
+      # One harness's reader failing costs only its rows.
+      warn(f"could not read {name} sessions ({type(exc).__name__}: {exc})")
+      complete = False
+      continue
+    complete = complete and read
+    for row in rows:
+      stats.add_row(row, model_name(row.model))
+  return complete
+
+
+def harness_sources():
+  return [source for module in harness_modules().values() for source in module.harness_sources()]
+
+
 # ------------------------------------------------------------------- Codex
 
 
@@ -260,7 +309,7 @@ def scan_codex(stats, use_file_cache):
 def scan_sources():
   # Every path the scan reads, and which providers it counts as local, so a
   # changed local.json or Codex config is a new scan rather than a stale one.
-  return [Path.home(), codex_home(), opencode_db(), *pi_session_roots(), *routed_sources(), json.dumps(classifier().fingerprint())]
+  return [Path.home(), codex_home(), opencode_db(), *pi_session_roots(), *routed_sources(), *harness_sources(), json.dumps(classifier().fingerprint())]
 
 
 def scan_digest():
@@ -278,7 +327,8 @@ def run_local_scans(max_age):
   routed_rows, routed_complete = scan_routed(AGENT_ID)
   for row in pi_rows + db_rows + routed_rows:
     stats.add_row(row, model_name(row.model))
-  return stats.snapshot(), complete and pi_complete and db_complete and routed_complete
+  harnesses_complete = scan_harnesses(stats)
+  return stats.snapshot(), complete and pi_complete and db_complete and routed_complete and harnesses_complete
 
 
 # ------------------------------------------------------------------ record
