@@ -56,7 +56,15 @@ grep -q 'href="mine/#palette=' "$site/index.html" && grep -qF 'Mine &amp; Yours'
   fail "the lobby links each game by its title, opened in the host's theme"
 pass "games host builds a lobby of playable copies and icons, and nothing else from a game's folder"
 
-grep -qx 'tailscale serve --https="$3" "http://127.0.0.1:$1"' <(sed -n 's/.*trap "kill $!" EXIT; //p' "$OMARCHY_TEST_UNIT") &&
+grep -qF 'tailscale serve --https="$3" "http://127.0.0.1:$1" &' "$OMARCHY_TEST_UNIT" && grep -qF 'wait -n' "$OMARCHY_TEST_UNIT" &&
+  grep -qx -- '--property=PartOf=graphical-session.target' "$OMARCHY_TEST_UNIT" &&
   grep -qx '7444' "$OMARCHY_TEST_UNIT" && grep -qx '7443' "$OMARCHY_TEST_UNIT" && grep -qxF "$site" "$OMARCHY_TEST_UNIT" ||
   fail "games host serves the site from 127.0.0.1 through tailscale serve in one unit" "$(cat "$OMARCHY_TEST_UNIT")"
-pass "games host runs its server and tailscale serve together, so stopping one withdraws both"
+pass "games host runs its server and tailscale serve together for the session, so either ending withdraws both"
+
+printf '#!/bin/bash\nexit 7\n' >"$mock_bin/curl"
+printf '#!/bin/bash\necho "To enable HTTPS, visit the admin console"\n' >"$mock_bin/journalctl"
+chmod +x "$mock_bin/curl" "$mock_bin/journalctl"
+! omarchy-games-host >"$test_tmp/out" 2>&1 || fail "games host fails when the games never come up"
+grep -qF "To enable HTTPS" "$test_tmp/out" || fail "a failed start shows what the host said" "$(cat "$test_tmp/out")"
+pass "games host fails, and says why, when the games never come up"

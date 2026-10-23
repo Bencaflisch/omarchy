@@ -6,8 +6,9 @@
 
 # Serves a folder holding only each game's playable copy, its icon and a lobby page, from
 # a server on 127.0.0.1 that tailscale serve exposes to the tailnet alone, never Funnel.
-# Both run in one user unit with tailscale serve in the foreground, which withdraws its
-# address when it exits, so stopping, logging out or rebooting leaves nothing pointing nowhere.
+# Both run in one user unit that ends with the graphical session, and when either exits the
+# other is stopped; a foreground tailscale serve withdraws its address as it goes, so nothing
+# is left pointing at a port some other program could take.
 
 set -euo pipefail
 
@@ -148,13 +149,29 @@ open(os.path.join(site, "index.html"), "w", encoding="utf-8").write(f"""<!doctyp
 ' "$SITE" "${names[@]}"
 
 systemd-run --user --quiet --collect --unit="$UNIT" --description="$address:$port/" \
-  bash -c 'python3 -m http.server "$1" --bind 127.0.0.1 --directory "$2" >/dev/null 2>&1 & trap "kill $!" EXIT; tailscale serve --https="$3" "http://127.0.0.1:$1"' \
+  --property=PartOf=graphical-session.target --property=After=graphical-session.target \
+  bash -c 'python3 -m http.server "$1" --bind 127.0.0.1 --directory "$2" >/dev/null 2>&1 &
+    tailscale serve --https="$3" "http://127.0.0.1:$1" &
+    wait -n
+    kill $(jobs -p) 2>/dev/null
+    wait' \
   bash "$backend" "$SITE" "$port"
 
-for _ in {1..50}; do
-  curl -fsS -o /dev/null "https://$address:$port/" 2>/dev/null && break
+ready=false
+for _ in {1..75}; do
+  if curl -fsS -o /dev/null "https://$address:$port/" 2>/dev/null; then
+    ready=true
+    break
+  fi
   sleep 0.2
 done
+if [[ $ready == "false" ]]; then
+  # Tailscale's first HTTPS certificate can need the tailnet's admin to allow it; it says how in the unit's log.
+  echo "Your games didn't come up at https://$address:$port/. What the host said:" >&2
+  journalctl --user -u "$UNIT" -n 20 --no-pager -o cat >&2 || true
+  systemctl --user stop "$UNIT" 2>/dev/null || true
+  exit 1
+fi
 
 echo "Hosting ${#names[@]} games at https://$address:$port/ for everyone on your tailnet."
 echo "To let a friend outside it play, share this computer with them in the Tailscale admin (Machines > Share)."
