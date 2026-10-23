@@ -66,15 +66,16 @@ export LOCALE_GEN_LOG=$work/locale-gen.log LOCALEDEF_ARCHIVE=$work/locale-archiv
 printf '#sv_SE.UTF-8 UTF-8\n#hi_IN UTF-8\n' >"$OMARCHY_LOCALE_GEN"
 run() { PATH="$work/bin:$PATH" bash "$generator" "$@"; }
 
+# The source lookup is the host's, so a /usr/local override here is a right answer.
 : >"$LOCALE_GEN_LOG"
 run sv || fail "omarchy-locale-generate generates a registry language"
 grep -qx 'sv_SE.UTF-8 UTF-8' "$OMARCHY_LOCALE_GEN" || fail "the language's locale is enabled in locale.gen" "$(cat "$OMARCHY_LOCALE_GEN")"
-[[ $(cat "$LOCALE_GEN_LOG") == "-i sv_SE -c -f UTF-8 -A /usr/share/locale/locale.alias sv_SE.UTF-8" ]] ||
+[[ $(cat "$LOCALE_GEN_LOG") == "-i "?(/usr/local/share/i18n/locales/)sv_SE?(.UTF-8)" -c -f UTF-8 -A /usr/share/locale/locale.alias sv_SE.UTF-8" ]] ||
   fail "localedef adds only the language's locale" "$(cat "$LOCALE_GEN_LOG")"
 : >"$LOCALE_GEN_LOG"
 run hi || fail "omarchy-locale-generate generates a locale locale.gen spells without its codeset"
 grep -qx 'hi_IN UTF-8' "$OMARCHY_LOCALE_GEN" || fail "a codeset-less entry is enabled in place" "$(cat "$OMARCHY_LOCALE_GEN")"
-[[ $(cat "$LOCALE_GEN_LOG") == "-i hi_IN -c -f UTF-8 -A /usr/share/locale/locale.alias hi_IN.UTF-8" ]] ||
+[[ $(cat "$LOCALE_GEN_LOG") == "-i "?(/usr/local/share/i18n/locales/)hi_IN?(.UTF-8)" -c -f UTF-8 -A /usr/share/locale/locale.alias hi_IN.UTF-8" ]] ||
   fail "localedef names a codeset-less entry with its codeset" "$(cat "$LOCALE_GEN_LOG")"
 run fil || fail "omarchy-locale-generate adds a locale locale.gen doesn't list"
 grep -qx 'fil_PH.UTF-8 UTF-8' "$OMARCHY_LOCALE_GEN" || fail "a missing locale is appended to locale.gen" "$(cat "$OMARCHY_LOCALE_GEN")"
@@ -85,9 +86,11 @@ pass "omarchy-locale-generate enables and generates a registry language's locale
 : >"$LOCALEDEF_ARCHIVE"
 LOCALEDEF_STATUS=1 run sv || fail "localedef warnings still generate the locale"
 for status in 1 4 135; do
+  : >"$LOCALE_GEN_LOG"
   if LOCALEDEF_FAILS=1 LOCALEDEF_STATUS=$status run da 2>/dev/null; then
     fail "omarchy-locale-generate fails when localedef adds nothing and exits $status"
   fi
+  [[ $(cat "$LOCALE_GEN_LOG") == *" da_DK.UTF-8" ]] || fail "the failure is localedef's, not an earlier refusal" "$(cat "$LOCALE_GEN_LOG")"
 done
 pass "omarchy-locale-generate fails when the locale is not generated"
 
