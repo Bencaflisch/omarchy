@@ -563,9 +563,13 @@ function substituteGuardReaders(expression) {
   return expression
 }
 
-function guardLine(id, tag, expression) {
-  return "if { " + substituteGuardReaders(expression) + "; } >/dev/null 2>&1; then echo "
-    + id + ":" + tag + ":1; else echo " + id + ":" + tag + ":0; fi\n"
+// Each guard is parsed by its own eval, so one that fails to parse answers
+// false rather than aborting the batch. Isolated, it also runs in a subshell of
+// its own, where an `exit` or a `set -u` failure ends only that guard.
+function guardLine(id, tag, expression, isolated) {
+  var quoted = "'" + substituteGuardReaders(expression).split("'").join("'\\''") + "'"
+  return "if " + (isolated ? "( eval " + quoted + " )" : "{ eval " + quoted + "; }")
+    + " >/dev/null 2>&1; then echo " + id + ":" + tag + ":1; else echo " + id + ":" + tag + ":0; fi\n"
 }
 
 // How many subshells share the guards. Most of what is left of the batch is
@@ -587,33 +591,48 @@ var GUARD_GROUPS = 8
 // the menu never relied on: each names its row, and each is one short write
 // to the pipe, which the kernel never interleaves.
 //
-// A group that dies part way (a guard tripping a login shell's `set -u`, say)
-// has left its remaining rows unanswered, and the menu keeps the last full
-// set only when the batch fails. So each group is waited for by pid, and the
-// batch's status is nonzero if any of them was.
+// A subshell per guard would cost the shipped menu a third of its batch, so a
+// group only reruns its guards each in their own when it ends without reaching
+// its last line (a user guard's `exit`, or tripping a login shell's `set -u`),
+// which would leave its later rows unanswered. The reruns are defined while
+// the groups run, so parsing them costs nothing. A rerun repeats rows the
+// group already answered, and the menu keeps the last line for each row.
 function guardScript(items) {
-  var lines = []
+  var guards = []
   var ids = Object.keys(items || {})
 
   for (var i = 0; i < ids.length; i++) {
     var entry = items[ids[i]]
     if (!entry) continue
-    if (entry.when) lines.push(guardLine(ids[i], "w", entry.when))
-    if (entry.checked) lines.push(guardLine(ids[i], "c", entry.checked))
-    if (entry.disabled) lines.push(guardLine(ids[i], "d", entry.disabled))
+    if (entry.when) guards.push([ids[i], "w", entry.when])
+    if (entry.checked) guards.push([ids[i], "c", entry.checked])
+    if (entry.disabled) guards.push([ids[i], "d", entry.disabled])
   }
-  if (lines.length === 0) return ""
+  if (guards.length === 0) return ""
 
-  var groups = []
-  for (var j = 0; j < lines.length; j++) {
+  var fast = []
+  var isolated = []
+  var lines = ""
+  for (var j = 0; j < guards.length; j++) {
     var group = j % GUARD_GROUPS
-    groups[group] = (groups[group] || "") + lines[j]
+    var guard = guards[j]
+    var line = guardLine(guard[0], guard[1], guard[2], false)
+    fast[group] = (fast[group] || "") + line
+    isolated[group] = (isolated[group] || "") + guardLine(guard[0], guard[1], guard[2], true)
+    lines += line
   }
 
-  var script = guardPrelude(lines.join("")) + "__omarchy_groups=()\n"
-  for (var k = 0; k < groups.length; k++) script += "{\n" + groups[k] + "} &\n__omarchy_groups+=($!)\n"
-  return script + "__omarchy_failed=0\n"
-    + 'for __omarchy_group in "${__omarchy_groups[@]}"; do wait "$__omarchy_group" || __omarchy_failed=1; done\n'
+  var script = guardPrelude(lines) + "__omarchy_groups=()\n"
+  for (var k = 0; k < fast.length; k++) script += "{\n" + fast[k] + "exit 197\n} &\n__omarchy_groups+=($!)\n"
+  for (var m = 0; m < isolated.length; m++) script += "__omarchy_isolated_" + m + "() {\n" + isolated[m] + "}\n"
+  return script + "__omarchy_reruns=()\n"
+    + 'for __omarchy_group in "${!__omarchy_groups[@]}"; do\n'
+    + '  __omarchy_status=0\n'
+    + '  wait "${__omarchy_groups[__omarchy_group]}" || __omarchy_status=$?\n'
+    + '  ((__omarchy_status == 197)) || { "__omarchy_isolated_$__omarchy_group" & __omarchy_reruns+=($!); }\n'
+    + 'done\n'
+    + "__omarchy_failed=0\n"
+    + 'for __omarchy_rerun in "${__omarchy_reruns[@]}"; do wait "$__omarchy_rerun" || __omarchy_failed=1; done\n'
     + "((__omarchy_failed == 0))\n"
 }
 
