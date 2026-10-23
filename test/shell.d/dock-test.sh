@@ -164,6 +164,17 @@ grep -qF 'dock.isFloating(workspaceId) && fullscreenMode < 2' "$ROOT/shell/plugi
   fail "dock shows only on floating workspaces without a fullscreen window"
 pass "dock shows only on floating workspaces without a fullscreen window"
 
+# Dock menus grow to their widest label, so a long translation stays inside
+# the border instead of running past it, and a side dock's surface grows with them.
+for qml in DockWindow AppGrid; do
+  grep -qF 'rowsWidth + contentLeftInset + contentRightInset' "$ROOT/shell/plugins/dock/$qml.qml" &&
+    grep -qF 'implicitWidth: rowLabel.implicitWidth' "$ROOT/shell/plugins/dock/$qml.qml" ||
+    fail "$qml's menu grows to its widest label"
+done
+grep -qF 'Math.max(window.popupRoom, menu.width + window.gap)' "$ROOT/shell/plugins/dock/DockWindow.qml" ||
+  fail "a side dock leaves room for its widest menu"
+pass "dock menus grow to their widest label"
+
 # Minimizing moves a window to the dock's hidden workspace without following
 # it, then focuses the workspace it left, so the next window opens there and
 # not beside the minimized one.
