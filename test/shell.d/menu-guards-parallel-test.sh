@@ -69,12 +69,12 @@ slow_output=$(bash -c "$slow_script")
 grep -qx 'row7:w:1' <<<"$slow_output" || fail "guard batch waits for its slowest group" "row7 missing"
 pass "guard batch exits only after its slowest group has answered"
 
-# A user guard that exits, fails to parse or trips a login shell's `set -u`
+# A user guard that exits, execs, fails to parse or trips a login shell's `set -u`
 # answers for its own row only: every other row is still answered, and the
 # batch still succeeds, so the menu takes the answers. The menu keeps the last
 # line per row, so that is the line read back for each. The other rows quote,
 # since each guard reaches its eval inside single quotes.
-for broken in 'exit 0' 'exit 3' 'exit 197' '[[ -n $OMARCHY_TEST_UNSET ]]' '[[ -n '; do
+for broken in 'exit 0' 'exit 3' 'exit 198' 'exec true' 'exec false' '[[ -n $OMARCHY_TEST_UNSET ]]' '[[ -n '; do
   broken_script=$(BROKEN="$broken" node -e '
     const path = require("path")
     const menu = require(path.join(process.env.ROOT, "shell/plugins/menu/MenuModel.js"))
@@ -87,7 +87,7 @@ for broken in 'exit 0' 'exit 3' 'exit 197' '[[ -n $OMARCHY_TEST_UNSET ]]' '[[ -n
   expected=""
   for i in {0..19}; do
     answer=1
-    ((i == 3)) && [[ $broken != "exit 0" ]] && answer=0
+    ((i == 3)) && [[ $broken != "exit 0" && $broken != "exec true" ]] && answer=0
     expected+="row$i:w:$answer "
   done
   result=""
@@ -95,7 +95,7 @@ for broken in 'exit 0' 'exit 3' 'exit 197' '[[ -n $OMARCHY_TEST_UNSET ]]' '[[ -n
   [[ $result == "$expected" ]] ||
     fail "a broken guard ($broken) answers for its own row only" "got: $result"
 done
-pass "a guard that exits, fails to parse or trips set -u answers for its own row only"
+pass "a guard that exits, execs, fails to parse or trips set -u answers for its own row only"
 
 no_guard_trips=$(node -e '
   const path = require("path")

@@ -579,6 +579,7 @@ function guardLine(id, tag, expression, isolated) {
 // took the shipped menu's batch from ~400ms to ~160ms on a 32-thread desktop
 // (~195ms to ~55ms once the package set was cached); more stopped paying.
 var GUARD_GROUPS = 8
+var GUARD_GROUP_DONE = 198
 
 // One bash script for every `when:`, `checked:` and `disabled:` in the menu,
 // reporting `<id>:<w|c|d>:<0|1>` per line. Speed is the whole point: the menu
@@ -592,12 +593,14 @@ var GUARD_GROUPS = 8
 // to the pipe, which the kernel never interleaves.
 //
 // A subshell per guard would cost the shipped menu a third of its batch, so a
-// group only reruns its guards each in their own when it ends before its last
-// line clears its EXIT trap (a user guard's `exit`, whatever its status, or
-// tripping a login shell's `set -u`), which would leave later rows
-// unanswered. The reruns are defined while the groups run, so parsing them
-// costs nothing. A rerun repeats rows the group already answered, and the menu
-// keeps the last line for each row.
+// group only reruns its guards each in their own when it ends other than by
+// its last line (a user guard's `exit`, an `exec`, or tripping a login shell's
+// `set -u`), which would leave later rows unanswered. Until that line, the
+// EXIT trap turns any `exit` into a 1, so only the last line ends a group
+// with GUARD_GROUP_DONE, and an `exec`, which skips the trap, ends it with its
+// command's status. The reruns are defined while the groups run, so parsing
+// them costs nothing. A rerun repeats rows the group already answered, and the
+// menu keeps the last line for each row.
 function guardScript(items) {
   var guards = []
   var ids = Object.keys(items || {})
@@ -625,11 +628,13 @@ function guardScript(items) {
 
   var script = guardPrelude(lines) + "__omarchy_groups=()\n"
   for (var k = 0; k < fast.length; k++)
-    script += "{\ntrap 'exit 1' EXIT\n" + fast[k] + "trap - EXIT\n} &\n__omarchy_groups+=($!)\n"
+    script += "{\ntrap 'exit 1' EXIT\n" + fast[k] + "trap - EXIT\nexit " + GUARD_GROUP_DONE + "\n} &\n__omarchy_groups+=($!)\n"
   for (var m = 0; m < isolated.length; m++) script += "__omarchy_isolated_" + m + "() {\n" + isolated[m] + "}\n"
   return script + "__omarchy_reruns=()\n"
     + 'for __omarchy_group in "${!__omarchy_groups[@]}"; do\n'
-    + '  wait "${__omarchy_groups[__omarchy_group]}" ||'
+    + '  __omarchy_status=0\n'
+    + '  wait "${__omarchy_groups[__omarchy_group]}" || __omarchy_status=$?\n'
+    + '  ((__omarchy_status == ' + GUARD_GROUP_DONE + ')) ||'
     + ' { "__omarchy_isolated_$__omarchy_group" & __omarchy_reruns+=($!); }\n'
     + 'done\n'
     + "__omarchy_failed=0\n"
