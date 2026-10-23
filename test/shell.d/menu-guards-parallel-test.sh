@@ -74,7 +74,7 @@ pass "guard batch exits only after its slowest group has answered"
 # batch still succeeds, so the menu takes the answers. The menu keeps the last
 # line per row, so that is the line read back for each. The other rows quote,
 # since each guard reaches its eval inside single quotes.
-for broken in 'exit 0' 'exit 3' '[[ -n $OMARCHY_TEST_UNSET ]]' '[[ -n '; do
+for broken in 'exit 0' 'exit 3' 'exit 197' '[[ -n $OMARCHY_TEST_UNSET ]]' '[[ -n '; do
   broken_script=$(BROKEN="$broken" node -e '
     const path = require("path")
     const menu = require(path.join(process.env.ROOT, "shell/plugins/menu/MenuModel.js"))
@@ -102,6 +102,7 @@ no_guard_trips=$(node -e '
   const menu = require(path.join(process.env.ROOT, "shell/plugins/menu/MenuModel.js"))
   process.stdout.write(menu.guardScript({ set: { id: "set", when: "[[ -n $OMARCHY_TEST_UNSET ]]" } }))
 ')
-[[ $(OMARCHY_TEST_UNSET=set bash -u -c "$no_guard_trips") == "set:w:1" ]] ||
-  fail "the batch itself runs under set -u when no guard trips it"
+no_guard_trips_output=$(OMARCHY_TEST_UNSET=set bash -u -c "$no_guard_trips") &&
+  [[ $no_guard_trips_output == "set:w:1" ]] ||
+  fail "the batch itself runs under set -u when no guard trips it" "got: ${no_guard_trips_output:-}"
 pass "the batch itself runs under set -u when no guard trips it"
