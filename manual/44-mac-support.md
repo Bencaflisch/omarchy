@@ -16,12 +16,12 @@ You can still restore it later via Internet Recovery if you'd like.
 
 #### Save the Wi-Fi Firmware First on T2 Macs
 
-On a Mac with a T2 chip (listed under Devices with T2 Chip below), save its Wi-Fi and Bluetooth firmware before you install. The installer can only take that firmware from macOS on the same drive it wipes, so without a saved copy the Mac has no Wi-Fi after installing, and a T2 MacBook has no Ethernet port to fall back on.
+On a Mac with a T2 chip (listed under Devices with T2 Chip below), save its Wi-Fi and Bluetooth firmware before you install. The installer can only take that firmware from macOS, which the install wipes, so without a saved copy the Mac has no Wi-Fi after installing, and a T2 MacBook has no Ethernet port to fall back on.
 
 While still in macOS, run the firmware script from the [t2linux Wi-Fi and Bluetooth guide](https://wiki.t2linux.org/guides/wifi-bluetooth/) and pick the method that creates a tarball (Method 2). It saves `firmware.tar` in your Downloads folder; copy that to a USB drive other than the installer. Once Omarchy is installed, start the Mac with that drive plugged in, open it in the file manager, and run this with the file's path on the drive in place of `/path/to/firmware.tar`, then restart the Mac:
 
 ```bash
-sudo tar -xC /lib/firmware/brcm -f /path/to/firmware.tar
+sudo tar -xC /lib/firmware/brcm -f "/path/to/firmware.tar"
 ```
 
 If macOS is already gone, the same guide can download the firmware from Apple's recovery image instead, which needs another way online while the Wi-Fi is down. That method does not work on the iMac Pro, whose firmware can only be saved from macOS.
