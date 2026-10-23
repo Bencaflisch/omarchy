@@ -1108,7 +1108,10 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: panel.loadedContent
-    contentWidth: panel.fittedContentWidth(Style.space(380))
+    // Wider than usual when the details need it: squeezed, a right-aligned
+    // value paints over its label (a long IP address in a wide font).
+    contentWidth: panel.fittedContentWidth(Math.max(Style.space(380),
+      Math.ceil((panel.loadedContent ? panel.loadedContent.detailsWidth : 0) + panel.horizontalContentInset)))
     contentHeight: panel.fittedContentHeight(panel.loadedContentHeight)
 
     // Catches all unhandled keys for keyboard navigation. AfterItem priority
@@ -1117,6 +1120,7 @@ Panel {
     content: PanelKeyCatcher {
       id: keyCatcher
       property alias heroMeta: heroMeta
+      readonly property real detailsWidth: detailsGrid.implicitWidth
       implicitHeight: column.implicitHeight
       anchors.fill: parent
       // Freeze the cursor model while the inline password prompt is open;
@@ -1387,6 +1391,7 @@ Panel {
         spacing: Style.spacing.labelGap
 
         GridLayout {
+          id: detailsGrid
           width: parent.width
           columns: 4
           columnSpacing: Style.space(20)
