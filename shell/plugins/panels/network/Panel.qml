@@ -31,6 +31,9 @@ Panel {
 
   // Live connection details from `ip` / /sys / iw.
   property var info: ({})  // { iface, type, ip, prefix, gateway, speed, duplex, ssid, signal, freq, bitrate, rx_bytes, tx_bytes, router_ping_ms, internet_ping_ms }
+  // The widest the details have been since the panel opened: held, so a rate
+  // gaining a digit doesn't resize the card under the pointer.
+  property real detailsWidth: 0
 
   // Throughput tracking. Rates are computed as deltas between successive
   // `omarchy-network-status --verbose` samples (~1.5s apart via detailsPoll).
@@ -322,6 +325,7 @@ Panel {
   // what makes the SUPER+CTRL+W keybind land here with navigation ready.
   onOpenedChanged: {
     if (opened) {
+      detailsWidth = panel.loadedContent ? panel.loadedContent.detailsGrid.implicitWidth : 0
       refresh(true)
       selectedIndex = wifiNetworks.length > 0 ? 0 : -1
       wifiActionFocused = false
@@ -1110,8 +1114,7 @@ Panel {
     focusTarget: panel.loadedContent
     // Wider than usual when the details need it: squeezed, a right-aligned
     // value paints over its label (a long IP address in a wide font).
-    contentWidth: panel.fittedContentWidth(Math.max(Style.space(380),
-      Math.ceil((panel.loadedContent ? panel.loadedContent.detailsWidth : 0) + panel.horizontalContentInset)))
+    contentWidth: panel.fittedContentWidth(Math.max(Style.space(380), Math.ceil(root.detailsWidth + panel.horizontalContentInset)))
     contentHeight: panel.fittedContentHeight(panel.loadedContentHeight)
 
     // Catches all unhandled keys for keyboard navigation. AfterItem priority
@@ -1120,7 +1123,7 @@ Panel {
     content: PanelKeyCatcher {
       id: keyCatcher
       property alias heroMeta: heroMeta
-      readonly property real detailsWidth: detailsGrid.implicitWidth
+      property alias detailsGrid: detailsGrid
       implicitHeight: column.implicitHeight
       anchors.fill: parent
       // Freeze the cursor model while the inline password prompt is open;
@@ -1396,6 +1399,7 @@ Panel {
           columns: 4
           columnSpacing: Style.space(20)
           rowSpacing: Style.spacing.labelGap
+          onImplicitWidthChanged: root.detailsWidth = Math.max(root.detailsWidth, implicitWidth)
 
           // Always mounted: these two used to appear a beat after the panel
           // opened, once the first probe returned, shoving everything below
