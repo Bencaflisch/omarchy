@@ -7,6 +7,7 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 export OMARCHY_PATH="$ROOT"
+export OMARCHY_NVIDIA_MODESET_NODE="$scratch/nvidia-modeset"
 source_rule="$ROOT/default/udev/nvidia-modeset.rules"
 installed_rule=/etc/udev/rules.d/61-nvidia-modeset.rules
 migration="$ROOT/migrations/1792737693.sh"
@@ -55,8 +56,15 @@ for gpu in nvidia n1x no-driver none; do
     source "$migration" >/dev/null
     [[ $(stat -c %Y "$scratch$installed_rule") == "0" ]] || fail "retry leaves an identical rule in place"
     assert_replayed "retry replays the bind for an already installed rule"
+
+    # Once the node exists, another user's run changes nothing.
+    rm "$scratch/udev"
+    touch "$OMARCHY_NVIDIA_MODESET_NODE"
+    source "$migration" >/dev/null
+    [[ ! -e $scratch/udev ]] || fail "migration replays the bind when the node already exists" "$(cat "$scratch/udev")"
+    rm "$OMARCHY_NVIDIA_MODESET_NODE"
   else
     [[ ! -e $scratch/etc && ! -e $scratch/udev ]] || fail "migration leaves $gpu machines untouched"
   fi
 done
-pass "migration installs the rule only on NVIDIA machines with the driver, and a retry still applies it"
+pass "migration installs the rule only on NVIDIA machines with the driver, replays the bind until the node exists"
