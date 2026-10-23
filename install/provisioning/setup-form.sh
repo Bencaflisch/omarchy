@@ -168,7 +168,7 @@ omarchy_prompt_password() {
     ((status == 0)) || return $status
 
     if (($(printf '%s' "$password" | wc -c) > OMARCHY_PASSWORD_MAX_BYTES)); then
-      notice "Your password can't be longer than $OMARCHY_PASSWORD_MAX_BYTES characters!" 2
+      notice "Your password can't be longer than $OMARCHY_PASSWORD_MAX_BYTES bytes! Accented and non-Latin letters take more than one." 3
     elif [[ -n "$password" && "$password" == "$password_confirmation" ]]; then
       return 0
     elif [[ -z "$password" ]]; then
