@@ -96,12 +96,15 @@ for page in "$HOME"/Games/*/index.html "$OMARCHY_PATH"/games/*/index.html; do
   find_game "$name" 2>/dev/null || continue
   mkdir -p "$SITE/$name"
   build_offline_game "$GAME_PAGE" "$SITE/$name/index.html" || cp "$GAME_PAGE" "$SITE/$name/index.html"
-  for icon in icon.svg icon.png; do
-    if [[ -f $(dirname "$GAME_PAGE")/$icon && ! -L $(dirname "$GAME_PAGE")/$icon ]]; then
-      cp "$(dirname "$GAME_PAGE")/$icon" "$SITE/$name/$icon"
-      break
-    fi
-  done
+  # Its icon.svg or icon.png, or else a square cut from check's screenshot, as omarchy-games-install does.
+  folder=$(dirname "$GAME_PAGE")
+  if [[ -f $folder/icon.svg && ! -L $folder/icon.svg ]]; then
+    cp "$folder/icon.svg" "$SITE/$name/icon.svg"
+  elif [[ -f $folder/icon.png && ! -L $folder/icon.png ]]; then
+    cp "$folder/icon.png" "$SITE/$name/icon.png"
+  elif [[ -f $folder/check-play.png && ! -L $folder/check-play.png ]]; then
+    magick "$folder/check-play.png" -gravity center -extent "%[fx:min(w,h)]x%[fx:min(w,h)]" -resize 256x256 "$SITE/$name/icon.png" 2>/dev/null || true
+  fi
   names+=("$name")
 done
 
