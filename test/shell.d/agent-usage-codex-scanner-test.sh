@@ -1278,14 +1278,16 @@ cat >"$compressed_session" <<EOF
 {"timestamp":"$incremental_timestamp","type":"turn_context","payload":{"model":"gpt-compressed"}}
 {"timestamp":"$incremental_timestamp","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":7,"output_tokens":2}}}}
 EOF
-zstd -q --rm "$compressed_session"
+zstd -q --rm "$compressed_session" && [[ ! -e $compressed_session ]] ||
+  fail "Codex compressed-session fixture is not compressed only"
 expire_scan_cache
 result=$(run_incremental)
 [[ $(jq -c '.modelUsage["gpt-compressed"] | [.inputTokens, .outputTokens]' <<<"$result") == "[7,2]" ]] ||
   fail "Codex collector misses compressed session files" "$result"
 pass "Codex collector reads compressed session files"
 
-zstd -q -d -k "$compressed_session.zst"
+zstd -q -d -k "$compressed_session.zst" && [[ -f $compressed_session && -f $compressed_session.zst ]] ||
+  fail "Codex mid-swap fixture is not in both forms"
 expire_scan_cache
 result=$(run_incremental)
 [[ $(jq -c '.modelUsage["gpt-compressed"] | [.inputTokens, .outputTokens]' <<<"$result") == "[7,2]" ]] ||
