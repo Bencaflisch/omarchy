@@ -36,16 +36,6 @@ launch_command_is_safe() {
           (( i++ ))
         fi
         ;;
-      "\\")
-        if [[ $quote != single ]]; then
-          if (( i + 1 < ${#s} )) && [[ ${s:i+1:1} == $'\n' ]]; then
-            word_start=1
-          else
-            word_start=0
-          fi
-          (( i++ ))
-        fi
-        ;;
       '$')
         if [[ $quote != single ]]; then
           (( i + 1 < ${#s} )) || return 1
