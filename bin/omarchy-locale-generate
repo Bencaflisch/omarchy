@@ -10,9 +10,11 @@ set -euo pipefail
 # which names each registry code as the whole argument. Under sudo's
 # secure_path a dev link prepends a user-writable checkout bin/ to PATH, and
 # every helper this calls by bare name (grep, sed, localedef) is a system
-# tool, so pin PATH to trusted system directories while holding root.
+# tool, so pin PATH to trusted system directories while holding root. sudo
+# keeps the caller's directory, where localedef looks for a source first.
 if (( EUID == 0 )); then
   export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin
+  cd /
 fi
 
 # Root reads only the packaged registry and the real locale.gen; the
