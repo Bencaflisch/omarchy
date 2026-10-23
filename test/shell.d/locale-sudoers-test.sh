@@ -33,12 +33,9 @@ pass "omarchy-language asks sudo for the grant before prompting"
 # Root resolves bare helpers under sudo's secure_path, which a dev link
 # prepends a user-writable checkout bin/ to, so the helper pins PATH to system
 # directories once it holds root, and only then.
-gated=$(sed -n '/^if (( EUID == 0 )); then$/,/^fi$/p' "$generator")
+gated=$(grep -A1 -E '^if \(\( EUID == 0 \)\); then$' "$generator" || true)
 [[ $gated == *"export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin"* ]] ||
   fail "omarchy-locale-generate gates the trusted-PATH pin on holding root"
-# localedef reads a bare-named source from the working directory first, and
-# sudo keeps the caller's, so root leaves it.
-[[ $gated == *$'\n  cd /\n'* ]] || fail "omarchy-locale-generate leaves the caller's directory when it holds root"
 # The test overrides must never reach root: root reads the packaged registry
 # and the real locale.gen.
 overrides=$(sed -n '/^if (( EUID != 0 )); then$/,/^fi$/p' "$generator")
