@@ -109,12 +109,12 @@ assert_line 4 "" "monitor state reports no mirror while clamshelled"
 pass "monitor state separates a disabled internal monitor from a missing one"
 
 displays_are() {
-  jq -e --argjson expected "$1" 'map({name, enabled, focused}) == $expected' <<<"${state_lines[7]-}" >/dev/null ||
+  jq -e --argjson expected "$1" 'map({name, enabled, focused, width, height}) == $expected' <<<"${state_lines[7]-}" >/dev/null ||
     fail "monitor state lists every display for the panel" "actual: ${state_lines[7]-<missing>}"
 }
 
 monitor_state "$extended"
-displays_are '[{"name":"eDP-1","enabled":true,"focused":false},{"name":"DP-1","enabled":true,"focused":true}]'
+displays_are '[{"name":"eDP-1","enabled":true,"focused":false,"width":1920,"height":1080},{"name":"DP-1","enabled":true,"focused":true,"width":2560,"height":1440}]'
 monitor_state "$clamshell"
-displays_are '[{"name":"eDP-1","enabled":false,"focused":false},{"name":"DP-1","enabled":true,"focused":true}]'
-pass "monitor state lists every display with its enabled and focused state"
+displays_are '[{"name":"eDP-1","enabled":false,"focused":false,"width":0,"height":0},{"name":"DP-1","enabled":true,"focused":true,"width":2560,"height":1440}]'
+pass "monitor state lists every display with its enabled and focused state and size"
