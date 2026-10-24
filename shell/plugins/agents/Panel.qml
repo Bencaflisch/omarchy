@@ -247,7 +247,8 @@ Panel {
 
   // Subscriptions sign in through their own CLI; the rest take an API key
   // pasted here, saved where their collector reads it. keyUrl is where the
-  // provider hands one out.
+  // provider hands one out. Antigravity has no login command to run again
+  // once it's signed in.
   readonly property var addProviders: [
     { providerId: "claude", providerName: "Claude Code", kind: "signin" },
     { providerId: "codex", providerName: "Codex", kind: "signin" },
@@ -256,7 +257,7 @@ Panel {
     { providerId: "copilot", providerName: "Copilot", kind: "signin" },
     { providerId: "kimi", providerName: "Kimi", kind: "signin" },
     { providerId: "muse", providerName: "Muse Code", kind: "signin" },
-    { providerId: "agy", providerName: "Antigravity", kind: "signin" },
+    { providerId: "agy", providerName: "Antigravity", kind: "signin", signsInAgain: false },
     { providerId: "devin", providerName: "Devin", kind: "signin" },
     { providerId: "zai", providerName: "Z.ai", kind: "key", keyUrl: "https://z.ai/manage-apikey/apikey-list" },
     { providerId: "minimax", providerName: "MiniMax", kind: "key", keyUrl: "https://platform.minimax.io/user-center/basic-information/interface-key" },
@@ -302,9 +303,15 @@ Panel {
     if (!checkProcess.running) checkProcess.running = true
   }
 
+  function choosable(id) {
+    var state = addChecks[id] || ""
+    var entry = addProviderEntry(id)
+    return state !== "" && !(state === "signed" && entry && entry.signsInAgain === false)
+  }
+
   function chooseAddProvider(id) {
     var state = addChecks[id] || ""
-    if (state === "") return
+    if (!choosable(id)) return
     addProvider = id
     if (state === "additional") addStage = "name"
     else if (state === "key" || state === "keyed") addStage = "key"
@@ -1277,14 +1284,14 @@ Panel {
               readonly property int index: modelData
               readonly property var provider: root.addProviders[index]
               readonly property string state: root.addChecks[provider.providerId] || ""
-              readonly property bool available: state !== ""
+              readonly property bool available: root.choosable(provider.providerId)
               // Signed in or holding a saved key already: picking it again
               // signs in again or replaces the key.
               readonly property bool done: state === "signed" || state === "keyed"
               readonly property bool hasCursor: root.hasKey("choice", index)
               width: (choiceGrid.width - choiceGrid.columnSpacing * (root.addColumns - 1)) / root.addColumns
               implicitHeight: choiceBody.implicitHeight + Style.space(12)
-              opacity: available ? 1.0 : 0.5
+              opacity: available || done ? 1.0 : 0.5
               onHasCursorChanged: if (hasCursor) root.revealItem(choice)
 
               Column {
