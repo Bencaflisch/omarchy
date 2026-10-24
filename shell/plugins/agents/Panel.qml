@@ -1257,7 +1257,7 @@ Panel {
       Column {
         id: group
         required property var modelData
-        width: add.width
+        width: parent ? parent.width : 0
         spacing: Style.space(10)
 
         Text {
