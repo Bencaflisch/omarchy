@@ -26,9 +26,12 @@ import urllib.request
 from urllib.parse import parse_qs, urlsplit
 
 root = pathlib.Path(os.environ['ROOT'])
+connections = int(os.environ.get("OMARCHY_SPEEDTEST_CONNECTIONS", "8"))
 helper = os.environ.get('SPEEDTEST_HELPER_UNDER_TEST', str(root / 'bin/omarchy-network-speedtest'))
 lock = threading.Lock()
 records = []
+measured_start = None
+measured_end = None
 request_sizes = []
 noise_bytes = 0
 bad_ack = False
@@ -47,7 +50,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     except (BrokenPipeError, ConnectionResetError):
       pass
   def do_GET(self):
-    global noise_bytes
+    global noise_bytes, measured_start, measured_end
     path = urlsplit(self.path)
     time.sleep(fixed_latency)
     if path.path == '/latency':
@@ -56,9 +59,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
       return
     noise = path.path == '/noise'
     size = 8388608 if noise else int(parse_qs(path.query)['bytes'][0])
-    if not noise:
+    measured = self.headers.get('X-Speedtest-Phase') == 'measure'
+    if not noise and measured:
       with lock:
         request_sizes.append(size)
+        measured_start = time.monotonic() if measured_start is None else measured_start
     self.send_response(200)
     self.send_header('Content-Length', str(size))
     self.end_headers()
@@ -73,14 +78,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
         with lock:
           if noise:
             noise_bytes += len(chunk)
-          else:
+          elif measured:
             records.append(('down', len(chunk)))
+            measured_end = time.monotonic()
         time.sleep(0.006 if noise else download_delay)
       if broken_down and not noise:
         self.close_connection = True
     except (BrokenPipeError, ConnectionResetError):
       self.close_connection = True
   def do_POST(self):
+    global measured_start, measured_end
+    measured = self.headers.get("X-Speedtest-Phase") == "measure"
+    if measured:
+      with lock:
+        measured_start = time.monotonic() if measured_start is None else measured_start
     time.sleep(fixed_latency)
     size = int(self.headers['Content-Length'])
     received = 0
@@ -91,9 +102,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return
       received += len(chunk)
       time.sleep(0.015)
-    body = json.dumps({'bytes': received - 1 if bad_ack else received}).encode()
-    with lock:
-      records.append(('up', received))
+    body = json.dumps({'acceptedBytes' if self.path == '/upload' else 'bytes': received - 1 if bad_ack else received}).encode()
+    if measured:
+      with lock:
+        records.append(('up', received))
+        measured_end = time.monotonic()
     try:
       self.send_response(200)
       self.send_header('Content-Length', str(len(body)))
@@ -135,6 +148,7 @@ try:
     with lock:
       records.clear()
       noise_bytes = 0
+      measured_start = measured_end = None
     stop = threading.Event()
     background = threading.Thread(target=noise, args=(stop,), daemon=True)
     background.start()
@@ -144,7 +158,8 @@ try:
     stop.set()
     background.join(timeout=3)
     with lock:
-      transferred = sum(size for kind, size in records if kind == direction) - 4 * 65536
+      transferred = sum(size for kind, size in records if kind == direction)
+      elapsed = measured_end - measured_start
       background_bytes = noise_bytes
     expected = transferred * 8 / elapsed / 1_000_000
     assert expected > 0 and 0.8 * expected <= measured <= 1.2 * expected, (measured, expected)
