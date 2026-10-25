@@ -15,6 +15,7 @@ sed -e "s|/sys/power/|$rtmp/sys/|g" \
   -e "s|/etc/fstab|$rtmp/fstab|g" \
   -e "s|/swap/swapfile|$rtmp/swapfile|g" \
   -e "s|/usr/lib/systemd/system-sleep|$rtmp/sleep|g" \
+  -e "s|/var/lib/omarchy|$rtmp/var-lib|g" \
   "$ROOT/bin/omarchy-hibernation-setup" >"$rtmp/setup"
 
 for command in omarchy-hw-aarch64-apple omarchy-sleep-disabled omarchy-cmd-missing gum; do
@@ -42,11 +43,15 @@ exec "$@"
 SH
 
 # Records the drop-in each build reads. limine-mkinitcpio 1.40 reports a kernel
-# whose image failed to build and still exits 0.
+# whose image failed to build and still exits 0; "interrupt" kills setup in the
+# middle of the build, as closing the update terminal does.
 cat >"$rtmp/bin/limine-mkinitcpio" <<'SH'
 #!/bin/bash
+case ${REBUILD_RESULT:-ok} in
+  skip) echo "==> ERROR: mkinitcpio failed for kernel 7.2.8-9-omarchy, skipping." >&2 ;;
+  interrupt) kill -TERM "$PPID"; exit 0 ;;
+esac
 cat "$DROP_IN" >>"$REBUILD_LOG"
-[[ ${REBUILD_RESULT:-ok} == skip ]] && echo "==> ERROR: mkinitcpio failed for kernel 7.2.8-9-omarchy, skipping." >&2
 exit 0
 SH
 chmod +x "$rtmp/bin/"*
@@ -57,7 +62,7 @@ drop_in=$rtmp/limine-entry-tool.d/resume.conf
 
 # Fresh state; given a drop-in line, a machine hibernation was set up on before.
 machine() {
-  rm -rf "$rtmp/limine-entry-tool.d" "$rtmp/mkinitcpio.conf.d"
+  rm -rf "$rtmp/limine-entry-tool.d" "$rtmp/mkinitcpio.conf.d" "$rtmp/var-lib"
   : >"$rtmp/sys/image_size"
   : >"$rtmp/swapfile"
   : >"$rtmp/fstab"
@@ -101,14 +106,21 @@ for line in 'KERNEL_CMDLINE[default]+=" resume=/dev/nvme1n1p2 resume_offset=4242
 done
 pass "a rerun renames a kernel-name resume device once"
 
-# If a kernel's image is not rebuilt, the old line goes back for the next run.
-machine 'KERNEL_CMDLINE[default]+=" resume=/dev/sda2 resume_offset=4242"'
-if SWAP_SOURCE="/dev/sda2[/@]" REBUILD_RESULT=skip setup; then
-  fail "setup reports a boot image it did not rebuild"
-fi
-[[ $(<"$drop_in") == 'KERNEL_CMDLINE[default]+=" resume=/dev/sda2 resume_offset=4242"' ]] ||
-  fail "setup restores the drop-in when the rebuild fails" "$(<"$drop_in")"
-pass "setup restores the drop-in when the boot image is not rebuilt"
+# If a kernel's image is not rebuilt, or the rebuild is interrupted, the drop-in
+# is already renamed; the next run sees the pending rebuild and does it, once.
+for result in skip interrupt; do
+  machine 'KERNEL_CMDLINE[default]+=" resume=/dev/sda2 resume_offset=4242"'
+  # A subshell, so the shell reporting the killed setup does not print to the log.
+  if (SWAP_SOURCE="/dev/sda2[/@]" REBUILD_RESULT=$result setup) 2>/dev/null; then
+    fail "setup reports a boot image it did not rebuild ($result)"
+  fi
+  : >"$rtmp/rebuilds"
+  SWAP_SOURCE="/dev/sda2[/@]" setup || fail "a rerun after a failed rebuild succeeds ($result)" "$(<"$rtmp/out")"
+  SWAP_SOURCE="/dev/sda2[/@]" setup || fail "a third run succeeds ($result)" "$(<"$rtmp/out")"
+  [[ $(<"$rtmp/rebuilds") == "$uuid_line" ]] ||
+    fail "the next run rebuilds the boot image a $result left behind, and only once" "$(<"$rtmp/rebuilds")"
+done
+pass "a rebuild that failed or was interrupted is retried on the next run"
 
 # Encrypted installs are stable already, and a drop-in edited by hand belongs to
 # whoever edited it.
