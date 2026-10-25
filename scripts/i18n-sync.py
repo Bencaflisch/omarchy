@@ -523,9 +523,9 @@ def urls_of(text):
     # The published manual's autolinks leave trailing ASCII punctuation out
     # of a bare URL but keep 。 or । in it, a ](destination) keeps it all, and
     # a URL in inline code is no link at all (protected_inline holds it).
-    text = INLINE_RE.sub(lambda m: "" if URL_RE.search(m.group(1)) else m.group(), text)
-    bare = URL_RE.findall(DEST_URL_RE.sub("", text))
-    return DEST_URL_RE.findall(text) + [url.rstrip(SENTENCE_END) for url in bare]
+    prose = DEST_URL_RE.sub("", text)
+    prose = INLINE_RE.sub(lambda m: "" if re.search(r"https?://", m.group(1)) else m.group(), prose)
+    return DEST_URL_RE.findall(text) + [url.rstrip(SENTENCE_END) for url in URL_RE.findall(prose)]
 
 
 def validate_manual(source, value):
