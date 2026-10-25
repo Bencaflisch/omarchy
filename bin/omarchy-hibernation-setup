@@ -86,8 +86,57 @@ resume_device() {
   fi
 }
 
+# Earlier setups named an unencrypted root by its kernel name. Rename it in the
+# line setup writes and rebuild the boot image; a drop-in edited by hand is left
+# to whoever edited it. If the rebuild fails, the old line goes back so the
+# drop-in matches the boot image and the next run tries again.
+rename_resume_device() {
+  local previous device offset tmp
+  local -a status
+
+  [[ -f $RESUME_DROP_IN && -f $SWAP_FILE ]] || return 0
+  previous=$(<"$RESUME_DROP_IN")
+  [[ $previous =~ ^KERNEL_CMDLINE\[default\]\+=\"\ ?resume=(/dev/[^[:space:]\"]+)\ resume_offset=([0-9]+)\"$ ]] || return 0
+  [[ ${BASH_REMATCH[1]} != /dev/mapper/* ]] || return 0
+  offset=${BASH_REMATCH[2]}
+  device=$(resume_device)
+  [[ $device == UUID=* ]] || return 0
+
+  tmp=$(mktemp -d) || return 1
+  if ! { printf '%s\n' "$previous" >"$tmp/previous" &&
+    printf 'KERNEL_CMDLINE[default]+=" resume=%s resume_offset=%s"\n' "$device" "$offset" >"$tmp/renamed"; }; then
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  echo "Naming the resume device by $device"
+  if ! install_root_file "$tmp/renamed" "$RESUME_DROP_IN" 0644; then
+    rm -rf "$tmp"
+    return 1
+  fi
+  if $NO_REBUILD; then
+    rm -rf "$tmp"
+    return 0
+  fi
+
+  # limine-mkinitcpio reports a kernel it could not rebuild and still exits 0.
+  sudo limine-mkinitcpio 2>&1 | tee "$tmp/rebuild.log"
+  status=("${PIPESTATUS[@]}")
+  if (( status[0] == 0 && status[1] == 0 )) && ! grep -q 'mkinitcpio failed for kernel' "$tmp/rebuild.log"; then
+    rm -rf "$tmp"
+    return 0
+  fi
+
+  install_root_file "$tmp/previous" "$RESUME_DROP_IN" 0644 || echo "Could not restore $RESUME_DROP_IN" >&2
+  rm -rf "$tmp"
+  echo "Could not rebuild the boot image; resume still names the kernel device" >&2
+  return 1
+}
+
 # Check if hibernation is already configured
 if [[ -f $MKINITCPIO_CONF ]] && grep -q "^HOOKS+=(resume)$" "$MKINITCPIO_CONF"; then
+  rename_resume_device || exit 1
+
   # Fix empty resume_offset if btrfs map-swapfile failed during initial setup
   if [[ -f $RESUME_DROP_IN ]] && grep -q 'resume_offset="$' "$RESUME_DROP_IN" && [[ -f $SWAP_FILE ]]; then
     RESUME_OFFSET=$(sudo btrfs inspect-internal map-swapfile -r "$SWAP_FILE" 2>/dev/null)
