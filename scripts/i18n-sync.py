@@ -36,6 +36,7 @@ MAX_ITEMS = 20
 MAX_CHARS = 8000
 PLACEHOLDERS = re.compile(r"%(\d)")
 URL_RE = re.compile(r"https?://[^\s)]+")
+ASCII_PREFIX_RE = re.compile(r"[\x21-\x7e]*")
 HEADING_RE = re.compile(r"^#{1,6} ", re.M)
 
 
@@ -519,8 +520,10 @@ def protected_inline(text):
 
 def urls_of(text):
     # A bare URL that ends a sentence picks up its full stop, which a
-    # translation may move or write as 。 or ।, so it is not part of the URL.
-    return [url.rstrip(".,;:!?") for url in URL_RE.findall(text)]
+    # translation may move or write as 。 or । right after it. The URLs are
+    # ASCII, so one ends at the first character beyond that, and a trailing
+    # ASCII full stop or comma is the sentence's, not the URL's.
+    return [ASCII_PREFIX_RE.match(url).group().rstrip(".,;:!?") for url in URL_RE.findall(text)]
 
 
 def validate_manual(source, value):
