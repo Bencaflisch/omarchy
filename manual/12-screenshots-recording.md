@@ -16,7 +16,7 @@ Everything you can grab off the screen hangs off the Print Screen key. One key o
 
 Hit `Print Screen` (or `Super + Ctrl + Alt + C`) and Omasnap captures the focused monitor before its overlay appears, so nothing shifts under you while you aim. Drag a freeform region, click a window to capture it, or click open space to capture the whole monitor. Press `S` before drawing to capture a scrolling region. Changed your mind? Hit the same key again to dismiss Omasnap.
 
-After you select an area, Omasnap saves the capture, copies it to the clipboard, and shows a notification with its thumbnail, like a saved screen recording does. Choose Edit to annotate the saved shot, or Open to view it in your image viewer.
+After you select an area, Omasnap saves the capture, copies it to the clipboard, and shows a notification with its thumbnail, like a saved screen recording does. Choose Open to view the saved shot in your image viewer, or Edit to annotate it.
 
 The annotation editor can draw arrows, lines, shapes, highlights, numbered markers, text, and secure redactions; crop or cut out part of the image; OCR its text; and add a backdrop. In the editor, press `Enter` to copy and save the finished PNG, `Ctrl + C` to copy it without saving, or `Ctrl + S` to save it without copying.
 
