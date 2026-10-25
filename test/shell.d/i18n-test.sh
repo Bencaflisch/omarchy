@@ -181,7 +181,9 @@ const englishTexts = {}
 for (const file of englishManual) englishTexts[file] = fs.readFileSync(path.join(manualDir, file), 'utf8')
 const bagOf = (items) => JSON.stringify([...items].sort())
 const fencesOf = (text) => [...text.matchAll(/```[^\n]*\n([\s\S]*?)```/g)].map((m) => m[1])
-const urlsOf = (text) => text.match(/https?:\/\/[^\s)]+/g) || []
+// A bare URL that ends a sentence picks up its full stop, which a translation
+// may move or write as 。 or ।, so trailing punctuation is not part of the URL.
+const urlsOf = (text) => (text.match(/https?:\/\/[^\s)]+/g) || []).map((url) => url.replace(/[.,;:!?]+$/, ''))
 const relDestsOf = (text) => [...text.matchAll(/\]\((?!<?https?:\/\/)([^)\s]+)/g)].map((m) => m[1])
 const protectedInlineOf = (text) => [...text.matchAll(/`([^`\n]+)`/g)].map((m) => m[1])
   .filter((span) => /[/~$]/.test(span) || span.startsWith('omarchy ') || span.startsWith('omarchy-'))
@@ -199,6 +201,7 @@ const fencedChapter = englishManual.find((file) => englishTexts[file].includes('
 assert(manualProblems(englishTexts[fencedChapter], englishTexts[fencedChapter].replace(/```[^\n]*\n/, '$&echo tampered\n')).length > 0, 'the manual integrity check catches a changed code block')
 const linkedChapter = englishManual.find((file) => /\]\(\d\d-[a-z0-9-]+\.md\)/.test(englishTexts[file]))
 assert(manualProblems(englishTexts[linkedChapter], englishTexts[linkedChapter].replace(/\]\(\d\d-[a-z0-9-]+\.md\)/, '](99-missing.md)')).length > 0, 'the manual integrity check catches a broken chapter link')
+assert(manualProblems('See https://example.org/walls.', 'https://example.org/walls を参照してください。').length === 0 && manualProblems('See https://example.org/walls.', 'See https://example.org/other.').length > 0, 'the manual integrity check ignores the full stop after a URL, not the URL')
 for (const code of codes) {
   if (code === 'en') continue
   const dir = path.join(manualDir, code)

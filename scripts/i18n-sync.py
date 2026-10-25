@@ -517,13 +517,19 @@ def protected_inline(text):
     return Counter(kept)
 
 
+def urls_of(text):
+    # A bare URL that ends a sentence picks up its full stop, which a
+    # translation may move or write as 。 or ।, so it is not part of the URL.
+    return [url.rstrip(".,;:!?") for url in URL_RE.findall(text)]
+
+
 def validate_manual(source, value):
     from collections import Counter
     if not isinstance(value, str) or not value.strip():
         raise SyncError("empty translation")
     if len(HEADING_RE.findall(source)) != len(HEADING_RE.findall(value)):
         raise SyncError("heading count changed")
-    if sorted(URL_RE.findall(source)) != sorted(URL_RE.findall(value)):
+    if sorted(urls_of(source)) != sorted(urls_of(value)):
         raise SyncError("URLs changed")
     if Counter(FENCE_RE.findall(source)) != Counter(FENCE_RE.findall(value)):
         raise SyncError("code block contents changed")
