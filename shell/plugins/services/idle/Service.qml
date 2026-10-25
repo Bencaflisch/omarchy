@@ -139,6 +139,8 @@ Item {
   function handleScreensaverWindowOpened(address) {
     setScreensaverWindow(address, true)
     screensaverLaunchGraceTimer.stop()
+    // A terminal that maps after the launcher stopped waiting missed its screensaverReady.
+    if (!root.screensaverInputReady) screensaverInputArmTimer.restart()
   }
 
   function handleScreensaverWindowClosed(address) {
