@@ -182,10 +182,9 @@ for (const file of englishManual) englishTexts[file] = fs.readFileSync(path.join
 const bagOf = (items) => JSON.stringify([...items].sort())
 const fencesOf = (text) => [...text.matchAll(/```[^\n]*\n([\s\S]*?)```/g)].map((m) => m[1])
 // A bare URL that ends a sentence picks up its full stop, which a translation
-// may move or write as 。 or । right after it. The URLs are ASCII, so one ends
-// at the first character beyond that, and a trailing ASCII full stop or comma
-// is the sentence's, not the URL's.
-const urlsOf = (text) => (text.match(/https?:\/\/[^\s)]+/g) || []).map((url) => url.match(/^[\x21-\x7e]*/)[0].replace(/[.,;:!?]+$/, ''))
+// may move or write as 。 or । right after it, so the punctuation that ends a
+// clause is the sentence's, not the URL's.
+const urlsOf = (text) => (text.match(/https?:\/\/[^\s)]+/g) || []).map((url) => url.replace(/[.,;:!?。．、，！？।॥۔؟،]+$/u, ''))
 const relDestsOf = (text) => [...text.matchAll(/\]\((?!<?https?:\/\/)([^)\s]+)/g)].map((m) => m[1])
 const protectedInlineOf = (text) => [...text.matchAll(/`([^`\n]+)`/g)].map((m) => m[1])
   .filter((span) => /[/~$]/.test(span) || span.startsWith('omarchy ') || span.startsWith('omarchy-'))
@@ -204,7 +203,9 @@ assert(manualProblems(englishTexts[fencedChapter], englishTexts[fencedChapter].r
 const linkedChapter = englishManual.find((file) => /\]\(\d\d-[a-z0-9-]+\.md\)/.test(englishTexts[file]))
 assert(manualProblems(englishTexts[linkedChapter], englishTexts[linkedChapter].replace(/\]\(\d\d-[a-z0-9-]+\.md\)/, '](99-missing.md)')).length > 0, 'the manual integrity check catches a broken chapter link')
 assert(['https://example.org/walls を参照してください。', '参照: https://example.org/walls。', 'देखें https://example.org/walls।', 'دیکھیں https://example.org/walls۔']
-  .every((translated) => manualProblems('See https://example.org/walls.', translated).length === 0) && manualProblems('See https://example.org/walls.', 'See https://example.org/other.').length > 0, 'the manual integrity check ignores the full stop after a URL, not the URL')
+  .every((translated) => manualProblems('See https://example.org/walls.', translated).length === 0) &&
+  manualProblems('See https://example.org/walls.', 'See https://example.org/other.').length > 0 &&
+  manualProblems('[LocalSend](https://localsend.org/)', '[LocalSend](https://localsend.org/ダウンロード)').length > 0, 'the manual integrity check ignores the full stop after a URL, not the URL')
 for (const code of codes) {
   if (code === 'en') continue
   const dir = path.join(manualDir, code)
