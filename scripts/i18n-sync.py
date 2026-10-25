@@ -35,8 +35,8 @@ RETRIES = 2
 MAX_ITEMS = 20
 MAX_CHARS = 8000
 PLACEHOLDERS = re.compile(r"%(\d)")
-URL_RE = re.compile(r"https?://[^\s)]+")
-SENTENCE_END = ".,;:!?。．、，！？।॥۔؟،"
+URL_RE = re.compile(r"https?://[^\s)`]+")
+SENTENCE_END = ".,;:!?"
 HEADING_RE = re.compile(r"^#{1,6} ", re.M)
 
 
@@ -519,10 +519,10 @@ def protected_inline(text):
 
 
 def urls_of(text):
-    # A bare URL that ends a sentence picks up its full stop, which a
-    # translation may move or write as 。 or । right after it, so the
-    # punctuation that ends a clause is the sentence's, not the URL's.
-    return [url.rstrip(SENTENCE_END) for url in URL_RE.findall(text)]
+    # The published manual's autolinks leave trailing ASCII punctuation out
+    # of a bare URL but keep 。 or । in it, and a (destination) keeps it all.
+    return [m.group() if text[:m.start()].endswith("(") else m.group().rstrip(SENTENCE_END)
+            for m in URL_RE.finditer(text)]
 
 
 def validate_manual(source, value):
