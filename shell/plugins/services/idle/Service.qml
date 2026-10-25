@@ -38,8 +38,10 @@ Item {
   property bool screensaverStartedThisCycle: false
   property string lastEvent: "starting"
   property string lastEventAt: ""
+  // Keep mapped windows across idle cycles, including manually started screensavers.
   property var screensaverWindows: ({})
   property int screensaverWindowCount: 0
+  property bool screensaverInputReady: false
 
   function secondsFromConfig(value, fallback) {
     return IdleModel.secondsFromConfig(value, fallback)
@@ -80,7 +82,6 @@ Item {
     screensaverLaunchGraceTimer.stop()
     root.idledThisCycle = false
     root.screensaverStartedThisCycle = false
-    resetScreensaverWindows()
     runProcess(lockProcess, "lock", "omarchy-system-lock")
   }
 
@@ -93,7 +94,6 @@ Item {
     logEvent("idle-cycle-start", "screensaver=" + root.screensaverTimeoutSeconds + " lock=" + root.lockTimeoutSeconds)
     root.idledThisCycle = true
     root.screensaverStartedThisCycle = false
-    resetScreensaverWindows()
 
     // Set this cycle's deadlines once: a bound interval would restart a pending
     // timer from the moment shell.json changes, locking early or late.
@@ -124,18 +124,16 @@ Item {
 
     root.idledThisCycle = false
     root.screensaverStartedThisCycle = false
-    resetScreensaverWindows()
-  }
-
-  function resetScreensaverWindows() {
-    root.screensaverWindows = ({})
-    root.screensaverWindowCount = 0
   }
 
   function setScreensaverWindow(address, visible) {
     var next = IdleModel.screensaverWindowsAfter(root.screensaverWindows, address, visible)
     root.screensaverWindows = next.windows
     root.screensaverWindowCount = next.count
+    if (next.count === 0) {
+      screensaverInputArmTimer.stop()
+      root.screensaverInputReady = false
+    }
   }
 
   function handleScreensaverWindowOpened(address) {
@@ -169,6 +167,12 @@ Item {
       var address = String(close[0] || "")
       if (root.screensaverWindows[address]) root.handleScreensaverWindowClosed(address)
     }
+  }
+
+  function dismissScreensaver() {
+    logEvent("screensaver-dismiss", "input")
+    root.screensaverInputReady = false
+    screensaverDismissProcess.running = true
   }
 
   function handleActiveSignal() {
@@ -208,13 +212,16 @@ Item {
       screensaverDelay: root.screensaverDelaySeconds,
       lockDelay: root.lockDelaySeconds,
       screensaverWindows: root.screensaverWindowCount,
+      screensaverInputReady: root.screensaverInputReady,
       timers: {
         screensaver: screensaverTimer.running,
         lock: lockTimer.running,
-        screensaverLaunchGrace: screensaverLaunchGraceTimer.running
+        screensaverLaunchGrace: screensaverLaunchGraceTimer.running,
+        screensaverInputArm: screensaverInputArmTimer.running
       },
       processes: {
         screensaver: screensaverProcess.running,
+        screensaverDismiss: screensaverDismissProcess.running,
         lock: lockProcess.running,
         wake: wakeProcess.running
       },
@@ -273,6 +280,34 @@ Item {
     timeout: Math.max(1, root.firstIdleTimeoutSeconds)
     respectInhibitors: true
     onIsIdleChanged: root.handleIdleChanged()
+  }
+
+  // Ignore trailing input from the gesture that launched the screensaver.
+  Timer {
+    id: screensaverInputArmTimer
+    interval: 500
+    repeat: false
+    onTriggered: {
+      root.screensaverInputReady = root.screensaverWindowCount > 0
+      if (root.screensaverInputReady) root.logEvent("screensaver-input-armed")
+      if (root.screensaverInputReady && !screensaverInput.isIdle) root.dismissScreensaver()
+    }
+  }
+
+  // Hyprland never resumes a zero-timeout notification; use one millisecond.
+  IdleMonitor {
+    id: screensaverInput
+    enabled: root.screensaverWindowCount > 0
+    timeout: 0.001
+    respectInhibitors: false
+    onIsIdleChanged: {
+      if (enabled && !isIdle && root.screensaverInputReady) root.dismissScreensaver()
+    }
+  }
+
+  Process {
+    id: screensaverDismissProcess
+    command: ["pkill", "-f", "[o]rg.omarchy.screensaver"]
   }
 
   Timer {
@@ -361,6 +396,10 @@ Item {
 
     function debug(): string {
       return root.statusJson()
+    }
+
+    function screensaverReady(): void {
+      screensaverInputArmTimer.restart()
     }
 
     function enable(): string {

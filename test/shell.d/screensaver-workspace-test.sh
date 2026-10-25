@@ -40,6 +40,14 @@ cat >"$tmpdir/bin/socat" <<'SH'
 printf '%s\n' "$$" >"$TEST_DIR/socat.pid"
 exec cat "$TEST_DIR/events"
 SH
+cat >"$tmpdir/bin/omarchy-shell" <<'SH'
+#!/bin/bash
+if [[ $* == "-q idle screensaverReady" ]] &&
+  [[ $(wc -l <"$TEST_DIR/spawned") == 2 ]] &&
+  [[ $(tail -n 1 "$TEST_DIR/calls") == 'dispatch hl.dsp.focus({ monitor = "DP-1" })' ]]; then
+  touch "$TEST_DIR/input-ready"
+fi
+SH
 printf '#!/bin/bash\nexit 1\n' >"$tmpdir/bin/pgrep"
 printf '#!/bin/bash\nexit 1\n' >"$tmpdir/bin/omarchy-toggle-enabled"
 printf '#!/bin/bash\necho DP-1\n' >"$tmpdir/bin/omarchy-hyprland-monitor-focused"
@@ -52,6 +60,9 @@ printf '[{"class":"org.omarchy.screensaver","mapped":true}]\n' >"$tmpdir/clients
 
 PATH="$tmpdir/bin:$PATH" TEST_DIR="$tmpdir" XDG_RUNTIME_DIR="$tmpdir" HYPRLAND_INSTANCE_SIGNATURE=test \
   timeout 10 "$ROOT/bin/omarchy-launch-screensaver" force
+
+[[ -f $tmpdir/input-ready ]] || fail "input dismissal arms after both screensavers map and focus returns" "$(<"$tmpdir/calls")"
+pass "input dismissal arms after both screensavers map and focus returns"
 
 mapfile -t spawns < <(grep exec_cmd "$tmpdir/calls")
 (( ${#spawns[@]} == 2 )) || fail "a screensaver opens on each monitor" "$(<"$tmpdir/calls")"

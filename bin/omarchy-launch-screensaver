@@ -74,6 +74,7 @@ while read -r m special; do
 done < <(hyprctl monitors -j | jq -r '.[] | "\(.name) \(.specialWorkspace.name)"')
 
 hypr_focus_monitor "$focused"
+omarchy-shell -q idle screensaverReady
 
 # Emptying a special workspace focuses its monitor, so the last screensaver to close would take focus
 # with it. Hand focus back to the monitor that had it once they are all gone.
