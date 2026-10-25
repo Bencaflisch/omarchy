@@ -11,6 +11,10 @@ if omarchy-pkg-present power-profiles-daemon && omarchy-pkg-missing omarchy-powe
 
   # The running daemon keeps the old binary until restarted, and only the new
   # one offers a performance profile, so reapply the AC/battery choice after.
-  sudo systemctl try-restart power-profiles-daemon.service
-  omarchy-powerprofiles-set autodetect
+  # Leave a daemon the user stopped or masked alone: setting a profile would
+  # start it through D-Bus activation, or fail when it is masked.
+  if systemctl is-active --quiet power-profiles-daemon.service; then
+    sudo systemctl try-restart power-profiles-daemon.service
+    omarchy-powerprofiles-set autodetect
+  fi
 fi
