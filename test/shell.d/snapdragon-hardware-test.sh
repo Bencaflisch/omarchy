@@ -227,8 +227,8 @@ zenbook="$scratch/zenbook"
 (
   MODULES=()
   source "$zenbook/mkinitcpio.conf.d/asus-zenbook-14-ux3480qa.conf"
-  [[ ${MODULES[*]} == "i2c-hid-of qrtr pmic_glink_altmode gpio_sbu_mux" ]] ||
-    fail "the Zenbook 14 UX3480QA unlocks its disk with its keyboard and panel"
+  [[ ${MODULES[*]} == "qrtr pmic_glink_altmode gpio_sbu_mux" ]] ||
+    fail "the Zenbook 14 UX3480QA shows its panel at the disk unlock prompt"
 )
 (
   omarchy-hw-aarch64-qualcomm() { return 0; }
@@ -236,4 +236,4 @@ zenbook="$scratch/zenbook"
   OMARCHY_ZENBOOK_UX3480QA_MKINITCPIO_DIR="$scratch/other/mkinitcpio.conf.d" source "$zenbook_setup" >/dev/null
 )
 [[ ! -e $scratch/other/mkinitcpio.conf.d ]] || fail "other Snapdragon laptops get no Zenbook setup"
-pass "the Zenbook 14 UX3480QA setup names its disk-unlock modules"
+pass "the Zenbook 14 UX3480QA setup names its panel's initramfs modules"
