@@ -170,7 +170,7 @@ All capture options are also accessible under _Trigger > Capture_ in the Omarchy
 | `Super + ,` | Act on latest notification: dismiss it, press its only button, or pick one of its buttons  |
 | `Super + Shift + ,` | Dismiss all notifications |
 | `Super + Ctrl + ,` | Control notifications with the keyboard  |
-| `Super + Alt + ,` | Invoke most recent notification  |
+| `Super + Alt + ,` | Dismiss latest notification  |
 | `Super + Shift + Alt + ,` | Open notification history  |
 | `Super + Ctrl + Alt + ,` | Toggle silencing notifications  |
 
