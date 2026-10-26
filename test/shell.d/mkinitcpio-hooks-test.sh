@@ -250,16 +250,25 @@ for platform in aarch64; do
     "$omarchy_hooks resume" "thunderbolt" "/etc/omarchy/provisioning.key"
 done
 
-# A device-tree laptop's internal keyboard on I2C needs the I2C HID transport
+# A Snapdragon laptop's internal keyboard on I2C needs the I2C HID transport
 # at the disk unlock prompt; mkinitcpio's keyboard hook adds only hid-*. It is
-# early-loaded where the machine has a device tree and the kernel builds it as
-# a module, and nowhere else.
+# early-loaded where the detector calls the machine Snapdragon and the kernel
+# builds it as a module, and nowhere else.
 new_etc
 KERNEL_MODULES="thunderbolt i2c-hid-of" assert_composed "a Snapdragon laptop early-loads i2c-hid-of for its keyboard" aarch64-qualcomm \
   "$omarchy_hooks" "i2c-hid-of thunderbolt" ""
 new_etc
 KERNEL_MODULES="thunderbolt i2c-hid-of" assert_composed "a machine without a device tree leaves i2c-hid-of out" x86 \
   "$omarchy_hooks" "thunderbolt" ""
+new_etc
+KERNEL_MODULES="thunderbolt i2c-hid-of" assert_composed "a device-tree machine that isn't Snapdragon leaves i2c-hid-of out" aarch64 \
+  "$omarchy_hooks" "thunderbolt" ""
+new_etc
+KERNEL_MODULES="thunderbolt i2c-hid-of" assert_composed "without the runtime's detector i2c-hid-of stays out" no-detector \
+  "$omarchy_hooks" "thunderbolt" ""
+new_etc
+KERNEL_MODULES="thunderbolt i2c-hid-of" assert_composed "an Apple Silicon Mac leaves i2c-hid-of out" aarch64-apple \
+  "$apple_hooks" "thunderbolt" ""
 new_etc
 KERNEL_MODULES="thunderbolt" KERNEL_BUILTINS="i2c-hid-of" assert_composed "a kernel with i2c-hid-of built in leaves it out" aarch64-qualcomm \
   "$omarchy_hooks" "thunderbolt" ""
