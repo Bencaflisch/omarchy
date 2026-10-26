@@ -264,6 +264,8 @@
   "reset.stopUsing": "Do not keep using this machine — changes made now will be lost.",
   "reset.typeToContinue": "Type '%1' to continue",
   "reset.willErase": "This will permanently erase:",
+  "screensaver.amigaDownloadFailed": "Could not download the Amiga demos",
+  "screensaver.amigaDownloading": "Downloading the Amiga demos",
   "screensaver.disabled": "Screensaver disabled",
   "screensaver.enabled": "Screensaver enabled",
   "screensaver.terminalOnly": "Screensaver only runs in Alacritty, Foot, Ghostty, or Kitty",

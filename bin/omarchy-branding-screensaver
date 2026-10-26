@@ -1,28 +1,63 @@
 #!/bin/bash
 
-# omarchy:summary=Edit, set, or reset screensaver branding
+# omarchy:summary=Edit, set, or reset screensaver branding, or switch to Amiga demos
 # omarchy:group=branding
 # omarchy:name=screensaver
-# omarchy:args=<image|text|reset>
-# omarchy:examples=omarchy branding screensaver image | omarchy branding screensaver text | omarchy branding screensaver reset
+# omarchy:args=<image|text|reset|amiga>
+# omarchy:examples=omarchy branding screensaver image | omarchy branding screensaver text | omarchy branding screensaver reset | omarchy branding screensaver amiga
 
 set -euo pipefail
+
+amiga_flag=$HOME/.local/state/omarchy/toggles/screensaver-amiga
+amiga_demos=$HOME/.local/share/omarchy/amiga-demos
+
+# Andrés Villagrán's selection of 31 demos, each a disk with a saved state taken once it was playing.
+amiga_pack=https://github.com/avillagran/omarchy-animated-background/releases/download/amiga-pack-v0.2/amiga-pack-native.tar.zst
+amiga_pack_sha=6c38d7ed2c289c4eaa352af5e6a8128a950329a223a64dfc2bc9693ce73b6f08
+
+download_amiga_demos() {
+  local staging
+  staging=$(mktemp -d)
+  trap 'rm -rf "$staging"' RETURN
+
+  omarchy-notification-send -g 󰊗 "$(omarchy-i18n screensaver.amigaDownloading)"
+  curl -fsSL "$amiga_pack" -o "$staging/pack.tar.zst" &&
+    [[ $(sha256sum "$staging/pack.tar.zst" | cut -d' ' -f1) == "$amiga_pack_sha" ]] &&
+    tar --zstd -xf "$staging/pack.tar.zst" -C "$staging" &&
+    mkdir -p "${amiga_demos%/*}" &&
+    mv "$staging/AMIGA" "$amiga_demos"
+}
 
 case "${1:-}" in
 image)
   image=$(omarchy-file-select --title "$(omarchy-i18n branding.pickScreensaverImage)" --extensions "png svg")
   if omarchy-transcode-ascii "$image" ~/.config/omarchy/branding/screensaver.txt; then
+    rm -f "$amiga_flag"
     omarchy-launch-screensaver force >/dev/null 2>&1
   fi
   ;;
 text)
-  omarchy-launch-editor ~/.config/omarchy/branding/screensaver.txt >/dev/null 2>&1 && omarchy-launch-screensaver force >/dev/null 2>&1
+  if omarchy-launch-editor ~/.config/omarchy/branding/screensaver.txt >/dev/null 2>&1; then
+    rm -f "$amiga_flag"
+    omarchy-launch-screensaver force >/dev/null 2>&1
+  fi
   ;;
 reset)
-  cp "$OMARCHY_PATH/logo.txt" ~/.config/omarchy/branding/screensaver.txt && omarchy-launch-screensaver force >/dev/null 2>&1
+  cp "$OMARCHY_PATH/logo.txt" ~/.config/omarchy/branding/screensaver.txt
+  rm -f "$amiga_flag"
+  omarchy-launch-screensaver force >/dev/null 2>&1
+  ;;
+amiga)
+  if [[ ! -d $amiga_demos ]] && ! download_amiga_demos; then
+    omarchy-notification-send -g 󰊗 -u critical "$(omarchy-i18n screensaver.amigaDownloadFailed)"
+    exit 1
+  fi
+  mkdir -p "${amiga_flag%/*}"
+  touch "$amiga_flag"
+  omarchy-launch-screensaver force >/dev/null 2>&1
   ;;
 *)
-  echo "Usage: omarchy-branding-screensaver <image|text|reset>" >&2
+  echo "Usage: omarchy-branding-screensaver <image|text|reset|amiga>" >&2
   exit 1
   ;;
 esac
