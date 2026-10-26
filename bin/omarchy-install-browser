@@ -40,6 +40,7 @@ copy_chromium_flags() {
   omarchy-install-chromium-copy-url
   omarchy-install-chromium-ytdlp
   omarchy-install-chromium-theme-sync "$1"
+  omarchy-install-video-decode
 }
 
 setup_firefox_wayland() {
