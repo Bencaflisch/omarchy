@@ -167,7 +167,7 @@ All capture options are also accessible under _Trigger > Capture_ in the Omarchy
 
 | Hotkey                  | Function              |
 | ----------------------- | --------------------- |
-| `Super + ,` | Dismiss latest notification  |
+| `Super + ,` | Act on latest notification: dismiss it, press its only button, or pick one of its buttons  |
 | `Super + Shift + ,` | Dismiss all notifications |
 | `Super + Ctrl + ,` | Control notifications with the keyboard  |
 | `Super + Alt + ,` | Invoke most recent notification  |
