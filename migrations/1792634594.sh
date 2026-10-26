@@ -29,7 +29,7 @@ live_route() {
 }
 
 saved_route() {
-  if [[ -r $state_file ]]; then
+  if [[ -e $state_file ]]; then
     awk -v card="state.$card" -v name="name '$1'" '
       /^state\./ { in_card = ($1 == card) }
       in_card && $0 ~ "^[ \t]*" name "$" { found = 1; next }
@@ -53,7 +53,10 @@ for control in "PDI2 Demux" "PDI7 Mux" "PDI8 Mux"; do
   if stale_route "$control" "$(live_route "$control")"; then
     live_stale+=("$control")
   fi
-  if stale_route "$control" "$(saved_route "$control")"; then
+  # A control this card lacks reads as not stale, but a state file that can't
+  # be read fails the run rather than passing for clean.
+  saved=$(saved_route "$control")
+  if stale_route "$control" "$saved"; then
     saved_stale=1
   fi
 done
