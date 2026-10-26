@@ -731,6 +731,9 @@
   "install.style.background": {
     "label": "Background"
   },
+  "install.style.screensaver-amiga": {
+    "label": "Amiga Demos"
+  },
   "install.style.font": {
     "label": "Font"
   },
@@ -1003,6 +1006,9 @@
   },
   "remove.theme": {
     "label": "Theme"
+  },
+  "remove.screensaver-amiga": {
+    "label": "Amiga Demos"
   },
   "remove.gaming": {
     "label": "Gaming",

@@ -1,0 +1,12 @@
+#!/bin/bash
+
+# omarchy:summary=Install the Amiga demo screensaver from avillagran/omarchy-amiga
+
+set -euo pipefail
+
+# The commit behind the native-v0.4.2 tag, so a moved tag cannot change what runs.
+installer=https://raw.githubusercontent.com/avillagran/omarchy-amiga/4660fb99c4596ce7789fde9b2ec616e49050c95f/install.sh
+
+# Fetched whole before running, so a dropped connection can't execute half a script.
+script=$(curl -fsSL "$installer")
+bash -s -- "$@" <<<"$script"

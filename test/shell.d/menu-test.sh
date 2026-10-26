@@ -385,6 +385,7 @@ assertDeepEqual(
     'remove.service',
     'remove.development',
     'remove.theme',
+    'remove.screensaver-amiga',
     'remove.gaming',
     'remove.browser',
     'remove.webapp',
