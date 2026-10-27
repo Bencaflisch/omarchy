@@ -98,7 +98,7 @@ jobs:
               # that drops one file must not fail the run: try again.
               sed -i "1i Server = https://mirror.omarchy.org/\$repo/os/\$arch" /etc/pacman.d/mirrorlist
               for attempt in 1 2 3; do
-                pacman -Syu --noconfirm --needed qemu-system-x86 qemu-hw-display-virtio-vga qemu-img openssh >/dev/null && break
+                pacman -Syu --noconfirm --needed qemu-system-x86 qemu-hw-display-virtio-gpu qemu-hw-display-virtio-vga qemu-img openssh >/dev/null && break
                 (( attempt < 3 )) || { echo "::error::the test container could not install QEMU"; exit 1; }
                 echo "pacman failed, attempt $attempt of 3; trying again in 15 s"; sleep 15
               done
