@@ -450,10 +450,14 @@ if [[ -z $geometry ]]; then
 fi
 
 # Every widget the default config places gets a slot in the section it names.
+# Some hide on a machine without their hardware, but whatever shows has a size,
+# and the menu, workspaces and clock always show.
 jq -e --argjson layout "$default_layout" '
   . as $rows |
   all($layout | to_entries[]; .key as $section |
-    all(.value[]; (.id // .) as $id | any($rows[]; .id == $id and .section == $section)))
+    all(.value[]; (.id // .) as $id | any($rows[]; .id == $id and .section == $section))) and
+  all($rows[] | select(.visible == true); .width > 0 and .height > 0) and
+  all("omarchy.menu", "omarchy.workspaces", "omarchy.clock"; . as $id | any($rows[]; .id == $id and .visible == true))
 ' <<<"$geometry" >/dev/null || {
   printf 'Geometry:\n' >&2
   jq . <<<"$geometry" >&2
