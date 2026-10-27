@@ -235,7 +235,14 @@ true & dead=$!
 wait "$dead"
 echo "$dead" >"$XDG_RUNTIME_DIR/omarchy-screenrecord-starting"
 rm -f "$tmp/lock-held"
-/usr/bin/flock "$XDG_RUNTIME_DIR/omarchy-screenrecord.lock" bash -c 'touch "$TEST_STATE/lock-held"; read -r _ <"$TEST_STATE/release"' & holder=$!
+# One process holds the lock, so cleanup's kill on a failed wait leaves nothing
+# blocked on the release fifo.
+(
+  exec 8>"$XDG_RUNTIME_DIR/omarchy-screenrecord.lock"
+  /usr/bin/flock 8
+  touch "$tmp/lock-held"
+  read -r _ <"$tmp/release"
+) & holder=$!
 wait_for "$tmp/lock-held"
 "$record" --fullscreen --resolution=1280x800 >/dev/null 2>&1 & toggle=$!
 # The toggle leaves its cancel request once its wait for the lock times out;
