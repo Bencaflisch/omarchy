@@ -411,4 +411,16 @@ assert(
   'provider merge leaves rows belonging to another provider alone'
 )
 
+// Every glyph the menu draws in the Omarchy font is one the font carries. The
+// ranges come from the font itself, so a new glyph needs no edit here.
+const fontRanges = require('child_process')
+  .execFileSync('fc-query', ['--format=%{charset}', path.join(root, 'default/fonts/omarchy/omarchy.ttf')], { encoding: 'utf8' })
+  .trim().split(/\s+/).map(range => range.split('-').map(hex => parseInt(hex, 16)))
+const fontGlyphRows = defaultItems.filter(item => item.iconFont === 'omarchy')
+assert(fontGlyphRows.length > 0, 'the menu draws some glyphs in the Omarchy font')
+const missingGlyphs = fontGlyphRows
+  .flatMap(item => [...item.icon].map(glyph => ({ id: item.id, code: glyph.codePointAt(0) })))
+  .filter(({ code }) => !fontRanges.some(([start, end = start]) => code >= start && code <= end))
+  .map(({ id, code }) => `${id} U+${code.toString(16)}`)
+assertDeepEqual(missingGlyphs, [], 'every menu glyph drawn in the Omarchy font is one the font carries')
 JS
