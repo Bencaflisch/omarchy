@@ -162,7 +162,7 @@ rtkit_budget() {
 }
 
 repair_machine() {
-  local budget user
+  local budget user failed=0
 
   need_sudo
 
@@ -180,11 +180,14 @@ repair_machine() {
 
   budget=$(rtkit_budget) || exit 1
 
+  # A client can read a portal's old zero just before it restarts, so the
+  # zeros are raised again after the portals, even when one of them failed.
   raise_zero_budgets "$budget"
   while read -r _ user _; do
-    repair_portal "$user"
+    (repair_portal "$user") || failed=1
   done <<<"$users"
   raise_zero_budgets "$budget"
+  (( ! failed )) || exit 1
 
   sudo -n rm -f "$pending" || fail "Could not record the realtime repair"
 }
@@ -207,9 +210,14 @@ if omarchy-pkg-missing rtkit || [[ -e $pending ]]; then
   repair_machine
 fi
 
+# Root has no desktop session of its own; omarchy-upgrade-to-quattro runs
+# this as root for the machine-wide repair alone.
+[[ $(id -u) != 0 ]] || exit 0
+
 raise_own_zero_budgets
-repair_portal "$(id -un)"
+(repair_portal "$(id -un)") || portal_failed=1
 raise_own_zero_budgets
+(( ! ${portal_failed:-0} )) || exit 1
 
 # The server is pipewire.service's main process: a filter-chain host, such as
 # the speaker tuning, is also named pipewire and may already be realtime.

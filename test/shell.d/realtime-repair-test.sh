@@ -25,11 +25,20 @@ proc_root="$test_dir/proc"
 calls="$test_dir/calls"
 mkdir -p "$stub_bin"
 
-me=$(id -un)
-# The fakes carry the caller's real UID, since a user's own scan reads it
-# from id -u, and another user's UID that cannot be the caller's.
-my_uid=$(id -u)
-other_uid=$(( my_uid == 1001 ? 1002 : 1001 ))
+# The caller is a stubbed regular user, whoever runs the suite: as root, the
+# caller and root's own services would otherwise be the same account.
+me=omarchy-test
+my_uid=1000
+other_uid=1001
+
+cat >"$stub_bin/id" <<'STUB'
+#!/bin/bash
+case $* in
+  -u) echo "$MY_UID" ;;
+  -un) echo "$ME" ;;
+  *) exit 2 ;;
+esac
+STUB
 
 # Writes a fake process: pid uid start-time soft hard.
 cat >"$stub_bin/fake-proc" <<'STUB'
@@ -86,10 +95,10 @@ case $* in
     cat "$STATE/portal-state-$user" 2>/dev/null || echo active ;;
   *"restart xdg-desktop-portal.service")
     echo "restart portal $user" >>"$CALLS"
-    [[ -z ${PORTAL_RESTART_FAILS:-} ]] || exit 1
-    [[ -n ${PORTAL_STAYS_ZERO:-} ]] || cat "$STATE/budget" >"$STATE/portal-$user"
     # A client that read the old portal just before it went away.
-    [[ -z ${ZERO_DURING_RESTART:-} ]] || fake-proc 77 "$MY_UID" 7700 0 0 ;;
+    [[ -z ${ZERO_DURING_RESTART:-} || -e $OMARCHY_PROC_ROOT/77 ]] || fake-proc 77 1000 7700 0 0
+    [[ -z ${PORTAL_RESTART_FAILS:-} && ${PORTAL_RESTART_FAILS_FOR:-} != "$user" ]] || exit 1
+    [[ -n ${PORTAL_STAYS_ZERO:-} ]] || cat "$STATE/budget" >"$STATE/portal-$user" ;;
   *"show -p MainPID --value pipewire.service")
     [[ -z ${MAINPID_FAILS:-} ]] || exit 1
     if [[ -e $STATE/pipewire ]]; then echo 500; else echo 0; fi ;;
@@ -152,7 +161,7 @@ fresh_machine() {
 
 repair() {
   OMARCHY_PROC_ROOT=$proc_root OMARCHY_REALTIME_REPAIR_PENDING=$state/pending \
-    STATE=$state CALLS=$calls RTKIT_BUDGET=200000 MY_UID=$my_uid \
+    STATE=$state CALLS=$calls RTKIT_BUDGET=200000 MY_UID=${run_uid:-$my_uid} ME=${run_user:-$me} \
     PATH="$stub_bin:$ROOT/bin:$PATH" "$repair_command" >"$test_dir/out" 2>&1
 }
 
@@ -344,3 +353,29 @@ fresh_machine
 repair || fail "the repair succeeds on a fresh machine" "$(cat "$test_dir/out")"
 if MAINPID_FAILS=1 repair; then fail "the repair fails when PipeWire's main process cannot be read"; fi
 pass "the repair fails when PipeWire's main process cannot be read"
+
+# omarchy-upgrade-to-quattro runs the repair as root: the machine-wide part
+# alone, since root has no desktop session of its own.
+fresh_machine
+run_uid=0 run_user=root repair || fail "the repair succeeds as root" "$(cat "$test_dir/out")"
+[[ $(hard_of 10):$(hard_of 20):$(hard_of 30) == "200000:200000:0" ]] && [[ -e $state/rtkit && ! -e $state/pending ]] ||
+  fail "as root, the repair raises the users' zeros, installs rtkit and finishes" "$(hard_of 10) $(hard_of 20) $(hard_of 30)"
+grep -qx "restart portal $me" "$calls" && grep -qx "restart portal user2" "$calls" && ! grep -qx "restart audio" "$calls" ||
+  fail "as root, the repair restarts the users' portals and leaves the audio units to each user" "$(cat "$calls")"
+pass "as root, the repair does the machine-wide part alone"
+
+# A zero handed out while one portal restarts is raised even when a later
+# portal fails, and the repair still fails.
+fresh_machine
+if ZERO_DURING_RESTART=1 PORTAL_RESTART_FAILS_FOR=user2 repair; then fail "the repair fails when one user's portal fails"; fi
+[[ $(hard_of 77) == 200000 && -e $state/pending ]] ||
+  fail "a zero from an earlier portal restart is raised before the repair fails" "$(hard_of 77)"
+pass "a zero from an earlier portal restart is raised before the repair fails"
+
+fresh_machine
+touch "$state/rtkit"
+echo 200000 >"$state/budget"
+if ZERO_DURING_RESTART=1 PORTAL_RESTART_FAILS=1 repair; then fail "the repair fails when the user's own portal fails"; fi
+[[ $(hard_of 77) == 200000 ]] ||
+  fail "a zero from the user's own failed portal restart is raised" "$(hard_of 77)"
+pass "a zero from the user's own failed portal restart is raised"
