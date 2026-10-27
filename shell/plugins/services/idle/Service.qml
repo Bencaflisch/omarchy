@@ -146,6 +146,7 @@ Item {
 
     if (root.screensaverWindowCount > 0) return
     screensaverInputArmTimer.stop()
+    screensaverLaunchDeadlineTimer.stop()
     root.screensaverInputReady = false
     root.screensaverLaunching = false
 
@@ -159,9 +160,11 @@ Item {
 
   function screensaverLaunchStarted() {
     root.screensaverLaunching = true
+    screensaverLaunchDeadlineTimer.restart()
   }
 
   function screensaverLaunchFinished() {
+    screensaverLaunchDeadlineTimer.stop()
     root.screensaverLaunching = false
     screensaverInputArmTimer.restart()
   }
@@ -215,7 +218,8 @@ Item {
         screensaver: screensaverTimer.running,
         lock: lockTimer.running,
         screensaverLaunchGrace: screensaverLaunchGraceTimer.running,
-        screensaverInputArm: screensaverInputArmTimer.running
+        screensaverInputArm: screensaverInputArmTimer.running,
+        screensaverLaunchDeadline: screensaverLaunchDeadlineTimer.running
       },
       processes: {
         screensaver: screensaverProcess.running,
@@ -289,6 +293,17 @@ Item {
       root.screensaverInputReady = root.screensaverWindowCount > 0
       if (root.screensaverInputReady) root.logEvent("screensaver-input-armed")
       if (root.screensaverInputReady && !screensaverInput.isIdle) root.dismissScreensaver()
+    }
+  }
+
+  // A launcher killed mid-launch never sends screensaverReady. It waits at most 5s per monitor.
+  Timer {
+    id: screensaverLaunchDeadlineTimer
+    interval: 30000
+    repeat: false
+    onTriggered: {
+      root.logEvent("screensaver-launch-deadline")
+      root.screensaverLaunchFinished()
     }
   }
 
