@@ -63,6 +63,11 @@ cat >"$stub_bin/omarchy-hw-aarch64-qualcomm" <<'SH'
 [[ $FAKE_PLATFORM == "aarch64-qualcomm" ]]
 SH
 
+cat >"$stub_bin/omarchy-hw-aarch64-n1x" <<'SH'
+#!/bin/bash
+[[ $FAKE_PLATFORM == "aarch64-n1x" ]]
+SH
+
 cat >"$stub_bin/lspci" <<'SH'
 #!/bin/bash
 printf '%b\n' "$FAKE_LSPCI"
@@ -86,6 +91,11 @@ cat >"$stub_bin/omarchy-pkg-add" <<'SH'
 #!/bin/bash
 printf 'pkg-add %s\n' "$*" >>"$CALLS"
 exit "$FAKE_PKG_ADD_STATUS"
+SH
+
+cat >"$stub_bin/omarchy-pkg-drop" <<'SH'
+#!/bin/bash
+printf 'pkg-drop %s\n' "$*" >>"$CALLS"
 SH
 
 cat >"$stub_bin/dell-xps13-sidecar-amps-apply" <<'SH'
@@ -192,8 +202,11 @@ run_leaf() {
   } | paste -sd '|'
 }
 
+# n1x.sh drops every kernel but linux-omarchy, so its gate is the one thing
+# standing between it and any other machine.
 leaves=(
   hardware/apple/fix-spi-keyboard.sh
+  hardware/n1x.sh
   hardware/fix-synaptic-touchpad.sh
   hardware/surface.sh
   hardware/fix-surface-keyboard.sh
