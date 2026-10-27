@@ -79,10 +79,11 @@ ssh_vm 'systemd-run --user --quiet --collect --wait omarchy-toggle-idle stay-awa
   { echo "test/ci-vm: could not keep the session awake" >&2; exit 1; }
 
 # From the user manager: what an Omarchy terminal sees, with default signals.
-# The checkout's bin/ goes first, as default/bash/env-bootstrap puts it for a
-# session whose OMARCHY_PATH is a checkout: the tests call commands by name,
-# and the installed release lacks the ones added since.
-command='export PATH=~/src/omarchy/bin:$PATH; cd ~/src/omarchy && date +%s.%N >~/started && ./test/all >~/run.log 2>&1; echo "rc=$?" >>~/run.log'
+# A session whose OMARCHY_PATH is this checkout, with its bin/ first as
+# default/bash/env-bootstrap puts it: the tests call commands by name, and the
+# commands read their files from OMARCHY_PATH. The installed release has
+# neither the commands nor the files added since.
+command='export OMARCHY_PATH=~/src/omarchy PATH=~/src/omarchy/bin:$PATH; cd ~/src/omarchy && date +%s.%N >~/started && ./test/all >~/run.log 2>&1; echo "rc=$?" >>~/run.log'
 ssh_vm "systemd-run --user --quiet --collect --same-dir \
   -E OMARCHY_PKGS_PATH=\$HOME/src/omarchy-pkgs bash -c $(printf %q "$command")"
 until ssh_vm 'grep -q "^rc=" ~/run.log' 2>/dev/null; do
