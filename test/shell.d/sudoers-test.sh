@@ -248,9 +248,11 @@ if [[ $1 == -n && $2 == -l ]]; then
       options=$'    Options: !authenticate\n'
     fi
   fi
-  # One write: the caller's grep -q stops reading at the first match, and a
-  # second write would then die of SIGPIPE and fail its pipefail pipeline.
-  printf '%s    %s\n' "$options" "$*"
+  # The caller's grep -q stops reading at its first match, so a write that
+  # lands after it would kill this stub with SIGPIPE and fail the caller's
+  # pipefail pipeline. Under load that happened even to one printf.
+  trap '' PIPE
+  printf '%s    %s\n' "$options" "$*" 2>/dev/null || true
   exit 0
 fi
 printf 'sudo %s\n' "$*" >"$ELEVATION_LOG"
