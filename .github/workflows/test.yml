@@ -22,19 +22,9 @@ jobs:
   test:
     runs-on: ubuntu-26.04
     timeout-minutes: 30
-    # QEMU from Arch, run on the runner's KVM: Ubuntu 26.04 ships QEMU 10.2,
-    # Arch the current release.
-    container:
-      image: archlinux:latest
-      options: --device /dev/kvm
     env:
       SITE: https://nightly.omarchy.org
     steps:
-      - name: Install QEMU
-        run: |
-          pacman -Syu --noconfirm --needed git qemu-base aria2 jq openssh
-          qemu-system-x86_64 --version | head -n 1 | tee -a "$GITHUB_STEP_SUMMARY"
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: src/omarchy
@@ -44,6 +34,11 @@ jobs:
           repository: omacom/omarchy-pkgs
           path: src/omarchy-pkgs
           persist-credentials: false
+
+      - name: Install the fetch tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends aria2 jq
 
       # The image of the current release: an installed Omarchy with user
       # omarchy, built and boot-tested by omarchy-iso. It changes only when a
@@ -85,8 +80,36 @@ jobs:
           path: image
           key: vm-image-${{ steps.image.outputs.sha256 }}
 
+      # QEMU runs in an Arch container on the runner's KVM: Arch's current
+      # QEMU (11) instead of the runner's older one, the same as
+      # omarchy-iso's install test and an Omarchy workstation.
       - name: Run the tests in the VM
-        run: VM_STATE_DIR="$RUNNER_TEMP" src/omarchy/test/ci-vm image src out
+        run: |
+          sudo chmod 0666 /dev/kvm
+          docker run --rm --device /dev/kvm -v "$PWD:/w" -w /w -e VM_STATE_DIR=/tmp \
+            ghcr.io/archlinux/archlinux:latest bash -euo pipefail -c '
+              # pacman 7 fails every sync on a kernel without Landlock, which
+              # these runners have; omarchy-iso does the same.
+              if ! grep -qw landlock /sys/kernel/security/lsm 2>/dev/null; then
+                printf "#!/bin/sh\nexec /usr/bin/pacman --disable-sandbox \"\$@\"\n" >/usr/local/bin/pacman
+                chmod 0755 /usr/local/bin/pacman
+              fi
+              # Our own Arch mirror first, the public ones after it; a mirror
+              # that drops one file must not fail the run: try again.
+              sed -i "1i Server = https://mirror.omarchy.org/\$repo/os/\$arch" /etc/pacman.d/mirrorlist
+              for attempt in 1 2 3; do
+                pacman -Syu --noconfirm --needed qemu-system-x86 qemu-hw-display-virtio-vga qemu-img openssh >/dev/null && break
+                [ "$attempt" -lt 3 ] || { echo "::error::the test container could not install QEMU"; exit 1; }
+                echo "pacman failed, attempt $attempt of 3; trying again in 15 s"; sleep 15
+              done
+              qemu-system-x86_64 --version | head -n 1
+              src/omarchy/test/ci-vm image src out
+            '
+
+      # The container ran as root: its output belongs to root until here.
+      - name: Hand the results to the runner's user
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" out 2>/dev/null || true
 
       - name: Summary
         if: always()
