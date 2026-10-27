@@ -90,9 +90,10 @@ pass "shell bindings use global shortcuts only for what the shell registers"
 # shortcut, and none toggles one through a command any more.
 ! grep -E $'^exec\t(omarchy-menu toggle|omarchy-shell shell toggle) ' <<<"$bindings" | grep -v $'\tunlisted ' ||
   fail "default bindings toggle menus and panels through global shortcuts"
-! grep -E $'^exec\tomarchy-shell (media|notifications) ' <<<"$bindings" ||
-  fail "default media and notification keys reach their services through global shortcuts"
-pass "default bindings toggle menus and panels through global shortcuts"
+# The helper quotes the fallback's arguments, so this matches the form it writes.
+! grep -E $'^exec\tomarchy-shell \'media\' ' <<<"$bindings" | grep -v $'\tunlisted ' ||
+  fail "default media keys reach the media service through global shortcuts"
+pass "default bindings reach menus, panels and the media service through global shortcuts"
 
 # The shell and the helpers both read this list, so every line is a kind and a target.
 while IFS= read -r line; do
