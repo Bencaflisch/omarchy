@@ -1,0 +1,91 @@
+name: Tests
+
+# Runs ./test/all on every pull request, in a throwaway Arch container as an
+# ordinary user. Nothing the suite does reaches the runner, and the job holds
+# no secrets and a read-only token, so a fork's pull request runs the same
+# way as ours. Tests that need a live compositor skip themselves here; they
+# say so in the summary.
+#
+# The job runs on every pull request, whatever it touches, so it can become a
+# required status check.
+on:
+  pull_request:
+  push:
+    branches: [quattro, ci/test-suite]
+
+permissions:
+  contents: read
+
+# Spelled out so a pipe fails the step when the command in front of it fails.
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container:
+      image: archlinux:base-devel
+      # A test that leaves a child behind would otherwise keep the step open:
+      # tini reaps it.
+      options: --init
+    steps:
+      - name: Install the tools the tests use
+        run: |
+          pacman -Syu --noconfirm --needed \
+            git jq python lua ripgrep nodejs socat libxkbcommon xkeyboard-config \
+            util-linux procps-ng inotify-tools imagemagick ffmpeg tmux mise \
+            openssh glib2 zsh bubblewrap keyutils pciutils fontconfig sudo
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: omarchy
+          persist-credentials: false
+
+      # Some tests hold this repository's scripts against the package recipes.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: omacom/omarchy-pkgs
+          path: omarchy-pkgs
+          persist-credentials: false
+
+      # Root reads and owns everything, which fails the tests that check file
+      # modes and ownership for a reason unrelated to the code under test.
+      - name: Add an ordinary user
+        run: |
+          useradd --create-home --shell /bin/bash tester
+          chown -R tester: "$GITHUB_WORKSPACE"
+          mkdir -p /tmp/test-logs
+          chown tester: /tmp/test-logs
+
+      - name: ./test/all
+        working-directory: omarchy
+        run: |
+          printf 'omarchy %s, omarchy-pkgs %s\n' "$(git rev-parse --short HEAD)" "$(git -C ../omarchy-pkgs rev-parse --short HEAD)"
+          setpriv --reuid=tester --regid=tester --init-groups --reset-env -- \
+            env LANG=C.UTF-8 TMPDIR=/tmp/test-logs \
+              OMARCHY_PKGS_PATH="$GITHUB_WORKSPACE/omarchy-pkgs" \
+              ./test/all 2>&1 | tee /tmp/test-logs/all.log
+
+      - name: Summary
+        if: always()
+        run: |
+          [[ -f /tmp/test-logs/all.log ]] || exit 0
+          {
+            echo '```'
+            grep -E '^not ok|^[0-9]+ of [0-9]+ (suites|test files) failed|^  test/|^All [0-9]+ test files|test files completed|^Skipped checks in' /tmp/test-logs/all.log || true
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: test-logs
+          path: /tmp/test-logs/
+          if-no-files-found: ignore
+          retention-days: 14
