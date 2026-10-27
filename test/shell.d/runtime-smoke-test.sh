@@ -484,7 +484,7 @@ worst=$(grep -oE "another handler is registered for target [a-z.-]+" "$SCRATCH_L
   sort | uniq -c | sort -rn | head -1 | awk '{print $1}' || true)
 worst=${worst:-0}
 if (( worst > screens - 1 )); then
-  grep "another handler is registered for target" "$SCRATCH_LOG" | sed 's/^/  /' | head -20 >&2
+  { grep "another handler is registered for target" "$SCRATCH_LOG" | sed 's/^/  /' | head -20 >&2; } || true
   fail_with_log "each widget registers its IPC handler once per screen (saw $worst for $screens screen(s))"
 fi
 pass "each widget registers its IPC handler once per screen"
