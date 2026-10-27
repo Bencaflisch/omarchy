@@ -5,10 +5,17 @@ if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
   exit 1
 fi
 
-ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+# Physical, so a checkout reached through a symlink still passes commands that
+# refuse a non-canonical source root.
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
 SHELL_TEST_DIR="$ROOT/test/shell.d"
 
 export ROOT
+
+# Commands under test belong to this checkout, never to the one the running
+# session points OMARCHY_PATH at; the agent usage collectors load their
+# shared module from it.
+export OMARCHY_PATH=$ROOT
 
 # Commands print user-facing text in the language picked under Setup >
 # Language, so pin tests to English (a missing file means English) rather than
@@ -21,6 +28,10 @@ export OMARCHY_LANGUAGE_FILE=$ROOT/test/.no-language
 # migration under test would then edit or delete the user's own files. Unset,
 # they follow HOME. A test that wants one sets it itself.
 unset XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_STATE_HOME
+
+# Run from inside an agent session, the agent's own account home would leak
+# into tests of agent accounts the same way.
+unset CLAUDE_CONFIG_DIR CODEX_HOME GROK_HOME OMARCHY_AGENT_CLAUDE_HOME OMARCHY_AGENT_CODEX_HOME OMARCHY_AGENT_GROK_HOME
 
 pass() {
   printf 'ok - %s\n' "$1"
