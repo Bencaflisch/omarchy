@@ -47,6 +47,7 @@ Item {
     return count
   }
   property int previousScreensaverWindowCount: 0
+  property bool screensaverLaunching: false
   property bool screensaverInputReady: false
 
   function secondsFromConfig(value, fallback) {
@@ -138,14 +139,15 @@ Item {
 
     if (opened) {
       screensaverLaunchGraceTimer.stop()
-      // A terminal that maps after the launcher stopped waiting missed its screensaverReady.
-      if (!root.screensaverInputReady) screensaverInputArmTimer.restart()
+      // Outside a launch (a late map, or a screensaver already up when the shell starts) there is no screensaverReady to wait for.
+      if (!root.screensaverInputReady && !root.screensaverLaunching) screensaverInputArmTimer.restart()
       return
     }
 
     if (root.screensaverWindowCount > 0) return
     screensaverInputArmTimer.stop()
     root.screensaverInputReady = false
+    root.screensaverLaunching = false
 
     if (!root.idleEnabled || !root.idledThisCycle || !root.screensaverStartedThisCycle) return
 
@@ -153,6 +155,15 @@ Item {
     // as activity and cancel the pending lock; the lock timer is only allowed
     // to fire while the screensaver remains up.
     root.cancelIdleCycle("screensaver-dismissed")
+  }
+
+  function screensaverLaunchStarted() {
+    root.screensaverLaunching = true
+  }
+
+  function screensaverLaunchFinished() {
+    root.screensaverLaunching = false
+    screensaverInputArmTimer.restart()
   }
 
   function dismissScreensaver() {
@@ -199,6 +210,7 @@ Item {
       lockDelay: root.lockDelaySeconds,
       screensaverWindows: root.screensaverWindowCount,
       screensaverInputReady: root.screensaverInputReady,
+      screensaverLaunching: root.screensaverLaunching,
       timers: {
         screensaver: screensaverTimer.running,
         lock: lockTimer.running,
@@ -381,8 +393,12 @@ Item {
       return root.statusJson()
     }
 
+    function screensaverLaunching(): void {
+      root.screensaverLaunchStarted()
+    }
+
     function screensaverReady(): void {
-      screensaverInputArmTimer.restart()
+      root.screensaverLaunchFinished()
     }
 
     function enable(): string {

@@ -58,7 +58,14 @@ assert(
 JS
 
 test_tmp=$(mktemp -d)
-trap 'rm -rf "$test_tmp"' EXIT
+foot_pid=""
+cleanup() {
+  if [[ -n $foot_pid ]]; then
+    kill "$foot_pid" 2>/dev/null || true
+  fi
+  rm -rf -- "$test_tmp"
+}
+trap cleanup EXIT
 
 test_home="$test_tmp/home"
 mkdir -p "$test_home"
@@ -74,3 +81,29 @@ if rg -q 'omarchy-shell' "$ROOT/bin/omarchy-toggle-idle"; then
 fi
 
 pass "Stay Awake toggle persists state without reentrant shell IPC"
+
+# The screensaver count decides whether activity may cancel a pending lock, so
+# it has to follow the windows that exist, including one already up at startup.
+require_compositor "idle screensaver window count test"
+require_command quickshell
+require_command foot
+
+stage="$test_tmp/stage"
+mkdir -p "$stage"
+ln -s "$ROOT/shell/Commons" "$stage/Commons"
+ln -s "$ROOT/shell/plugins/services/idle" "$stage/idle"
+cp "$SHELL_TEST_DIR/fixtures/idle-screensaver-windows/shell.qml" "$stage/shell.qml"
+
+foot --app-id=org.omarchy.screensaver -e sleep 30 >/dev/null 2>&1 &
+foot_pid=$!
+for _ in {1..50}; do
+  hyprctl clients -j | jq -e 'any(.[]; .class == "org.omarchy.screensaver")' >/dev/null && break
+  sleep 0.1
+done
+
+output=$(HOME="$stage" OMARCHY_PATH="$ROOT" SCREENSAVER_PID=$foot_pid timeout 30 quickshell -p "$stage" --no-color 2>&1) || fail "idle screensaver fixture exits cleanly" "$output"
+[[ $output == *"RESULT pass"* ]] || fail "idle counts screensaver windows and arms input outside a launch" "$output"
+if rg -q 'RESULT fail|ReferenceError|TypeError|Error:|Unable to assign|Binding loop' <<<"$output"; then
+  fail "idle screensaver fixture has no QML errors" "$output"
+fi
+pass "idle counts screensavers open before it started and mid-launch, and arms input only outside a launch"

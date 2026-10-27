@@ -33,6 +33,9 @@ hypr_exec() {
     hyprctl dispatch exec -- "[workspace $workspace]" bash -lc "$command" >/dev/null
 }
 
+# Input dismissal waits for screensaverReady, so the first terminal to map cannot arm it mid-launch.
+omarchy-shell -q idle screensaverLaunching
+
 SOCKET="$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock"
 
 # Open Hyprland's event stream before spawning anything, so a terminal that maps
