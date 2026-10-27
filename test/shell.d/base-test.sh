@@ -163,9 +163,15 @@ run_qml_fixture() {
   local config_dir result link
 
   qml_fixture_scratch
+  # A second fixture in the same file must not read the first one's result.
+  if [[ -n $QML_FIXTURE_PID ]] && kill -0 "$QML_FIXTURE_PID" 2>/dev/null; then
+    kill "$QML_FIXTURE_PID" 2>/dev/null || true
+    wait "$QML_FIXTURE_PID" 2>/dev/null || true
+  fi
   config_dir="$QML_FIXTURE_TMP/$fixture"
   result="$QML_FIXTURE_TMP/result.json"
   QML_FIXTURE_LOG="$QML_FIXTURE_TMP/quickshell.log"
+  rm -f "$result"
   mkdir -p "$config_dir"
   cp "$SHELL_TEST_DIR/fixtures/$fixture/"*.qml "$config_dir/"
   for link in "$@"; do
