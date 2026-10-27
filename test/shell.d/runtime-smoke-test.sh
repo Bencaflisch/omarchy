@@ -703,6 +703,15 @@ pass "bar put leaves a widget already on the bar alone"
 # which have no omarchy.microphone. A bar change then applies for the session
 # only, leaving the file as the user left it until they fix it.
 config="$test_home/.config/omarchy/shell.json"
+# Elsewhen saves its first-run cities once its probe returns. Landing between
+# the edit and the shell's reload, that save would write valid JSON back.
+for _ in {1..80}; do
+  jq -e 'any(.bar.layout[][]; .id? == "omarchy.elsewhen" and .cities? != null)' "$config" >/dev/null 2>&1 && break
+  kill -0 "$QS_PID" 2>/dev/null || fail_with_log "test shell exited before Elsewhen saved its cities"
+  sleep 0.1
+done
+jq -e 'any(.bar.layout[][]; .id? == "omarchy.elsewhen" and .cities? != null)' "$config" >/dev/null ||
+  fail_with_log "Elsewhen saves its first-run cities before shell.json is edited"
 sed -i '$ d' "$config"
 cp "$config" "$TMPDIR/broken.json"
 for _ in {1..80}; do
