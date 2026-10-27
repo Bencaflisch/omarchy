@@ -185,6 +185,17 @@ for (const manifestPath of manifests) {
   }
 }
 
+// A plugin rescan recreates every service that is not kept loaded. For the
+// lock, a polkit prompt or the idle timer that locks the session, that means a
+// lock or an authentication dropped mid-flight.
+const manifestsById = Object.fromEntries(manifests.map(manifestPath => {
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+  return [manifest.id, manifest]
+}))
+for (const id of ['omarchy.lock', 'omarchy.polkit', 'omarchy.idle']) {
+  check(manifestsById[id]?.keepLoaded === true, `${id} must stay loaded across plugin reloads`)
+}
+
 const shellSource = fs.readFileSync(path.join(root, 'shell/shell.qml'), 'utf8')
 const publicManifestMatch = shellSource.match(/function publicPluginManifest\(manifest\) \{[\s\S]*?\n  \}/)
 check(!!publicManifestMatch, 'publicPluginManifest is defined')
