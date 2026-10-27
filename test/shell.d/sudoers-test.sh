@@ -169,8 +169,11 @@ SH
   assert_trusted_path omarchy-locale-generate
 
   # A code the packaged registry knows gets as far as locale.gen, which has to
-  # be /etc's, not the caller's. locale-gen itself fails without real root.
-  if [[ $(jq -r '.sv.locale // empty' /usr/share/omarchy/default/i18n/locales.json 2>/dev/null) == "sv_SE.UTF-8" ]]; then
+  # be /etc's, not the caller's. locale-gen itself then fails to write the
+  # host's locale archive, which it could do if the test ran as real root.
+  if (( EUID == 0 )); then
+    skip "running as root; skipping the root locale.gen override probe, whose locale-gen would rewrite this machine's locales"
+  elif [[ $(jq -r '.sv.locale // empty' /usr/share/omarchy/default/i18n/locales.json 2>/dev/null) == "sv_SE.UTF-8" ]]; then
     OMARCHY_LOCALE_GEN="$test_tmp/override.gen" \
       as_root "$etc" "$ROOT/bin/omarchy-locale-generate" sv </dev/null >/dev/null 2>&1 || true
     [[ $(<"$test_tmp/override.gen") == "#sv_SE.UTF-8 UTF-8" && $(<"$etc/locale.gen") == "sv_SE.UTF-8 UTF-8" ]] ||
