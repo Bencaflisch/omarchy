@@ -42,8 +42,8 @@ exec cat "$TEST_DIR/events"
 SH
 cat >"$tmpdir/bin/omarchy-shell" <<'SH'
 #!/bin/bash
-if [[ $* == "-q idle screensaverLaunching" ]] && [[ ! -s $TEST_DIR/spawned ]]; then
-  touch "$TEST_DIR/input-launching"
+if [[ $* == "-q idle screensaverLaunching" ]]; then
+  wc -l <"$TEST_DIR/spawned" >>"$TEST_DIR/launching"
 fi
 if [[ $* == "-q idle screensaverReady" ]] &&
   [[ $(wc -l <"$TEST_DIR/spawned") == 2 ]] &&
@@ -64,8 +64,8 @@ printf '[{"class":"org.omarchy.screensaver","mapped":true}]\n' >"$tmpdir/clients
 PATH="$tmpdir/bin:$PATH" TEST_DIR="$tmpdir" XDG_RUNTIME_DIR="$tmpdir" HYPRLAND_INSTANCE_SIGNATURE=test \
   timeout 10 "$ROOT/bin/omarchy-launch-screensaver" force
 
-[[ -f $tmpdir/input-launching ]] || fail "the launcher reports its launch before opening any screensaver" "$(<"$tmpdir/calls")"
-pass "the launcher reports its launch before opening any screensaver"
+[[ $(<"$tmpdir/launching") == $'0\n1' ]] || fail "the launcher reports each monitor before opening its screensaver" "$(<"$tmpdir/launching")"
+pass "the launcher reports each monitor before opening its screensaver"
 
 [[ -f $tmpdir/input-ready ]] || fail "input dismissal arms after both screensavers map and focus returns" "$(<"$tmpdir/calls")"
 pass "input dismissal arms after both screensavers map and focus returns"

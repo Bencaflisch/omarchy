@@ -33,9 +33,6 @@ hypr_exec() {
     hyprctl dispatch exec -- "[workspace $workspace]" bash -lc "$command" >/dev/null
 }
 
-# Input dismissal waits for screensaverReady, so the first terminal to map cannot arm it mid-launch.
-omarchy-shell -q idle screensaverLaunching
-
 SOCKET="$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock"
 
 # Open Hyprland's event stream before spawning anything, so a terminal that maps
@@ -54,6 +51,8 @@ wait_for_screensaver_window() {
 }
 
 while read -r m special; do
+  # Input dismissal waits for screensaverReady; reporting each monitor tells a slow launch from a killed one.
+  omarchy-shell -q idle screensaverLaunching
   hypr_focus_monitor "$m"
   # Share a special workspace that is already showing, like the scratchpad, so it is still open afterwards.
   workspace=${special:-special:screensaver-$m}
