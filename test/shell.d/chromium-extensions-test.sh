@@ -19,7 +19,13 @@ extension_id() {
 
 # A keyless unpacked extension gets a path-derived id, so its settings, shortcut
 # registrations and native host grants would go stale whenever its load path
-# changed. The pinned key keeps the id stable everywhere.
+# changed. The pinned key keeps the id stable everywhere, and a regenerated key
+# would orphan the same things, so the ids that shipped stay pinned here.
+declare -A shipped_id=(
+  [copy-url]=bgpiichlckmfanooecilcjemknkcpngb
+  [whatsapp-slim]=amhpgjbcfakkmkeojmoaoiochhifohdi
+  [yt-dlp]=dedjgknigfeelejglamclffonmophnfl
+)
 declare -A extension_manifest
 for manifest in "$ROOT"/default/chromium/extensions/*/manifest.json; do
   extension_dir=${manifest%/manifest.json}
@@ -27,6 +33,8 @@ for manifest in "$ROOT"/default/chromium/extensions/*/manifest.json; do
   jq -e '.key | type == "string"' "$manifest" >/dev/null || fail "the $name extension pins its id with a manifest key"
   id=$(extension_id "$manifest")
   [[ $id =~ ^[a-p]{32}$ ]] || fail "the $name extension's key decodes to an extension id" "got: $id"
+  [[ -z ${shipped_id[$name]:-} || $id == "${shipped_id[$name]}" ]] ||
+    fail "the $name extension keeps the id it shipped with" "got: $id"
   extension_manifest[$id]=$manifest
 
   while read -r file; do
@@ -37,12 +45,21 @@ pass "each bundled Chromium extension pins its id and ships the files its manife
 
 # --- Native messaging hosts ---
 
-# Each host admits only a bundled extension that asks for native messaging, and
-# each extension that asks has a host admitting its id.
+# Each host admits exactly the bundled extensions whose scripts message it, and
+# each extension that asks for native messaging has a host admitting its id.
 declare -A hosted
 for template in "$ROOT"/default/chromium/native-messaging-hosts/*.json; do
   host=$(basename "$template" .json)
   [[ $(jq -r .name "$template") == "$host" ]] || fail "native host $host is named after its manifest file"
+  senders=$(
+    for id in "${!extension_manifest[@]}"; do
+      if grep -rqF -e "sendNativeMessage('$host'" -e "connectNative('$host'" "$(dirname "${extension_manifest[$id]}")"; then
+        printf 'chrome-extension://%s/\n' "$id"
+      fi
+    done | sort
+  )
+  [[ -n $senders && $(jq -r '.allowed_origins[]' "$template" | sort) == "$senders" ]] ||
+    fail "native host $host admits exactly the extensions that message it" "admits: $(jq -c .allowed_origins "$template"), messaged by: ${senders:-none}"
   while read -r origin; do
     id=${origin#chrome-extension://}
     id=${id%/}
