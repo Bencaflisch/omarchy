@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Wayland
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 
 // Keep startup and theme covers alive across background service handoffs.
 Item {
@@ -80,8 +81,8 @@ Item {
     framePoll.stop()
     themeFallback.stop()
     if (themeToken) {
-      Color.loadColors(Util.decodeBase64(themeColors))
-      Color.loadShell(Util.decodeBase64(themeShell))
+      Commons.Color.loadColors(Util.decodeBase64(themeColors))
+      Commons.Color.loadShell(Util.decodeBase64(themeShell))
       Style.scheduleRefresh()
     }
     cover = false
@@ -168,11 +169,15 @@ Item {
 
   // A renderer left over from another intro can first fade from its still.
   // Keep that preparation hidden until the actual video is fully revealed.
+  // Stop once nothing is covered: a still wallpaper never reports video.
   Timer {
     id: framePoll
     interval: 16
     repeat: true
-    onTriggered: if (!frameStatus.running) frameStatus.running = true
+    onTriggered: {
+      if (!root.cover && !root.themeToken) stop()
+      else if (!frameStatus.running) frameStatus.running = true
+    }
   }
 
   Process {
@@ -289,7 +294,7 @@ Item {
       Rectangle {
         anchors.fill: parent
         visible: root.cover
-        color: Color.background
+        color: Commons.Color.background
       }
 
       Image {
