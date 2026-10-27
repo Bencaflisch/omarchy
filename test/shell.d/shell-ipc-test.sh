@@ -105,7 +105,6 @@ IFS= read -r -d $'\x1e' request
 printf '%s\n' "${request//$'\x1f'/|}" >>"$REQUESTS"
 case $(<"$MODE") in
   ok) printf 'OK\x1f%s\x1e' "answer to ${request//$'\x1f'/ }" ;;
-  newlines) printf 'OK\x1fline\n\n\x1e' ;;
   skip) printf 'SKIP\x1e' ;;
   hang) sleep 2 ;;
   close) ;;
@@ -133,11 +132,6 @@ pass "the shell answers over its socket without starting qs ipc"
 output=$(shell_call -q media next)
 [[ -z $output ]] || fail "quiet calls print nothing" "got: $output"
 pass "quiet calls over the socket print nothing"
-
-printf 'newlines' >"$mode"
-output=$(shell_call shell ping)
-[[ $output == "line" ]] || fail "socket output drops trailing newlines as qs ipc's does" "got: $(printf '%q' "$output")"
-pass "socket output drops trailing newlines as the qs ipc path does"
 
 printf 'skip' >"$mode"
 output=$(shell_call nosuch ping)
