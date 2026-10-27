@@ -1,0 +1,31 @@
+name: Nightly fetch probe
+
+on:
+  push:
+    branches: [ci/nightly-fetch-probe]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - name: Measure
+        run: |
+          sudo apt-get install -y -qq aria2 >/dev/null
+          url=$(curl -fsS https://nightly.omarchy.org/stable/latest.json | jq -r .vm.url)
+          curl -fsS https://nightly.omarchy.org/cdn-cgi/trace | grep -E '^(ip|colo|loc|http)='
+          head() { curl -sS -o /dev/null -D - -r 0-0 "$url" | grep -iE '^(cf-cache-status|cf-ray|age):'; }
+          for n in 1 2; do
+            echo "== round $n"; head
+            rm -f /mnt/probe.qcow2 2>/dev/null; sudo chmod 1777 /mnt
+            curl -fsS -o /dev/null -w 'curl, 1 stream, first 2 GiB: %{size_download} B in %{time_total} s, %{speed_download} B/s\n' -r 0-2147483647 "$url"
+            start=$(date +%s.%N)
+            aria2c --quiet -x 16 -s 16 -d /mnt -o probe.qcow2 "$url"
+            end=$(date +%s.%N)
+            echo "aria2c -x16, whole file: $(stat -c %s /mnt/probe.qcow2) B in $(echo "$end - $start" | bc) s"
+            head
+          done
+          df -h /mnt / | sed 1d
