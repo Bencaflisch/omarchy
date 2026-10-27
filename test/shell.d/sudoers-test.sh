@@ -50,7 +50,10 @@ else
   skip "visudo is not installed; skipping the sudoers parse check"
 fi
 
-# --- Arguments the rules admit and refuse ---
+# --- Arguments the timezone rule admits and refuses ---
+
+# The other rules are literal lists and a glob, pinned whole above. The
+# timezone rule is a regex, so what it admits is checked here.
 
 # Mirrors how sudoers matches one NOPASSWD command list against an invocation:
 # the command path must be equal; an entry without arguments admits any; an
@@ -97,34 +100,8 @@ omarchy-tzupdate|refuse|/usr/bin/timedatectl|set-timezone /etc/localtime
 omarchy-tzupdate|refuse|/usr/bin/timedatectl|set-timezone America//New_York
 omarchy-tzupdate|refuse|/usr/bin/timedatectl|set-ntp false
 omarchy-tzupdate|refuse|/usr/bin/tzupdate|
-omarchy-dns|permit|/usr/bin/omarchy-dns|Cloudflare
-omarchy-dns|permit|/usr/bin/omarchy-dns|Google
-omarchy-dns|permit|/usr/bin/omarchy-dns|DHCP
-omarchy-dns|refuse|/usr/bin/omarchy-dns|Custom
-omarchy-dns|refuse|/usr/bin/omarchy-dns|
-omarchy-dns|refuse|/usr/bin/omarchy-dns|Cloudflare Custom
-omarchy-dns|refuse|/usr/local/bin/omarchy-dns|Cloudflare
-omarchy-theme-browser|permit|/usr/bin/omarchy-theme-set-browser-policy|1c2027
-omarchy-theme-browser|refuse|/usr/bin/omarchy-theme-set-browser-policy|
-omarchy-theme-browser|refuse|/usr/bin/omarchy-theme-set-browser-policy|1C2027
-omarchy-theme-browser|refuse|/usr/bin/omarchy-theme-set-browser-policy|abc12
-omarchy-theme-browser|refuse|/usr/bin/omarchy-theme-set-browser-policy|abc1234
-omarchy-theme-browser|refuse|/usr/bin/omarchy-theme-set-browser-policy|1c202g
-omarchy-theme-browser|refuse|/usr/bin/omarchy-theme-set-browser-policy|#1c2027
-omarchy-theme-browser|refuse|/usr/bin/omarchy-theme-set-browser-policy|1c2027 ffffff
-omarchy-theme-browser|refuse|/usr/bin/omarchy-theme-set-browser-policy|../../etc/passwd
-omarchy-locale-generate|refuse|/usr/bin/omarchy-locale-generate|
-omarchy-locale-generate|refuse|/usr/bin/omarchy-locale-generate|xx
-omarchy-locale-generate|refuse|/usr/bin/omarchy-locale-generate|DA
-omarchy-locale-generate|refuse|/usr/bin/omarchy-locale-generate|../da
-omarchy-locale-generate|refuse|/usr/bin/omarchy-locale-generate|da;id
-omarchy-locale-generate|refuse|/usr/bin/omarchy-locale-generate|da sv
 ROWS
-while read -r code; do
-  sudoers_permits "$sudoers_dir/omarchy-locale-generate" /usr/bin/omarchy-locale-generate "$code" ||
-    fail "etc/sudoers.d/omarchy-locale-generate permits the registry language '$code'"
-done < <(jq -r 'keys[]' "$registry")
-pass "sudoers rules admit their intended arguments and refuse the rest"
+pass "the timezone rule admits zone names and refuses everything else"
 
 # --- Root halves resolve helpers from a trusted PATH ---
 
