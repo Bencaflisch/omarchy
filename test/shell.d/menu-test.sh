@@ -410,4 +410,5 @@ assert(
     .itemOrder.join(',') === 'root,apps,style.font.mono,style.font.serif',
   'provider merge leaves rows belonging to another provider alone'
 )
+
 JS

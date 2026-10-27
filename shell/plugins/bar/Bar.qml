@@ -89,9 +89,11 @@ Item {
   readonly property color glassBackground: Qt.rgba(background.r, background.g, background.b, Math.min(background.a, 0.35))
   property color urgent: Commons.Color.bar.active
 
-  Behavior on barForeground { enabled: root.foregroundAnimationEnabled; ColorAnimation { duration: Style.duration(420); easing.type: Easing.OutCubic } }
-  Behavior on background { ColorAnimation { duration: Style.duration(420); easing.type: Easing.OutCubic } }
-  Behavior on urgent { ColorAnimation { duration: Style.duration(420); easing.type: Easing.OutCubic } }
+  // A theme change cross-fades the bar's colors. Cycling the background
+  // between opaque, glassy and clear jumps, text color included.
+  Behavior on barForeground { enabled: root.foregroundAnimationEnabled; ColorAnimation { duration: Style.duration(250); easing.type: Easing.OutCubic } }
+  Behavior on background { ColorAnimation { duration: Style.duration(250); easing.type: Easing.OutCubic } }
+  Behavior on urgent { ColorAnimation { duration: Style.duration(250); easing.type: Easing.OutCubic } }
   property var tooltipTarget: null
   property var pendingTooltipTarget: null
   property string tooltipText: ""
@@ -99,6 +101,35 @@ Item {
   property bool tooltipShown: false
   property int tooltipRequest: 0
   property var activePopout: null
+  // Where the open panel's card stands, and in which section of the bar, so
+  // a panel taking over in the same section can start its card from there.
+  property var popoutCard: null
+
+  // The section a panel's widget sits in, the center's pieces counted as one,
+  // as keyboard switching between panels counts them.
+  function popoutSectionOf(owner) {
+    for (var i = 0; i < moduleSlots.length; i++) {
+      var slot = moduleSlots[i]
+      if (slot && slot.activeItem === owner) return BarModel.navigationRegions(slot.region).join(" ")
+    }
+    return ""
+  }
+
+  // Reported by the open panel. Only a screen name and four numbers are kept,
+  // whoever reports them; the section comes from the bar's own layout.
+  function notePopoutCard(card) {
+    popoutCard = card ? { screen: String(card.screen || ""), section: popoutSectionOf(activePopout),
+                          x: Number(card.x) || 0, y: Number(card.y) || 0,
+                          width: Number(card.width) || 0, height: Number(card.height) || 0 } : null
+  }
+
+  // The last card, copied, for a panel taking over in the same section: one
+  // switching across the bar opens fresh instead of flying the card over it.
+  function popoutCardFor(owner) {
+    var card = popoutCard
+    if (!card || !card.section || card.section !== popoutSectionOf(owner)) return null
+    return { screen: card.screen, x: card.x, y: card.y, width: card.width, height: card.height }
+  }
   // A widget is being dragged that could go into the tray section, so the
   // tray's drawer opens to show where.
   readonly property bool traySectionDragActive: !!barDragSource && !barDragSource.hostsTraySection
@@ -347,6 +378,8 @@ Item {
       _requestPopout: function(owner) { root.requestPluginPopout(key, owner) },
       _releasePopout: function(owner) { root.releasePluginPopout(key, owner) },
       _switchPanelFrom: function(owner, direction) { return root.switchPanelFrom(owner, direction) },
+      _notePopoutCard: function(card) { root.notePopoutCard(card) },
+      _popoutCardFor: function(owner) { return root.popoutCardFor(owner) },
       _targetBelongsToWindow: function(target, window) { return root.targetBelongsToWindow(target, window) },
       _moduleWidgets: function(requestedId) {
         return String(requestedId || "") === String(moduleName || "")
@@ -544,6 +577,7 @@ Item {
 
   function clearTooltip() {
     tooltipTimer.stop()
+    if (tooltipShown) tooltipWarmTimer.restart()
     pendingTooltipTarget = null
     pendingTooltipText = ""
     tooltipTarget = null
@@ -974,7 +1008,7 @@ Item {
   Component.onCompleted: applyBarConfig()
 
   // The indicator peek opens as the pointer comes onto the bar and holds until
-  // it leaves, or crosses past the end of the center box onto the panel icons
+  // it leaves, or crosses onto the clock at the start of the center box
   // (BarModel.peeksAt). Revealing the indicators widens their section, which
   // can slide a widget under a stationary pointer, so nothing narrower than the
   // stretch of bar up to that edge, held still while the peek is open
@@ -1531,6 +1565,10 @@ Item {
   }
 
   function showTooltip(target, text) {
+    // The delay only guards the first tooltip against a passing pointer. Once
+    // one is up, or was a moment ago, the next icon's shows at once, so
+    // sliding along the bar reads each label without waiting on every one.
+    var warm = tooltipShown || tooltipWarmTimer.running
     clearTooltip()
 
     if (!targetTooltipHovered(target) || !text) {
@@ -1553,7 +1591,8 @@ Item {
       tooltipText = pendingTooltipText
       pendingTooltipTarget = null
       pendingTooltipText = ""
-      tooltipTimer.restart()
+      if (warm) tooltipShown = true
+      else tooltipTimer.restart()
     })
   }
 
@@ -1571,6 +1610,14 @@ Item {
       if (root.targetTooltipHovered(root.tooltipTarget)) root.tooltipShown = true
       else root.clearTooltip()
     }
+  }
+
+  // How long after a tooltip hides the next one still skips the delay. Long
+  // enough to cross the gap between two icons, short enough that coming back
+  // to the bar later waits again.
+  Timer {
+    id: tooltipWarmTimer
+    interval: 400
   }
 
   Timer {
@@ -1720,8 +1767,8 @@ Item {
 
     // The same thickness the bar publishes for its screen (screenBarSizes).
     readonly property int thickness: root.thicknessFor(screen)
-    // Where the center box ends along the bar, set by the drawn center
-    // sections. Hovering past it, over the clock's trailing widgets and the
+    // Where the center box starts along the bar, set by the drawn center
+    // sections. Hovering past it, over the clock, its trailing widgets and the
     // right section, leaves the indicator peek shut.
     property real peekEdge: 0
 
@@ -2230,15 +2277,15 @@ Item {
     implicitHeight: root.vertical ? beginList.height + centerBox.height + endList.height : root.barSize
 
     // Both placements sit at the bar surface's origin or anchor off its edge,
-    // so the box's end in the sections is its end on the surface.
-    readonly property real boxEnd: root.vertical ? y + centerBox.y + centerBox.height : x + centerBox.x + centerBox.width
-    onBoxEndChanged: syncPeekEdge()
+    // so the box's start in the sections is its start on the surface.
+    readonly property real boxStart: root.vertical ? y + centerBox.y : x + centerBox.x
+    onBoxStartChanged: syncPeekEdge()
     onActiveChanged: syncPeekEdge()
     onWindowChanged: syncPeekEdge()
     Component.onCompleted: syncPeekEdge()
 
     function syncPeekEdge() {
-      if (active && window) window.peekEdge = BarModel.nextPeekEdge(window.peekEdge, boxEnd, root.centerSectionRevealHeld)
+      if (active && window) window.peekEdge = BarModel.nextPeekEdge(window.peekEdge, boxStart, root.centerSectionRevealHeld)
     }
 
     Connections {
@@ -2962,6 +3009,9 @@ Item {
 
       property bool dragging: false
       property bool suppressClick: false
+      // This area sits over the slot's widget and takes its press, so the
+      // widget never sees itself held; it's told, for its press feedback.
+      property var heldTarget: null
       property real pressedX: 0
       property real pressedY: 0
       readonly property bool canReorder: root.shell && typeof root.shell.mutateShellConfig === "function"
@@ -2991,8 +3041,15 @@ Item {
         suppressClick = false
         pressedX = mouse.x
         pressedY = mouse.y
+        hold(root.moduleClickTargetAt(slot, mouse.x, mouse.y))
         root.finishBarSettle()
         root.clearBarDrag()
+      }
+
+      function hold(target) {
+        if (heldTarget && heldTarget !== target && "held" in heldTarget) heldTarget.held = false
+        heldTarget = target && "held" in target ? target : null
+        if (heldTarget) heldTarget.held = true
       }
 
       onPositionChanged: function(mouse) {
@@ -3002,6 +3059,7 @@ Item {
         if (distance >= dragThreshold) {
           if (!dragging) root.beginBarDrag(slot, pressedX, pressedY)
           dragging = true
+          hold(null)
           root.hideTooltip(slot.activeItem)
         }
 
@@ -3024,6 +3082,7 @@ Item {
 
       onReleased: function(mouse) {
         var wasDragging = dragging
+        hold(null)
 
         dragging = false
 
@@ -3041,6 +3100,7 @@ Item {
       onCanceled: {
         dragging = false
         suppressClick = false
+        hold(null)
         root.clearBarDrag()
       }
 
