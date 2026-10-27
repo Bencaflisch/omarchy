@@ -82,7 +82,7 @@ ssh_vm 'systemd-run --user --quiet --collect --wait omarchy-toggle-idle stay-awa
 # The checkout's bin/ goes first, as default/bash/env-bootstrap puts it for a
 # session whose OMARCHY_PATH is a checkout: the tests call commands by name,
 # and the installed release lacks the ones added since.
-command='export PATH=~/src/omarchy/bin:$PATH; cd ~/src/omarchy && ./test/all >~/run.log 2>&1; echo "rc=$?" >>~/run.log'
+command='export PATH=~/src/omarchy/bin:$PATH; cd ~/src/omarchy && date +%s.%N >~/started && ./test/all >~/run.log 2>&1; echo "rc=$?" >>~/run.log'
 ssh_vm "systemd-run --user --quiet --collect --same-dir \
   -E OMARCHY_PKGS_PATH=\$HOME/src/omarchy-pkgs bash -c $(printf %q "$command")"
 until ssh_vm 'grep -q "^rc=" ~/run.log' 2>/dev/null; do
@@ -95,6 +95,10 @@ ssh_vm 'cat ~/run.log' >"$out/run.log"
 ssh_vm 'systemd-analyze; systemd-analyze blame | head -25' >"$out/boot.txt" 2>&1 || true
 ssh_vm 'echo "source tree: $(cd ~/src/omarchy && git status --porcelain | wc -l) changed files"'
 ssh_vm 'cp -r "$(sed -n "s/^Logs for every file: //p" ~/run.log | tail -n 1)" ~/shell-logs && tar cf - -C ~ shell-logs' | tar xf - -C "$out" || true
+# When each file finished, in seconds from the start of ./test/all: where the
+# run's time goes, between the parallel pool and the files that run alone.
+ssh_vm 'start=$(cat ~/started); find "$(sed -n "s/^Logs for every file: //p" ~/run.log | tail -n 1)" -name "*.code" -printf "%T@ %f\n" |
+  awk -v start="$start" "{ printf \"%7.1f %s\\n\", \$1 - start, \$2 }" | sort -n' >"$out/finished.txt" || true
 
 sed -n '/^Skipped checks in/,$p' "$out/run.log"
 # The tests' verdict is the run's verdict.
