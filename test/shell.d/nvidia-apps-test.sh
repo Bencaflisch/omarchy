@@ -24,9 +24,10 @@ run_setup "" ""
 pass "Dashboard is only enabled outside deferred first-boot setup"
 
 : > "$calls"
-# Outside a conditional, so errexit still applies inside the setup.
+# Outside a conditional, and with errexit set again inside, so a failing step
+# stops the setup even when it is not the last one.
 set +e
-run_setup start 1
+(set -e; run_setup start 1)
 status=$?
 set -e
 (( status == 0 )) || fail "a refused Dashboard start does not fail deferred setup"
