@@ -191,6 +191,17 @@ SH
     fail "root omarchy-locale-generate ignores the caller's locale.gen and registry overrides"
   assert_trusted_path omarchy-locale-generate
 
+  # A code the packaged registry knows gets as far as locale.gen, which has to
+  # be /etc's, not the caller's. locale-gen itself fails without real root.
+  if [[ $(jq -r '.sv.locale // empty' /usr/share/omarchy/default/i18n/locales.json 2>/dev/null) == "sv_SE.UTF-8" ]]; then
+    OMARCHY_LOCALE_GEN="$test_tmp/override.gen" \
+      as_root "$etc" "$ROOT/bin/omarchy-locale-generate" sv </dev/null >/dev/null 2>&1 || true
+    [[ $(<"$test_tmp/override.gen") == "#sv_SE.UTF-8 UTF-8" && $(<"$etc/locale.gen") == "sv_SE.UTF-8 UTF-8" ]] ||
+      fail "root omarchy-locale-generate enables the locale in /etc/locale.gen, not the caller's" "$(<"$etc/locale.gen")"
+  else
+    skip "Omarchy's packaged locale registry is not installed; skipping the root locale.gen override probe"
+  fi
+
   # omarchy-theme-set-browser-policy writes its fixed policy directories: a
   # planted color.json directory or symlink is replaced, a planted managed
   # directory symlink and a browser that is not installed are left alone.
