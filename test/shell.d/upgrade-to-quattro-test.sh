@@ -195,3 +195,49 @@ for cleanup in remove_conflicting_legacy_packages remove_retired_default_package
   fi
 done
 pass "upgrade cleanup preserves existing Lazydocker when replacement fails"
+
+# --- The order of the steps that mutate the machine ---
+
+# Runs the upgrade's step block as written, with every step logging its name,
+# so what is checked is the order the script really runs them in.
+upgrade_steps=$(sed -n '/^upgrade_started=1$/,$p' "$upgrade_to_quattro")
+grep -qx 'install_omarchy_quattro_packages' <<<"$upgrade_steps" || fail "the upgrade's step block is where this test looks for it"
+run_upgrade_steps() {
+  bash -c '
+    for step in $(grep -xE "[a-z_0-9]+" <<<"$1"); do
+      eval "$step() { echo $step; }"
+    done
+    run_as_user_omarchy() { :; }
+    warn() { :; }
+    log() { :; }
+    as_root() { echo "as_root $*"; }
+    gum() { return 1; }
+    boot_cmdline_unsafe=$2 auto_reboot=$3
+    eval "$1"
+  ' bash "$upgrade_steps" "$@" </dev/null 2>/dev/null
+}
+
+steps=$(run_upgrade_steps 0 0)
+runs_before() {
+  local first second
+  first=$(grep -nx "$1" <<<"$steps" | cut -d: -f1)
+  second=$(grep -nx "$2" <<<"$steps" | cut -d: -f1)
+  [[ -n $first && -n $second ]] && (( first < second ))
+}
+# The snapshot is the way back, so it comes before the first package change.
+runs_before create_pre_upgrade_snapshot configure_pacman_channel ||
+  fail "the upgrade snapshots before it changes the package channel" "$steps"
+# The new kernel's boot entries are written during the package install, from a
+# cmdline that must already name root=; checked again once Limine is rewritten.
+runs_before preserve_kernel_cmdline_root install_omarchy_quattro_packages ||
+  fail "the upgrade pins root= before installing the new kernel" "$steps"
+runs_before install_omarchy_quattro_packages verify_kernel_cmdline_root &&
+  runs_before normalize_limine_config verify_kernel_cmdline_root ||
+  fail "the upgrade checks root= in the boot entries after writing them" "$steps"
+pass "the upgrade snapshots first and pins root= around the kernel install"
+
+[[ $(run_upgrade_steps 0 1) == *"as_root systemctl reboot"* ]] ||
+  fail "the upgrade reboots when --reboot is passed"
+[[ $(run_upgrade_steps 1 1) != *"as_root systemctl reboot"* ]] ||
+  fail "the upgrade never reboots into boot entries missing root="
+pass "the upgrade reboots on --reboot only when root= is confirmed in the boot entries"
