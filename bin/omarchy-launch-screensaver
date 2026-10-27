@@ -17,7 +17,7 @@ ready=$XDG_RUNTIME_DIR/omarchy-screensaver-ready
 rm -f "$ready"
 
 # The Amiga screensaver draws its own window, so it runs whatever the terminal.
-if omarchy-toggle-enabled screensaver-amiga && [[ -d $HOME/.local/share/omarchy/amiga-demos ]]; then
+if omarchy-toggle-enabled screensaver-amiga && [[ -d /usr/share/omarchy-amiga-screensaver/demos ]]; then
   terminal=amiga
 else
   terminal=$(xdg-terminal-exec --print-id)

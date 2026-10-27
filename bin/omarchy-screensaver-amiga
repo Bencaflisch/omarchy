@@ -3,7 +3,7 @@
 # omarchy:summary=Run the screensaver as a random Amiga demo in FS-UAE
 # omarchy:hidden=true
 
-demos=$HOME/.local/share/omarchy/amiga-demos
+demos=/usr/share/omarchy-amiga-screensaver/demos
 run=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/omarchy-screensaver-amiga.XXXXXX")
 
 # FS-UAE takes the keyboard for the Amiga, so every key is mapped to quitting it instead.

@@ -9,24 +9,6 @@
 set -euo pipefail
 
 amiga_flag=$HOME/.local/state/omarchy/toggles/screensaver-amiga
-amiga_demos=$HOME/.local/share/omarchy/amiga-demos
-
-# Andrés Villagrán's selection of 31 demos, each a disk with a saved state taken once it was playing.
-amiga_pack=https://github.com/avillagran/omarchy-animated-background/releases/download/amiga-pack-v0.2/amiga-pack-native.tar.zst
-amiga_pack_sha=6c38d7ed2c289c4eaa352af5e6a8128a950329a223a64dfc2bc9693ce73b6f08
-
-download_amiga_demos() {
-  local staging
-  staging=$(mktemp -d)
-  trap 'rm -rf "$staging"' RETURN
-
-  omarchy-notification-send -g 󰊗 "$(omarchy-i18n screensaver.amigaDownloading)"
-  curl -fsSL "$amiga_pack" -o "$staging/pack.tar.zst" &&
-    [[ $(sha256sum "$staging/pack.tar.zst" | cut -d' ' -f1) == "$amiga_pack_sha" ]] &&
-    tar --zstd -xf "$staging/pack.tar.zst" -C "$staging" &&
-    mkdir -p "${amiga_demos%/*}" &&
-    mv "$staging/AMIGA" "$amiga_demos"
-}
 
 case "${1:-}" in
 image)
@@ -48,13 +30,14 @@ reset)
   omarchy-launch-screensaver force >/dev/null 2>&1
   ;;
 amiga)
-  if [[ ! -d $amiga_demos ]] && ! download_amiga_demos; then
-    omarchy-notification-send -g 󰊗 -u critical "$(omarchy-i18n screensaver.amigaDownloadFailed)"
-    exit 1
+  # Installing the demos asks for a password, so it happens in a terminal that picks them once they are in.
+  if omarchy-pkg-missing omarchy-amiga-screensaver; then
+    omarchy-launch-floating-terminal-with-presentation "omarchy-pkg-add omarchy-amiga-screensaver && (setsid omarchy-branding-screensaver amiga >/dev/null 2>&1 &)"
+  else
+    mkdir -p "${amiga_flag%/*}"
+    touch "$amiga_flag"
+    omarchy-launch-screensaver force >/dev/null 2>&1
   fi
-  mkdir -p "${amiga_flag%/*}"
-  touch "$amiga_flag"
-  omarchy-launch-screensaver force >/dev/null 2>&1
   ;;
 *)
   echo "Usage: omarchy-branding-screensaver <image|text|reset|amiga>" >&2
