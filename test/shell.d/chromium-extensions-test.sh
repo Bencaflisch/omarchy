@@ -53,7 +53,8 @@ for template in "$ROOT"/default/chromium/native-messaging-hosts/*.json; do
   [[ $(jq -r .name "$template") == "$host" ]] || fail "native host $host is named after its manifest file"
   senders=$(
     for id in "${!extension_manifest[@]}"; do
-      if grep -rqF -e "sendNativeMessage('$host'" -e "connectNative('$host'" "$(dirname "${extension_manifest[$id]}")"; then
+      if grep -rqF -e "sendNativeMessage('$host'" -e "sendNativeMessage(\"$host\"" \
+        -e "connectNative('$host'" -e "connectNative(\"$host\"" "$(dirname "${extension_manifest[$id]}")"; then
         printf 'chrome-extension://%s/\n' "$id"
       fi
     done | sort
