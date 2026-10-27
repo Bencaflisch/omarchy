@@ -139,6 +139,7 @@ Item {
 
     if (opened) {
       screensaverLaunchGraceTimer.stop()
+      if (root.screensaverLaunching) screensaverLaunchDeadlineTimer.restart()
       // Outside a launch (a late map, or a screensaver already up when the shell starts) there is no screensaverReady to wait for.
       if (!root.screensaverInputReady && !root.screensaverLaunching) screensaverInputArmTimer.restart()
       return
@@ -296,10 +297,11 @@ Item {
     }
   }
 
-  // A launcher killed mid-launch never sends screensaverReady. It waits at most 5s per monitor.
+  // A launcher killed mid-launch never sends screensaverReady. It waits at most 5s for each
+  // monitor's window, so a launch that opens none for 15s has stopped.
   Timer {
     id: screensaverLaunchDeadlineTimer
-    interval: 30000
+    interval: 15000
     repeat: false
     onTriggered: {
       root.logEvent("screensaver-launch-deadline")
