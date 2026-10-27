@@ -72,7 +72,9 @@ scan_zero_rttime() {
     if ! start=$(start_time "$dir") ||
       ! uid=$(awk '/^Uid:/ { print $2; found = 1 } END { exit !found }' "$dir/status" 2>/dev/null) ||
       ! hard=$(hard_rttime "$dir") || ! again=$(start_time "$dir"); then
-      [[ -d $dir ]] && fail "Could not read the stat, status or limits of process ${dir##*/}"
+      # Under hidepid=1 a user cannot read every entry it sees; only root's
+      # scan, which reads them all, treats that as a failure.
+      [[ -d $dir && -z ${own_only:-} ]] && fail "Could not read the stat, status or limits of process ${dir##*/}"
       continue
     fi
     [[ $uids == *" $uid "* && $hard == 0 && $again == "$start" ]] && echo "${dir##*/} $start $uid"
@@ -175,15 +177,31 @@ repair_machine() {
   if omarchy-pkg-missing rtkit; then
     sudo -n install -Dm644 /dev/null "$pending" || fail "Could not record the realtime repair"
     raise_zero_budgets 200000
-    omarchy-pkg-add rtkit
+
+    # dbus-broker reloads its service directories as soon as pacman extracts
+    # rtkit, so any client could activate it mid-transaction: before the
+    # portals are repaired, and before the rtkit user exists, which makes it
+    # fail into systemd's start limit. Keep it masked until the transaction is
+    # done; a client that asks meanwhile stays at normal priority.
+    trap 'sudo -n systemctl unmask --runtime rtkit-daemon.service >/dev/null 2>&1' EXIT
+    sudo -n systemctl mask --runtime rtkit-daemon.service >/dev/null || fail "Could not hold rtkit back during its install"
+    sudo -n pacman -S --needed --noconfirm -- rtkit || fail "Could not install rtkit"
+    raise_zero_budgets 200000
   fi
 
-  budget=$(rtkit_budget) || exit 1
+  sudo -n systemctl unmask --runtime rtkit-daemon.service >/dev/null || fail "Could not release rtkit"
+  sudo -n systemctl reset-failed rtkit-daemon.service >/dev/null 2>&1
+  for _ in {1..20}; do
+    budget=$(rtkit_budget 2>/dev/null) && break
+    sleep 0.5
+  done
+  [[ -n $budget ]] || fail "rtkit reports no realtime budget"
 
   # A client can read a portal's old zero just before it restarts, so the
   # zeros are raised again after the portals, even when one of them failed.
   raise_zero_budgets "$budget"
   while read -r _ user _; do
+    [[ -n $user ]] || continue
     (repair_portal "$user") || failed=1
   done <<<"$users"
   raise_zero_budgets "$budget"
@@ -206,7 +224,9 @@ raise_own_zero_budgets() {
   raise_zero_budgets "$budget"
 }
 
-if omarchy-pkg-missing rtkit || [[ -e $pending ]]; then
+# Root needs no prompt, so it always does the machine-wide part, and the
+# users' own runs then find nothing that needs sudo.
+if omarchy-pkg-missing rtkit || [[ -e $pending ]] || [[ $(id -u) == 0 ]]; then
   repair_machine
 fi
 
@@ -215,6 +235,14 @@ fi
 [[ $(id -u) != 0 ]] || exit 0
 
 raise_own_zero_budgets
+
+# omarchy-upgrade-to-quattro runs its migrations without the user's session
+# environment. A user with no session bus is not logged in and has no portal
+# or audio units to repair.
+export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+export DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}
+[[ -S $XDG_RUNTIME_DIR/bus ]] || exit 0
+
 (repair_portal "$(id -un)") || portal_failed=1
 raise_own_zero_budgets
 (( ! ${portal_failed:-0} )) || exit 1

@@ -56,7 +56,8 @@ cat "$STATE/users"
 STUB
 cat >"$stub_bin/sudo" <<'STUB'
 #!/bin/bash
-[[ $1 == -n ]] || { echo "sudo without -n: $*" >>"$CALLS"; exit 1; }
+# Every case appends here, so the last check covers the whole run.
+[[ $1 == -n ]] || { echo "sudo without -n: $*" >>"$CALLS"; echo "$*" >>"${CALLS%/*}/prompting-sudo"; exit 1; }
 shift
 [[ -z ${NO_SUDO:-} ]] || exit 1
 # The process scan must run as root, or hidepid hides other users' processes.
@@ -78,7 +79,7 @@ for arg; do [[ $arg == --machine=* ]] && { user=${arg#--machine=}; user=${user%@
 # Only root reaches another user's manager or bus.
 [[ $user == "$(id -un)" || -n ${AS_ROOT:-} ]] || exit 1
 case $* in
-  *RealtimeKit1*) [[ -e $STATE/rtkit ]] && echo "x $RTKIT_BUDGET" ;;
+  *RealtimeKit1*) [[ -e $STATE/rtkit && ! -e $STATE/rtkit-masked ]] && echo "x $RTKIT_BUDGET" ;;
   *portal.Realtime*) [[ -e $STATE/portal-$user ]] && echo "x $(<"$STATE/portal-$user")" ;;
   *) exit 2 ;;
 esac
@@ -105,6 +106,9 @@ case $* in
   *"try-restart pipewire.service pipewire-pulse.service wireplumber.service")
     echo "restart audio" >>"$CALLS"
     echo RR >"$STATE/pipewire" ;;
+  "mask --runtime rtkit-daemon.service") [[ -n ${AS_ROOT:-} ]] && touch "$STATE/rtkit-masked" ;;
+  "unmask --runtime rtkit-daemon.service") [[ -n ${AS_ROOT:-} ]] && rm -f "$STATE/rtkit-masked" ;;
+  "reset-failed rtkit-daemon.service") [[ -n ${AS_ROOT:-} ]] ;;
   *) exit 2 ;;
 esac
 STUB
@@ -112,8 +116,11 @@ cat >"$stub_bin/omarchy-pkg-missing" <<'STUB'
 #!/bin/bash
 [[ ! -e $STATE/rtkit ]]
 STUB
-cat >"$stub_bin/omarchy-pkg-add" <<'STUB'
+cat >"$stub_bin/pacman" <<'STUB'
 #!/bin/bash
+[[ $* == "-S --needed --noconfirm -- rtkit" ]] || exit 2
+[[ -e $STATE/rtkit-masked ]] || echo "rtkit installed unmasked" >>"$CALLS"
+[[ -z ${PACMAN_FAILS:-} ]] || exit 1
 # rtkit can make any user's zero-limit thread realtime from here on.
 for dir in "$OMARCHY_PROC_ROOT"/*; do
   [[ $(awk '/^Uid:/ { print $2 }' "$dir/status") != 0 ]] || continue
@@ -159,8 +166,14 @@ fresh_machine() {
   OMARCHY_PROC_ROOT=$proc_root "$fake" 30 0 3000 0 0
 }
 
+# The caller's session bus; a run without one has no session to repair.
+runtime_dir="$test_dir/runtime"
+mkdir -p "$runtime_dir"
+python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$runtime_dir/bus"
+
 repair() {
-  OMARCHY_PROC_ROOT=$proc_root OMARCHY_REALTIME_REPAIR_PENDING=$state/pending \
+  XDG_RUNTIME_DIR=${run_runtime_dir:-$runtime_dir} DBUS_SESSION_BUS_ADDRESS='' \
+    OMARCHY_PROC_ROOT=$proc_root OMARCHY_REALTIME_REPAIR_PENDING=$state/pending \
     STATE=$state CALLS=$calls RTKIT_BUDGET=200000 MY_UID=${run_uid:-$my_uid} ME=${run_user:-$me} \
     PATH="$stub_bin:$ROOT/bin:$PATH" "$repair_command" >"$test_dir/out" 2>&1
 }
@@ -379,3 +392,59 @@ if ZERO_DURING_RESTART=1 PORTAL_RESTART_FAILS=1 repair; then fail "the repair fa
 [[ $(hard_of 77) == 200000 ]] ||
   fail "a zero from the user's own failed portal restart is raised" "$(hard_of 77)"
 pass "a zero from the user's own failed portal restart is raised"
+
+# Root with rtkit already installed and no repair pending, as when rtkit was
+# installed by hand: the sweep still runs, so the users' own runs need no sudo.
+fresh_machine
+touch "$state/rtkit"
+echo 200000 >"$state/budget"
+run_uid=0 run_user=root repair || fail "the repair succeeds as root with rtkit installed" "$(cat "$test_dir/out")"
+[[ $(hard_of 10):$(hard_of 20) == "200000:200000" ]] && grep -qx "restart portal user2" "$calls" ||
+  fail "as root, the repair sweeps a machine that already had rtkit" "$(hard_of 10) $(hard_of 20) $(cat "$calls")"
+pass "as root, the repair sweeps a machine that already had rtkit"
+
+# Root with no regular user logged in, as from a root console.
+fresh_machine
+printf '0 root no active\n' >"$state/users"
+run_uid=0 run_user=root repair || fail "the repair succeeds as root with no user logged in" "$(cat "$test_dir/out")"
+[[ -e $state/rtkit && ! -e $state/pending ]] && ! grep -q '^restart portal' "$calls" ||
+  fail "with no user logged in, the repair installs rtkit and restarts no portal" "$(cat "$calls")"
+pass "with no user logged in, the repair installs rtkit and restarts no portal"
+
+# A user who is not logged in: their zeros are raised, and there is no portal
+# or audio to repair.
+fresh_machine
+touch "$state/rtkit"
+echo 200000 >"$state/budget"
+run_runtime_dir=$test_dir/no-session repair || fail "the repair succeeds without a session bus" "$(cat "$test_dir/out")"
+[[ $(hard_of 10) == 200000 ]] && ! grep -q '^restart' "$calls" ||
+  fail "without a session bus, the repair raises the user's zeros and restarts nothing" "$(hard_of 10) $(cat "$calls")"
+pass "without a session bus, the repair raises the user's zeros and restarts nothing"
+
+# Nothing in any case ran sudo in a way that could prompt.
+[[ ! -s $test_dir/prompting-sudo ]] || fail "the repair only runs sudo -n" "$(cat "$test_dir/prompting-sudo")"
+pass "the repair only runs sudo -n"
+
+# rtkit stays masked through its own install, so nothing can be made realtime
+# mid-transaction, and is released afterwards, also when the install fails.
+fresh_machine
+repair || fail "the repair succeeds on a fresh machine" "$(cat "$test_dir/out")"
+! grep -qx "rtkit installed unmasked" "$calls" && [[ ! -e $state/rtkit-masked ]] ||
+  fail "rtkit is masked during its install and released after" "$(cat "$calls")"
+pass "rtkit is masked during its install and released after"
+
+fresh_machine
+if PACMAN_FAILS=1 repair; then fail "the repair fails when rtkit does not install"; fi
+[[ ! -e $state/rtkit-masked && -e $state/pending ]] ||
+  fail "a failed install releases rtkit and stays pending"
+pass "a failed install releases rtkit and stays pending"
+
+# Under hidepid=1 a user sees entries it cannot read; its own sweep skips
+# them. Root, which raises any zeros the user has, reads every entry.
+fresh_machine
+touch "$state/rtkit"
+echo 200000 >"$state/budget"
+for pid in 10 11; do sed -i 's/ 0 0 us$/ 200000 200000 us/' "$proc_root/$pid/limits"; done
+rm "$proc_root/20/status"
+repair || fail "a user's own run skips entries it cannot read" "$(cat "$test_dir/out")"
+pass "a user's own run skips entries it cannot read"
