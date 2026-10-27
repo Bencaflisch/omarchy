@@ -26,7 +26,9 @@ done <<<"$dispatched"
 while read -r leaf; do
   leaf=${leaf#"$ROOT/install/"}
   grep -Fxq "$leaf" <<<"$dispatched" && continue
-  grep -rlF --exclude=all.sh "$leaf" "$ROOT/install/hardware" "$ROOT/install/user/hardware" | grep -vqF "/install/$leaf" ||
+  # A comment or a message naming the leaf runs nothing, so it does not count.
+  grep -rF --exclude=all.sh "$leaf" "$ROOT/install/hardware" "$ROOT/install/user/hardware" |
+    grep -vF "/install/$leaf:" | grep -vqE '^[^:]+:[[:space:]]*(#|echo )' ||
     fail "install/$leaf runs during setup" "neither install/hardware/all.sh nor install/user/all.sh runs it, and no other hardware script names it"
 done < <(find "$ROOT/install/hardware" "$ROOT/install/user/hardware" -name '*.sh' ! -name all.sh | sort)
 while read -r leaf; do
