@@ -9,7 +9,7 @@ name: Tests
 on:
   pull_request:
   push:
-    branches: [quattro, ci/test-suite-vm]
+    branches: [quattro]
 
 permissions:
   contents: read
@@ -66,7 +66,11 @@ jobs:
           for file in vmlinuz initrd cmdline; do
             curl -fsS --retry 3 -o "$file" "$unpacked$file"
           done
-          aria2c --quiet -x 16 -s 16 -o base.qcow2 "$(jq -r .vm.url latest.json)"
+          url=$(jq -r .vm.url latest.json)
+          curl -fsS -o /dev/null -D - -r 0-0 "$url" | grep -iE '^(cf-cache-status|cf-ray):' | tee -a "$GITHUB_STEP_SUMMARY"
+          started=$SECONDS
+          aria2c --quiet -x 16 -s 16 -o base.qcow2 "$url"
+          echo "Fetched $(stat -c %s base.qcow2) bytes in $(( SECONDS - started )) s" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "$(jq -r .vm.sha256 latest.json)  base.qcow2" | sha256sum -c -
 
       # Saved from pushes only: a cache saved by a pull request is that pull
