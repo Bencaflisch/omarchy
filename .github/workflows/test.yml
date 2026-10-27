@@ -22,9 +22,19 @@ jobs:
   test:
     runs-on: ubuntu-26.04
     timeout-minutes: 30
+    # QEMU from Arch, run on the runner's KVM: Ubuntu 26.04 ships QEMU 10.2,
+    # Arch the current release.
+    container:
+      image: archlinux:latest
+      options: --device /dev/kvm
     env:
       SITE: https://nightly.omarchy.org
     steps:
+      - name: Install QEMU
+        run: |
+          pacman -Syu --noconfirm --needed git qemu-base aria2 jq openssh
+          qemu-system-x86_64 --version | head -n 1 | tee -a "$GITHUB_STEP_SUMMARY"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: src/omarchy
@@ -34,12 +44,6 @@ jobs:
           repository: omacom/omarchy-pkgs
           path: src/omarchy-pkgs
           persist-credentials: false
-
-      - name: Install QEMU
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends qemu-system-x86 qemu-utils aria2 jq
-          sudo chmod 0666 /dev/kvm
 
       # The image of the current release: an installed Omarchy with user
       # omarchy, built and boot-tested by omarchy-iso. It changes only when a
