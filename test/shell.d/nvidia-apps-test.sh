@@ -8,7 +8,7 @@ calls="$scratch/calls"
 run_setup() (
   failure=$1
   export OMARCHY_IMAGE_DEFERRED_HARDWARE=$2
-  omarchy-pkg-present() { :; }
+  omarchy-pkg-present() { [[ -z ${NONE_INSTALLED:-} ]]; }
   nvidia-ctk() { echo "nvidia-ctk $*" >> "$calls"; }
   systemctl() {
     echo "systemctl $*" >> "$calls"
@@ -16,6 +16,11 @@ run_setup() (
   }
   source "$ROOT/install/hardware/nvidia-apps.sh"
 )
+
+: > "$calls"
+NONE_INSTALLED=1 run_setup "" ""
+[[ ! -s $calls ]] || fail "a machine without the optional applications configures nothing" "$(<"$calls")"
+pass "a machine without the optional applications configures nothing"
 
 : > "$calls"
 run_setup "" ""
