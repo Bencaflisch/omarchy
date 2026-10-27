@@ -7,14 +7,16 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 test_tmp=$(mktemp -d)
 trap 'chmod -R u+rwX "$test_tmp"; rm -rf "$test_tmp"' EXIT
 
-# --- Every hardware leaf is reached ---
+# --- Every setup step is reached ---
 
 # Run the real dispatchers with run_logged recording what they would run. A
-# leaf neither dispatches is still reached when another hardware script names
-# it, as the systemd unit yoga-slim7x.sh installs names its remoteproc starter.
+# hardware leaf neither dispatches is still reached when another hardware
+# script names it, as the systemd unit yoga-slim7x.sh installs names its
+# remoteproc starter.
 dispatched=$(
   run_logged() { printf '%s\n' "${1#"$ROOT/install/"}"; }
   OMARCHY_INSTALL="$ROOT/install"
+  source "$ROOT/install/config/all.sh"
   source "$ROOT/install/hardware/all.sh"
   source "$ROOT/install/user/all.sh"
 )
@@ -27,7 +29,14 @@ while read -r leaf; do
   grep -rlF --exclude=all.sh "$leaf" "$ROOT/install/hardware" "$ROOT/install/user/hardware" | grep -vqF "/install/$leaf" ||
     fail "install/$leaf runs during setup" "neither install/hardware/all.sh nor install/user/all.sh runs it, and no other hardware script names it"
 done < <(find "$ROOT/install/hardware" "$ROOT/install/user/hardware" -name '*.sh' ! -name all.sh | sort)
-pass "every hardware script is reached from setup"
+while read -r leaf; do
+  leaf=${leaf#"$ROOT/install/"}
+  grep -Fxq "$leaf" <<<"$dispatched" || fail "install/$leaf runs during setup" "its all.sh does not run it"
+done < <(find "$ROOT/install/config" "$ROOT/install/user" -maxdepth 1 -name '*.sh' ! -name all.sh | sort)
+# Platform packages hook in after everything Omarchy sets up for the user.
+[[ $(tail -n1 <<<"$dispatched") == "user/platform-setup.sh" ]] ||
+  fail "platform setup runs last" "last: $(tail -n1 <<<"$dispatched")"
+pass "every setup script is reached from setup"
 
 # --- Each quirk is a no-op on other hardware and applies on its own ---
 
