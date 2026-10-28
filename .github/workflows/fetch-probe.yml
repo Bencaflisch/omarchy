@@ -1,5 +1,8 @@
 name: Nightly fetch probe
 
+# Measures, on the same runners, how long the stable VM image takes to arrive
+# from the Actions cache and from Cloudflare.
+
 on:
   push:
     branches: [ci/nightly-fetch-probe]
@@ -8,24 +11,54 @@ permissions:
   contents: read
 
 jobs:
-  probe:
+  seed:
     runs-on: ubuntu-26.04
-    timeout-minutes: 30
+    outputs:
+      sha256: ${{ steps.image.outputs.sha256 }}
     steps:
-      - name: Measure
+      - id: image
+        run: |
+          mkdir -p image && cd image
+          curl -fsS -o latest.json https://nightly.omarchy.org/stable/latest.json
+          echo "sha256=$(jq -r .vm.sha256 latest.json)" >>"$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: cache
+        with:
+          path: image/base.qcow2
+          key: probe-image-${{ steps.image.outputs.sha256 }}
+          lookup-only: true
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get install -y -qq aria2 >/dev/null
+          aria2c --quiet -x 16 -s 16 -d image -o base.qcow2 "$(jq -r .vm.url image/latest.json)"
+      - if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: image/base.qcow2
+          key: probe-image-${{ steps.image.outputs.sha256 }}
+
+  measure:
+    needs: seed
+    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        run: [1, 2, 3, 4, 5, 6, 7, 8]
+    steps:
+      - name: Where
+        run: curl -fsS https://nightly.omarchy.org/cdn-cgi/trace | grep -E '^(colo|loc)=' | tr '\n' ' ' | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Restore from the Actions cache
+        id: restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: image/base.qcow2
+          key: probe-image-${{ needs.seed.outputs.sha256 }}
+      - name: Fetch from Cloudflare
         run: |
           sudo apt-get install -y -qq aria2 >/dev/null
           url=$(curl -fsS https://nightly.omarchy.org/stable/latest.json | jq -r .vm.url)
-          curl -fsS https://nightly.omarchy.org/cdn-cgi/trace | grep -E '^(ip|colo|loc|http)='
-          head() { curl -sS -o /dev/null -D - -r 0-0 "$url" | grep -iE '^(cf-cache-status|cf-ray|age):'; }
-          for n in 1 2; do
-            echo "== round $n"; head
-            rm -f /mnt/probe.qcow2 2>/dev/null; sudo chmod 1777 /mnt
-            curl -fsS -o /dev/null -w 'curl, 1 stream, first 2 GiB: %{size_download} B in %{time_total} s, %{speed_download} B/s\n' -r 0-2147483647 "$url"
-            start=$(date +%s.%N)
-            aria2c --quiet -x 16 -s 16 -d /mnt -o probe.qcow2 "$url"
-            end=$(date +%s.%N)
-            echo "aria2c -x16, whole file: $(stat -c %s /mnt/probe.qcow2) B in $(echo "$end - $start" | bc) s"
-            head
-          done
-          df -h /mnt / | sed 1d
+          curl -fsS -o /dev/null -D - -r 0-0 "$url" | grep -iE '^(cf-cache-status|cf-ray):' | tr '\r\n' '  '; echo
+          started=$(date +%s.%N)
+          aria2c --quiet -x 16 -s 16 -d /mnt -o cf.qcow2 "$url"
+          echo "cloudflare: $(stat -c %s /mnt/cf.qcow2) B in $(echo "$(date +%s.%N) - $started" | bc) s" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "cache hit: ${{ steps.restore.outputs.cache-hit }}, $(stat -c %s image/base.qcow2 2>/dev/null || echo 0) B" | tee -a "$GITHUB_STEP_SUMMARY"
