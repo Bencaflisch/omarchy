@@ -60,6 +60,8 @@ cat >"$stub_bin/sudo" <<'STUB'
 [[ $1 == "-n" ]] || { echo "sudo without -n: $*" >>"$CALLS"; echo "$*" >>"${CALLS%/*}/prompting-sudo"; exit 1; }
 shift
 [[ -z ${NO_SUDO:-} ]] || exit 1
+# Cached sudo that expires while pacman runs.
+[[ -z ${SUDO_EXPIRES_AT_INSTALL:-} || ! -e $STATE/rtkit ]] || exit 1
 # The process scan must run as root, or hidepid hides other users' processes.
 [[ $* != *SCAN_ROOT* ]] || echo scan >>"$STATE/root-scans"
 [[ -z ${STALE_BEFORE_PRLIMIT:-} || $* != *PROC_ROOT* ]] || sed -i 's/ 0 us$/ 100000 us/' "$OMARCHY_PROC_ROOT/$STALE_BEFORE_PRLIMIT/limits"
@@ -448,3 +450,14 @@ for pid in 10 11; do sed -i 's/ 0 0 us$/ 200000 200000 us/' "$proc_root/$pid/lim
 rm "$proc_root/20/status"
 repair || fail "a user's own run skips entries it cannot read" "$(cat "$test_dir/out")"
 pass "a user's own run skips entries it cannot read"
+
+# Sudo that expires during the install leaves rtkit masked, which grants
+# nothing, says so, and the next run with sudo releases it.
+fresh_machine
+if SUDO_EXPIRES_AT_INSTALL=1 repair; then fail "the repair fails when sudo expires during the install"; fi
+[[ -e $state/rtkit-masked && -e $state/pending ]] && grep -q "rtkit stays masked until the next omarchy update or a reboot" "$test_dir/out" ||
+  fail "a mask that cannot be released stays pending and says so" "$(cat "$test_dir/out")"
+repair || fail "the next run with sudo succeeds" "$(cat "$test_dir/out")"
+[[ ! -e $state/rtkit-masked && ! -e $state/pending ]] ||
+  fail "the next run with sudo releases rtkit and finishes"
+pass "a mask left by expired sudo says so, and the next run with sudo releases it"

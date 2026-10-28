@@ -183,7 +183,10 @@ repair_machine() {
     # portals are repaired, and before the rtkit user exists, which makes it
     # fail into systemd's start limit. Keep it masked until the transaction is
     # done; a client that asks meanwhile stays at normal priority.
-    trap 'sudo -n systemctl unmask --runtime rtkit-daemon.service >/dev/null 2>&1' EXIT
+    # Left masked, as when sudo expires mid-install, nothing is made realtime
+    # and nothing is killed; the next run with sudo, or a reboot, releases it.
+    trap 'sudo -n systemctl unmask --runtime rtkit-daemon.service >/dev/null 2>&1 ||
+      echo "rtkit stays masked until the next omarchy update or a reboot" >&2' EXIT
     sudo -n systemctl mask --runtime rtkit-daemon.service >/dev/null || fail "Could not hold rtkit back during its install"
     sudo -n pacman -S --needed --noconfirm -- rtkit || fail "Could not install rtkit"
     raise_zero_budgets 200000
