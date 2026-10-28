@@ -1,7 +1,7 @@
 name: Nightly fetch probe
 
-# Measures, on the same runners, how long the stable VM image takes to arrive
-# from the Actions cache and from Cloudflare.
+# Where the stable VM image's download stops scaling on a runner: the link,
+# the number of connections, or the disk.
 
 on:
   push:
@@ -11,55 +11,43 @@ permissions:
   contents: read
 
 jobs:
-  seed:
-    runs-on: ubuntu-26.04
-    outputs:
-      sha256: ${{ steps.image.outputs.sha256 }}
-    steps:
-      - id: image
-        run: |
-          mkdir -p image && cd image
-          curl -fsS -o latest.json https://nightly.omarchy.org/stable/latest.json
-          echo "sha256=$(jq -r .vm.sha256 latest.json)" >>"$GITHUB_OUTPUT"
-      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        id: cache
-        with:
-          path: image/base.qcow2
-          key: probe-image-${{ steps.image.outputs.sha256 }}
-          lookup-only: true
-      - if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          sudo apt-get install -y -qq aria2 >/dev/null
-          aria2c --quiet -x 16 -s 16 -d image -o base.qcow2 "$(jq -r .vm.url image/latest.json)"
-      - if: steps.cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: image/base.qcow2
-          key: probe-image-${{ steps.image.outputs.sha256 }}
-
   measure:
-    needs: seed
     runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
       matrix:
         run: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
-      - name: Where
-        run: curl -fsS https://nightly.omarchy.org/cdn-cgi/trace | grep -E '^(colo|loc)=' | tr '\n' ' ' | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Restore from the Actions cache
-        id: restore
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: image/base.qcow2
-          key: probe-image-${{ needs.seed.outputs.sha256 }}
-      - name: Fetch from Cloudflare
+      - name: Measure
         run: |
           sudo apt-get install -y -qq aria2 >/dev/null
           sudo chmod 1777 /mnt
           url=$(curl -fsS https://nightly.omarchy.org/stable/latest.json | jq -r .vm.url)
-          curl -fsS -o /dev/null -D - -r 0-0 "$url" | grep -iE '^(cf-cache-status|cf-ray):' | tr '\r\n' '  '; echo
-          started=$(date +%s.%N)
-          aria2c --quiet -x 16 -s 16 -d /mnt -o cf.qcow2 "$url"
-          echo "cloudflare: $(stat -c %s /mnt/cf.qcow2) B in $(echo "$(date +%s.%N) - $started" | bc) s" | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "cache hit: ${{ steps.restore.outputs.cache-hit }}, $(stat -c %s image/base.qcow2 2>/dev/null || echo 0) B" | tee -a "$GITHUB_STEP_SUMMARY"
+          size=$(curl -fsSI "$url" | awk 'tolower($1) == "content-length:" { print $2 + 0 }')
+          now() { date +%s.%N; }
+          rate() { echo "scale=0; $size / ($2 - $1) / 1000000" | bc; }
+          report() { printf '%-34s %6.1f s %5s MB/s\n' "$1" "$(echo "$3 - $2" | bc)" "$(rate "$2" "$3")" | tee -a "$GITHUB_STEP_SUMMARY"; }
+          {
+            echo '```'
+            echo "$(curl -fsS https://nightly.omarchy.org/cdn-cgi/trace | grep -E '^colo=') link $(cat /sys/class/net/eth0/speed 2>/dev/null || echo ?) Mb/s, $(nproc) CPUs, $(free -g | awk '/Mem:/ {print $2}') GB, /dev/shm $(df -h /dev/shm | awk 'NR==2 {print $2}')"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          t0=$(now); aria2c --quiet -x 16 -s 16 -d /mnt -o a.qcow2 "$url"; t1=$(now); sync; t2=$(now)
+          report "aria2c x16 to disk" "$t0" "$t1"
+          report "  ... including sync" "$t0" "$t2"
+          rm -f /mnt/a.qcow2
+          t0=$(now); aria2c --quiet -x 16 -s 16 -k 64M -d /dev/shm -o a.qcow2 "$url"; t1=$(now)
+          report "aria2c x16 to RAM" "$t0" "$t1"
+          rm -f /dev/shm/a.qcow2
+          # 32 ranges at once, each into RAM at its own offset.
+          parts=32; chunk=$(( (size + parts - 1) / parts ))
+          truncate -s "$size" /dev/shm/b.qcow2
+          t0=$(now)
+          seq 0 $(( parts - 1 )) | xargs -P "$parts" -I{} bash -c '
+            start=$(( {} * '"$chunk"' )); end=$(( start + '"$chunk"' - 1 ))
+            curl -fsS -r "$start-$end" "'"$url"'" | dd of=/dev/shm/b.qcow2 bs=4M seek="$start" oflag=seek_bytes conv=notrunc status=none'
+          t1=$(now)
+          report "curl x32 ranges to RAM" "$t0" "$t1"
+          rm -f /dev/shm/b.qcow2
+          t0=$(now); dd if=/dev/zero of=/mnt/zero bs=4M count=1123 conv=fdatasync status=none; t1=$(now)
+          report "disk write 4.7 GB, fdatasync" "$t0" "$t1"
+          echo '```' >>"$GITHUB_STEP_SUMMARY"
