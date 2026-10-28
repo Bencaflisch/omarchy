@@ -57,7 +57,7 @@ STUB
 cat >"$stub_bin/sudo" <<'STUB'
 #!/bin/bash
 # Every case appends here, so the last check covers the whole run.
-[[ $1 == -n ]] || { echo "sudo without -n: $*" >>"$CALLS"; echo "$*" >>"${CALLS%/*}/prompting-sudo"; exit 1; }
+[[ $1 == "-n" ]] || { echo "sudo without -n: $*" >>"$CALLS"; echo "$*" >>"${CALLS%/*}/prompting-sudo"; exit 1; }
 shift
 [[ -z ${NO_SUDO:-} ]] || exit 1
 # The process scan must run as root, or hidepid hides other users' processes.
@@ -75,9 +75,9 @@ STUB
 cat >"$stub_bin/busctl" <<'STUB'
 #!/bin/bash
 user=$(id -un)
-for arg; do [[ $arg == --machine=* ]] && { user=${arg#--machine=}; user=${user%@}; }; done
+for arg; do [[ $arg == "--machine="* ]] && { user=${arg#--machine=}; user=${user%@}; }; done
 # Only root reaches another user's manager or bus.
-[[ $user == "$(id -un)" || -n ${AS_ROOT:-} ]] || exit 1
+[[ $user == $(id -un) || -n ${AS_ROOT:-} ]] || exit 1
 case $* in
   *RealtimeKit1*) [[ -e $STATE/rtkit && ! -e $STATE/rtkit-masked ]] && echo "x $RTKIT_BUDGET" ;;
   *portal.Realtime*) [[ -e $STATE/portal-$user ]] && echo "x $(<"$STATE/portal-$user")" ;;
@@ -87,9 +87,9 @@ STUB
 cat >"$stub_bin/systemctl" <<'STUB'
 #!/bin/bash
 user=$(id -un)
-for arg; do [[ $arg == --machine=* ]] && { user=${arg#--machine=}; user=${user%@}; }; done
+for arg; do [[ $arg == "--machine="* ]] && { user=${arg#--machine=}; user=${user%@}; }; done
 # Only root reaches another user's manager or bus.
-[[ $user == "$(id -un)" || -n ${AS_ROOT:-} ]] || exit 1
+[[ $user == $(id -un) || -n ${AS_ROOT:-} ]] || exit 1
 case $* in
   *"show -p ActiveState --value xdg-desktop-portal.service")
     [[ -z ${PORTAL_SHOW_FAILS:-} ]] || exit 1
@@ -98,7 +98,7 @@ case $* in
     echo "restart portal $user" >>"$CALLS"
     # A client that read the old portal just before it went away.
     [[ -z ${ZERO_DURING_RESTART:-} || -e $OMARCHY_PROC_ROOT/77 ]] || fake-proc 77 1000 7700 0 0
-    [[ -z ${PORTAL_RESTART_FAILS:-} && ${PORTAL_RESTART_FAILS_FOR:-} != "$user" ]] || exit 1
+    [[ -z ${PORTAL_RESTART_FAILS:-} && ${PORTAL_RESTART_FAILS_FOR:-} != $user ]] || exit 1
     [[ -n ${PORTAL_STAYS_ZERO:-} ]] || cat "$STATE/budget" >"$STATE/portal-$user" ;;
   *"show -p MainPID --value pipewire.service")
     [[ -z ${MAINPID_FAILS:-} ]] || exit 1
@@ -123,8 +123,8 @@ cat >"$stub_bin/pacman" <<'STUB'
 [[ -z ${PACMAN_FAILS:-} ]] || exit 1
 # rtkit can make any user's zero-limit thread realtime from here on.
 for dir in "$OMARCHY_PROC_ROOT"/*; do
-  [[ $(awk '/^Uid:/ { print $2 }' "$dir/status") != 0 ]] || continue
-  [[ $(awk '/^Max realtime timeout/ { print $5 }' "$dir/limits") == 0 ]] && echo "zero at install ${dir##*/}" >>"$CALLS"
+  [[ $(awk '/^Uid:/ { print $2 }' "$dir/status") != "0" ]] || continue
+  [[ $(awk '/^Max realtime timeout/ { print $5 }' "$dir/limits") == "0" ]] && echo "zero at install ${dir##*/}" >>"$CALLS"
 done
 touch "$STATE/rtkit"
 echo "$RTKIT_BUDGET" >"$STATE/budget"
@@ -191,7 +191,7 @@ pass "no process has a zero budget when rtkit lands"
 pass "logged-in users' zeros, another user's included, get rtkit's budget"
 [[ -s $state/root-scans ]] || fail "the process scan runs as root, so hidepid cannot hide other users' zeros"
 pass "the process scan runs as root, so hidepid cannot hide other users' zeros"
-[[ $(hard_of 77) == 200000 ]] || fail "a zero that appears while the portal restarts is raised"
+[[ $(hard_of 77) == "200000" ]] || fail "a zero that appears while the portal restarts is raised"
 pass "a zero that appears while the portal restarts is raised"
 [[ $(hard_of 30):$(hard_of 12) == "0:100000" ]] || fail "root's services and other limits are left alone"
 ! grep -qx "restart portal root" "$calls" || fail "root's portal is left alone"
@@ -272,18 +272,18 @@ pass "with no zeros to raise, rtkit is still not installed without sudo"
 
 fresh_machine
 STALE_BEFORE_PRLIMIT=11 repair || fail "a limit set by someone else is not an error" "$(cat "$test_dir/out")"
-[[ $(hard_of 11) == 100000 ]] || fail "a limit set by someone else after the scan is not overwritten" "$(hard_of 11)"
+[[ $(hard_of 11) == "100000" ]] || fail "a limit set by someone else after the scan is not overwritten" "$(hard_of 11)"
 pass "a limit set by someone else after the scan is not overwritten"
 
 fresh_machine
 OWNER_CHANGES_BEFORE_PRLIMIT=11 repair || fail "a process that changed owner is not an error" "$(cat "$test_dir/out")"
-[[ $(hard_of 11) == 0 ]] || fail "a PID that now belongs to someone else is left alone" "$(hard_of 11)"
+[[ $(hard_of 11) == "0" ]] || fail "a PID that now belongs to someone else is left alone" "$(hard_of 11)"
 pass "a PID that now belongs to someone else is left alone"
 
 fresh_machine
 printf '11 (odd ) name\nwith a newline) S %s1300 0 0\n' "$(printf '0 %.0s' {1..18})" >"$proc_root/11/stat"
 repair || fail "a process whose name holds a newline is repaired" "$(cat "$test_dir/out")"
-[[ $(hard_of 11) == 200000 ]] || fail "a process whose name holds a newline is repaired" "$(hard_of 11)"
+[[ $(hard_of 11) == "200000" ]] || fail "a process whose name holds a newline is repaired" "$(hard_of 11)"
 pass "a process whose name holds a newline is repaired"
 
 # Once one admin's run has repaired the machine, a second user's run, or one
@@ -338,7 +338,7 @@ fresh_machine
 touch "$state/rtkit"
 echo 200000 >"$state/budget"
 ZERO_DURING_RESTART=1 repair || fail "the repair succeeds with rtkit installed by hand" "$(cat "$test_dir/out")"
-[[ $(hard_of 77) == 200000 ]] || fail "a zero that appears while the user's own portal restarts is raised" "$(hard_of 77)"
+[[ $(hard_of 77) == "200000" ]] || fail "a zero that appears while the user's own portal restarts is raised" "$(hard_of 77)"
 pass "a zero that appears while the user's own portal restarts is raised"
 
 # A user's own zeros are raised even when their portal cannot be repaired.
@@ -381,7 +381,7 @@ pass "as root, the repair does the machine-wide part alone"
 # portal fails, and the repair still fails.
 fresh_machine
 if ZERO_DURING_RESTART=1 PORTAL_RESTART_FAILS_FOR=user2 repair; then fail "the repair fails when one user's portal fails"; fi
-[[ $(hard_of 77) == 200000 && -e $state/pending ]] ||
+[[ $(hard_of 77) == "200000" && -e $state/pending ]] ||
   fail "a zero from an earlier portal restart is raised before the repair fails" "$(hard_of 77)"
 pass "a zero from an earlier portal restart is raised before the repair fails"
 
@@ -389,7 +389,7 @@ fresh_machine
 touch "$state/rtkit"
 echo 200000 >"$state/budget"
 if ZERO_DURING_RESTART=1 PORTAL_RESTART_FAILS=1 repair; then fail "the repair fails when the user's own portal fails"; fi
-[[ $(hard_of 77) == 200000 ]] ||
+[[ $(hard_of 77) == "200000" ]] ||
   fail "a zero from the user's own failed portal restart is raised" "$(hard_of 77)"
 pass "a zero from the user's own failed portal restart is raised"
 
@@ -417,7 +417,7 @@ fresh_machine
 touch "$state/rtkit"
 echo 200000 >"$state/budget"
 run_runtime_dir=$test_dir/no-session repair || fail "the repair succeeds without a session bus" "$(cat "$test_dir/out")"
-[[ $(hard_of 10) == 200000 ]] && ! grep -q '^restart' "$calls" ||
+[[ $(hard_of 10) == "200000" ]] && ! grep -q '^restart' "$calls" ||
   fail "without a session bus, the repair raises the user's zeros and restarts nothing" "$(hard_of 10) $(cat "$calls")"
 pass "without a session bus, the repair raises the user's zeros and restarts nothing"
 
