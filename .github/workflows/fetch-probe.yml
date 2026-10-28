@@ -56,6 +56,7 @@ jobs:
       - name: Fetch from Cloudflare
         run: |
           sudo apt-get install -y -qq aria2 >/dev/null
+          sudo chmod 1777 /mnt
           url=$(curl -fsS https://nightly.omarchy.org/stable/latest.json | jq -r .vm.url)
           curl -fsS -o /dev/null -D - -r 0-0 "$url" | grep -iE '^(cf-cache-status|cf-ray):' | tr '\r\n' '  '; echo
           started=$(date +%s.%N)
